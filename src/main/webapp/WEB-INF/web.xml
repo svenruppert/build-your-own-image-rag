@@ -1,0 +1,17 @@
+
+<web-app xmlns="https://jakarta.ee/xml/ns/jakartaee" version="6.0" metadata-complete="false">
+    <context-param>
+        <param-name>productionMode</param-name>
+        <param-value>true</param-value>
+    </context-param>
+    <servlet>
+        <servlet-name>Vaadin Servlet</servlet-name>
+        <servlet-class>com.svenruppert.flow.AppServlet</servlet-class>
+        <async-supported>true</async-supported>
+        <load-on-startup>1</load-on-startup>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>Vaadin Servlet</servlet-name>
+        <url-pattern>/*</url-pattern>
+    </servlet-mapping>
+</web-app>

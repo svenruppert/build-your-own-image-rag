@@ -13,8 +13,6 @@ public class YoutubeView
 
   public static final String PATH = "youtube";
 
-  public static final String PATH = "youtube";
-
   public YoutubeView() {
     IFrame youtubePlayer = new IFrame("https://www.youtube.com/embed/CxCMIc5Bx18");
     youtubePlayer.setWidth("800px");

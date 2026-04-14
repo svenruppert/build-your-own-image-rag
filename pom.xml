@@ -8,7 +8,7 @@
     <parent>
         <groupId>com.svenruppert</groupId>
         <artifactId>dependencies</artifactId>
-        <version>06.00.15</version>
+        <version>06.00.16</version>
     </parent>
 
     <artifactId>flow-template</artifactId>
@@ -22,13 +22,13 @@
         <url>https://svenruppert.com</url>
     </organization>
 
-    <url>https://github.com/svenruppert/core-vaadin-project-template</url>
-    <name>Core Vaadin Project Template</name>
-    <description>The beginning of your OSS project</description>
+    <url>https://github.com/svenruppert/build-your-own-image-rag</url>
+    <name>Build Your Own Image RAG</name>
+    <description>A compact, self-hosted multimodal RAG demo in Core Java that turns images into privacy-aware, semantically searchable knowledge.</description>
     <scm>
-        <url>https://github.com/svenruppert/core-vaadin-project-template</url>
-        <connection>scm:git:https://github.com/svenruppert/core-vaadin-project-template.git</connection>
-        <developerConnection>scm:git:https://github.com/svenruppert/core-vaadin-project-template.git
+        <url>https://github.com/svenruppert/build-your-own-image-rag</url>
+        <connection>scm:git:https://github.com/svenruppert/build-your-own-image-rag.git</connection>
+        <developerConnection>scm:git:https://github.com/svenruppert/build-your-own-image-rag.git
         </developerConnection>
         <tag>HEAD</tag>
     </scm>
@@ -45,7 +45,7 @@
     </developers>
     <issueManagement>
         <system>GitHub</system>
-        <url>https://github.com/svenruppert/core-vaadin-project-template/issues</url>
+        <url>https://github.com/svenruppert/build-your-own-image-rag/issues</url>
     </issueManagement>
     <licenses>
         <license>
@@ -63,7 +63,7 @@
         <deploy-repo-url>https://repo.maven.apache.org/maven2/</deploy-repo-url>
         <deploy-repo-snapshots-url>https://repo.maven.apache.org/maven2/</deploy-repo-snapshots-url>
 
-        <jdk.version>25</jdk.version>
+        <jdk.version>26</jdk.version>
 
         <maven.compiler.release>${jdk.version}</maven.compiler.release>
         <maven.compiler.source>${jdk.version}</maven.compiler.source> <!--redundant, but IntelliJ doesn't-->
@@ -73,7 +73,7 @@
         <maven.compiler.testSource>${jdk.version}</maven.compiler.testSource>
         <maven.compiler.testTarget>${jdk.version}</maven.compiler.testTarget>
 
-        <minimum-maven.version>3.9.9</minimum-maven.version>
+        <minimum-maven.version>3.9.14</minimum-maven.version>
 
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -86,10 +86,11 @@
 
         <!--        Vaadin Flow Properties-->
         <failOnMissingWebXml>false</failOnMissingWebXml>
-        <vaadin.version>25.1.0-beta2</vaadin.version>
+        <vaadin.version>25.1.1</vaadin.version>
         <drivers.downloader.phase>pre-integration-test</drivers.downloader.phase>
         <jetty.version>12.1.7</jetty.version>
         <warName>application</warName>
+        <eclipse-store.version>4.0.1</eclipse-store.version>
     </properties>
 
     <repositories>
@@ -157,19 +158,41 @@
     </dependencyManagement>
 
     <dependencies>
+        <!-- Nur zum Kompilieren, nicht bundlen -->
         <dependency>
-            <groupId>com.vaadin</groupId>
-            <artifactId>vaadin-core</artifactId>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <version>6.1.0</version>
+            <scope>provided</scope>
         </dependency>
+
+        <!--Vaadin Flow Dependencies-->
         <dependency>
             <groupId>com.vaadin</groupId>
-            <artifactId>vaadin-dev</artifactId>
-            <optional>true</optional>
+            <!-- Replace artifactId with vaadin-core to use only free components -->
+            <artifactId>vaadin-core</artifactId>
+            <!-- Remove the following exclussion if you want to enable Hilla -->
+            <exclusions>
+                <exclusion>
+                    <groupId>com.vaadin</groupId>
+                    <artifactId>vaadin-dev</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>com.vaadin</groupId>
+                    <artifactId>vaadin-dev-server</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>com.svenruppert</groupId>
             <artifactId>core</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.svenruppert</groupId>
+            <artifactId>functional-reactive</artifactId>
+        </dependency>
+
+        <!--    Logging-->
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
@@ -180,19 +203,42 @@
         </dependency>
 
         <dependency>
-            <groupId>tools.jackson.core</groupId>
+            <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-core</artifactId>
-            <version>3.0.4</version>
+            <version>2.21.0</version>
         </dependency>
         <dependency>
-            <groupId>tools.jackson.core</groupId>
+            <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
-            <version>3.0.4</version>
+            <version>2.21.0</version>
         </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-annotations</artifactId>
-            <version>2.20</version>
+            <version>2.21</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.datatype</groupId>
+            <artifactId>jackson-datatype-jsr310</artifactId>
+            <version>2.21.0</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.eclipse.store</groupId>
+            <artifactId>storage-embedded</artifactId>
+            <version>${eclipse-store.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.serializer</groupId>
+            <artifactId>serializer</artifactId>
+            <version>${eclipse-store.version}</version>
+        </dependency>
+
+        <!-- EXIF / Image Metadata Extraction -->
+        <dependency>
+            <groupId>com.drewnoakes</groupId>
+            <artifactId>metadata-extractor</artifactId>
+            <version>2.19.0</version>
         </dependency>
     </dependencies>
 
@@ -200,34 +246,27 @@
         <defaultGoal>jetty:run</defaultGoal>
         <finalName>${warName}-${project.version}</finalName>
         <plugins>
-            <!--            <plugin>-->
-            <!--                <groupId>org.eclipse.jetty</groupId>-->
-            <!--                <artifactId>jetty-maven-plugin</artifactId>-->
-            <!--                &lt;!&ndash;                <version>${jetty.version}</version>&ndash;&gt;-->
-            <!--                <version>11.0.26</version>-->
-            <!--                <configuration>-->
-            <!--                    <scan>2</scan>-->
-            <!--                    <webApp>-->
-            <!--                        <allowDuplicateFragmentNames>true</allowDuplicateFragmentNames>-->
-            <!--                    </webApp>-->
-            <!--                </configuration>-->
-            <!--            </plugin>-->
+            <!-- Jetty plugin for easy testing without a server -->
             <plugin>
-                <groupId>org.eclipse.jetty.ee10</groupId>
-                <artifactId>jetty-ee10-maven-plugin</artifactId>
+                <groupId>org.eclipse.jetty.ee11</groupId>
+                <artifactId>jetty-ee11-maven-plugin</artifactId>
                 <version>${jetty.version}</version>
                 <configuration>
+                    <!-- If using IntelliJ IDEA with autocompilation, this
+                    might cause lots of unnecessary compilations in the
+                    background.-->
                     <scan>2</scan>
+                    <!-- Use war output directory to get the webpack files -->
                     <webApp>
                         <allowDuplicateFragmentNames>true</allowDuplicateFragmentNames>
                     </webApp>
                 </configuration>
             </plugin>
             <!--
-                Take care of synchronizing java dependencies and imports in
-                package.json and main.js files.
-                It also creates webpack.config.js if not exists yet.
-            -->
+    Take care of synchronizing java dependencies and imports in
+    package.json and main.js files.
+    It also creates webpack.config.js if not exists yet.
+-->
             <plugin>
                 <groupId>com.vaadin</groupId>
                 <artifactId>vaadin-maven-plugin</artifactId>
@@ -241,17 +280,19 @@
                         <phase>compile</phase>
                     </execution>
                 </executions>
-            </plugin>
 
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-war-plugin</artifactId>
                 <configuration>
-                    <failOnMissingWebXml>false</failOnMissingWebXml>
+                    <pnpmEnable>true</pnpmEnable>
+                </configuration>
+
+            </plugin>
+            <plugin>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
                 </configuration>
             </plugin>
-
-
             <plugin>
                 <inherited>true</inherited>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -304,13 +345,13 @@
                         </goals>
                     </execution>
                 </executions>
-                <!--                <configuration>-->
-                <!--                    <archive>-->
-                <!--                        <manifest>-->
-                <!--                            <mainClass>${app.main.class}</mainClass>-->
-                <!--                        </manifest>-->
-                <!--                    </archive>-->
-                <!--                </configuration>-->
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>${app.main.class}</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
             </plugin>
 
             <plugin>
@@ -331,14 +372,14 @@
                     <dependency>
                         <groupId>org.pitest</groupId>
                         <artifactId>pitest-junit5-plugin</artifactId>
-                        <version>1.2.3</version>
+                        <version>1.2.2</version>
                     </dependency>
 
                 </dependencies>
                 <configuration>
-                    <threads>2</threads>
+                    <threads>1</threads>
                     <outputFormats>
-                        <outputFormat>XML</outputFormat>
+                        <!--                        <outputFormat>XML</outputFormat>-->
                         <outputFormat>HTML</outputFormat>
                     </outputFormats>
                     <targetClasses>

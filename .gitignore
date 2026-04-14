@@ -36,3 +36,8 @@ build/
 
 ### Mac OS ###
 .DS_Store
+/_data_images_previews/
+/_data_images/
+/_data/
+/src/main/frontend/generated/
+/src/main/bundles/

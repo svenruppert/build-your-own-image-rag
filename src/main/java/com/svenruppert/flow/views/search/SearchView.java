@@ -27,6 +27,7 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.progressbar.ProgressBar;
 import com.vaadin.flow.component.select.Select;
+import com.vaadin.flow.component.textfield.NumberField;
 import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
@@ -111,6 +112,8 @@ public class SearchView
   private final Select<SeasonHint>     seasonSelect     = new Select<>();
   private final Select<SourceCategory> categorySelect   = new Select<>();
   private final Select<RiskLevel>      privacySelect    = new Select<>();
+  /** Score threshold: minimum cosine similarity for a result to be kept. Default 0.45. */
+  private final NumberField            scoreField       = new NumberField();
   private final Button                 refineBtn        = new Button();
 
   // ── Results ───────────────────────────────────────────────────────────────
@@ -342,6 +345,14 @@ public class SearchView
         ? getTranslation("search.filter.any") : r.name());
     privacySelect.setPlaceholder(getTranslation("search.filter.any"));
 
+    // Score threshold — minimum cosine similarity for a result to appear
+    scoreField.setLabel(getTranslation("search.advanced.threshold"));
+    scoreField.setMin(0.0);
+    scoreField.setMax(1.0);
+    scoreField.setStep(0.05);
+    scoreField.setValue(0.45);  // matches server default MIN_SCORE = 0.45
+    scoreField.setWidth("130px");
+
     // "Refine Search" — skip LLM and use the edited plan directly
     refineBtn.setText(getTranslation("search.advanced.refine"));
     refineBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_SMALL);
@@ -350,7 +361,7 @@ public class SearchView
     HorizontalLayout boolRow = new HorizontalLayout(personSelect, vehicleSelect, plateSelect);
     boolRow.setSpacing(true);
 
-    HorizontalLayout enumRow = new HorizontalLayout(seasonSelect, categorySelect, privacySelect);
+    HorizontalLayout enumRow = new HorizontalLayout(seasonSelect, categorySelect, privacySelect, scoreField);
     enumRow.setSpacing(true);
 
     VerticalLayout content = new VerticalLayout(embeddingArea, boolRow, enumRow, refineBtn);
@@ -468,6 +479,7 @@ public class SearchView
     state.transformOnly  = transformOnly;
     state.mode           = transformOnly ? SearchMode.TRANSFORM_ONLY
                                         : SearchMode.TRANSFORM_AND_EXECUTE;
+    state.minScore       = effectiveThreshold();
     currentSearch = state;
 
     setAllButtonsEnabled(false);
@@ -506,6 +518,7 @@ public class SearchView
     p.setSourceCategory(categorySelect.getValue());
     p.setPrivacyLevel(privacySelect.getValue());
     p.setExplanation(currentPlan != null ? currentPlan.getExplanation() : null);
+    p.setMinScore(effectiveThreshold());
     return p;
   }
 
@@ -545,8 +558,11 @@ public class SearchView
         return;
       }
 
+      // Apply the user-selected score threshold before executing the search
+      plan.setMinScore(state.minScore);
+
       state.status = "search.status.vector";
-      state.stepProgress = 3;  // vector search started
+      state.stepProgress = 3;  // search execution started
       List<SearchResultItem> results = ServiceRegistry.getInstance()
           .getSearchService()
           .search(plan);
@@ -605,7 +621,7 @@ public class SearchView
       inspector.setLlmCompleted(s.plan);
     }
     if (p >= 3) {
-      inspector.setVectorActive();
+      inspector.setSearchPrepActive();
     }
 
     statusLabel.setText(getTranslation(s.status));
@@ -630,7 +646,7 @@ public class SearchView
 
     // Final inspector states
     if (p >= 4 && s.results != null) {
-      inspector.setVectorCompleted(s.results.size());
+      inspector.setSearchCompleted(s.results.size(), s.minScore);
     }
     if (s.transformOnly) {
       inspector.skipExecutionSteps();
@@ -669,6 +685,7 @@ public class SearchView
     seasonSelect.setValue(plan.getSeasonHint());
     categorySelect.setValue(plan.getSourceCategory());
     privacySelect.setValue(plan.getPrivacyLevel());
+    scoreField.setValue(plan.getMinScore() != null ? plan.getMinScore() : 0.45);
     advancedSection.setOpened(true);
   }
 
@@ -676,6 +693,16 @@ public class SearchView
     if (Boolean.TRUE.equals(value))  return BOOL_YES;
     if (Boolean.FALSE.equals(value)) return BOOL_NO;
     return BOOL_ANY;
+  }
+
+  /**
+   * Reads the score threshold from the UI field, clamps it to [0.0, 1.0], and
+   * falls back to 0.45 (the server default) when the field is empty.
+   */
+  private double effectiveThreshold() {
+    Double raw = scoreField.getValue();
+    if (raw == null) return 0.45;
+    return Math.max(0.0, Math.min(1.0, raw));
   }
 
   private void setAllButtonsEnabled(boolean enabled) {
@@ -818,19 +845,7 @@ public class SearchView
     }
     info.add(rankBadge);
 
-    // Filename
-    Span name = new Span(r.getTitle() != null ? r.getTitle() : "\u2014");
-    name.getStyle()
-        .set("font-weight", "600")
-        .set("font-size", "var(--lumo-font-size-s)")
-        .set("overflow", "hidden")
-        .set("text-overflow", "ellipsis")
-        .set("white-space", "nowrap")
-        .set("display", "block");
-    name.getElement().setAttribute("title", r.getTitle() != null ? r.getTitle() : "");
-    info.add(name);
-
-    // Category
+    // Category — high-signal compact label
     if (r.getSourceCategory() != null) {
       Span catSpan = new Span(r.getSourceCategory().name());
       catSpan.getStyle()
@@ -839,22 +854,19 @@ public class SearchView
       info.add(catSpan);
     }
 
+    // Season hint — compact context
+    if (r.getSeasonHint() != null) {
+      Span seasonSpan = new Span(r.getSeasonHint().name());
+      seasonSpan.getStyle()
+          .set("font-size", "var(--lumo-font-size-xs)")
+          .set("color", "var(--lumo-secondary-text-color)");
+      info.add(seasonSpan);
+    }
+
     // Risk icon
     info.add(riskIcon(r.getRiskLevel()));
 
-    // Description excerpt
-    if (r.getSummary() != null) {
-      String excerpt = r.getSummary().length() > 80
-          ? r.getSummary().substring(0, 80) + "\u2026" : r.getSummary();
-      Span desc = new Span(excerpt);
-      desc.getStyle()
-          .set("font-size", "var(--lumo-font-size-xs)")
-          .set("color", "var(--lumo-secondary-text-color)")
-          .set("white-space", "normal");
-      info.add(desc);
-    }
-
-    // Details button
+    // Details button (filename and description available in dialog)
     Button detailBtn = new Button(getTranslation("search.col.details"));
     detailBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_PRIMARY);
     detailBtn.addClickListener(e -> openDetailDialog(r));
@@ -966,8 +978,14 @@ public class SearchView
     /** Original user query; null for refine runs (which are not persisted to history). */
     volatile String                 originalQuery = null;
     /**
+     * Effective score threshold used for this search run.
+     * Copied from the UI scoreField at the moment the run starts; passed to the
+     * search plan so the service applies exactly the threshold the user configured.
+     */
+    volatile double                 minScore = 0.45;
+    /**
      * Step progress counter for live inspector updates.
-     * 0 = starting, 1 = LLM started, 2 = LLM done, 3 = vector started, 4 = vector done.
+     * 0 = starting, 1 = LLM started, 2 = LLM done, 3 = search started, 4 = search done.
      */
     volatile int                    stepProgress = 0;
   }

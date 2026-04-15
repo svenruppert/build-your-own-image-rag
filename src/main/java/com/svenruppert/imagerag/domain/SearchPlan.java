@@ -15,6 +15,12 @@ public class SearchPlan {
   private SourceCategory sourceCategory;
   private RiskLevel privacyLevel;
   private String explanation;
+  /**
+   * Minimum cosine-similarity score for a candidate to be kept in search results.
+   * When {@code null} the service uses its built-in default (currently 0.45).
+   * Must be in [0.0, 1.0]; the service clamps the value if it is out of range.
+   */
+  private Double minScore;
 
   public SearchPlan() {
   }
@@ -89,5 +95,13 @@ public class SearchPlan {
 
   public void setExplanation(String v) {
     this.explanation = v;
+  }
+
+  public Double getMinScore() {
+    return minScore;
+  }
+
+  public void setMinScore(Double v) {
+    this.minScore = v;
   }
 }

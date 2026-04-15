@@ -52,7 +52,10 @@ public class ViewModeToggle extends HorizontalLayout {
         .set("gap", "0")
         .set("border", "1px solid var(--lumo-contrast-20pct)")
         .set("border-radius", "var(--lumo-border-radius-m)")
-        .set("overflow", "hidden");
+        .set("overflow", "hidden")
+        // Prevent the segmented control from being squashed by surrounding flex containers
+        .set("flex-shrink", "0")
+        .set("align-self", "flex-start");
 
     tableBtn = buildSegmentButton(VaadinIcon.LIST, LABEL_TABLE, true);
     tilesBtn = buildSegmentButton(VaadinIcon.GRID_BIG, LABEL_TILES, false);
@@ -98,7 +101,11 @@ public class ViewModeToggle extends HorizontalLayout {
     content.getStyle().set("gap", "0.35rem");
 
     Button btn = new Button(content);
-    btn.getStyle().set("min-width", "90px");
+    // Explicit sizing prevents the button from collapsing under layout pressure
+    btn.getStyle()
+        .set("min-width", "90px")
+        .set("min-height", "36px")
+        .set("height", "36px");
 
     if (leftEdge) {
       btn.getStyle()

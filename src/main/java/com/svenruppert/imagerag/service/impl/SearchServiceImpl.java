@@ -63,14 +63,20 @@ public class SearchServiceImpl
     logger().info("Vector search returned {} candidates for query: {}",
                   candidates.size(), plan.getOriginalQuery());
 
-    // Step 3: Apply score threshold + structural filters
+    // Step 3: Apply score threshold + structural filters.
+    // The effective threshold uses the plan's user-supplied value when present;
+    // falls back to the server default (MIN_SCORE = 0.45) when unset.
+    // The value is clamped to [0.0, 1.0] server-side regardless of UI input.
+    double effectiveMin = (plan.getMinScore() != null)
+        ? Math.max(0.0, Math.min(1.0, plan.getMinScore()))
+        : MIN_SCORE;
     List<SearchResultItem> results = new ArrayList<>();
 
     for (VectorSearchHit hit : candidates) {
       // Candidates are sorted descending — break as soon as score drops below threshold
-      if (hit.score() < MIN_SCORE) {
-        logger().debug("Score {:.3f} below threshold {:.2f} — stopping early after {} candidates",
-                       hit.score(), MIN_SCORE, results.size());
+      if (hit.score() < effectiveMin) {
+        logger().debug("Score below threshold {} — stopping early after {} candidates",
+                       effectiveMin, results.size());
         break;
       }
 
@@ -109,7 +115,7 @@ public class SearchServiceImpl
     }
 
     logger().info("Search returned {} results after score+filter pass (threshold={})",
-                  results.size(), MIN_SCORE);
+                  results.size(), effectiveMin);
     return results.subList(0, Math.min(MAX_RESULTS, results.size()));
   }
 

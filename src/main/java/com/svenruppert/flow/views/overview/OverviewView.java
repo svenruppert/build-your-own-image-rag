@@ -75,7 +75,8 @@ public class OverviewView
   private List<ImageAsset> allImages = List.of();
 
   public OverviewView() {
-    setSizeFull();
+    // Natural page scrolling — do not setSizeFull() so content can grow beyond the viewport.
+    setWidthFull();
     setPadding(true);
     setSpacing(true);
 
@@ -97,20 +98,17 @@ public class OverviewView
     // ── Table view ────────────────────────────────────────────────────────
     configureGrid();
     add(grid);
-    setFlexGrow(1, grid);
 
     // ── Tile container (hidden until toggled) ──────────────────────────────
+    // No fixed height or overflow-y: the page scrolls naturally as the grid grows.
     tileContainer.getStyle()
         .set("display", "grid")
         .set("grid-template-columns", "repeat(auto-fill, minmax(220px, 1fr))")
         .set("gap", "1rem")
-        .set("overflow-y", "auto")
         .set("padding", "0.5rem")
-        .set("width", "100%")
-        .set("height", "100%");
+        .set("width", "100%");
     tileContainer.setVisible(false);
     add(tileContainer);
-    setFlexGrow(1, tileContainer);
   }
 
   // -------------------------------------------------------------------------
@@ -200,7 +198,8 @@ public class OverviewView
 
   private void configureGrid() {
     grid.setWidthFull();
-    grid.setHeightFull();
+    // setAllRowsVisible: grid sizes to fit all rows; the page scrolls naturally.
+    grid.setAllRowsVisible(true);
     grid.addThemeVariants(GridVariant.LUMO_ROW_STRIPES);
 
     // Thumbnail
@@ -356,32 +355,36 @@ public class OverviewView
     iconRow.add(visibilityIcon(asset, ps));
     info.add(iconRow);
 
-    // Action buttons
-    HorizontalLayout actions = new HorizontalLayout();
-    actions.setSpacing(true);
+    // Action area — two rows for cleaner grouping and reduced crowding.
+    // Row 1 (informational): Details + Reprocess — open or enrich the image
+    // Row 2 (state-changing): visibility toggle + delete — modify or remove
 
-    // Approve / Lock toggle
-    actions.add(approveButton(asset));
-
-    // Details button (explicit — double-click is the shortcut)
     Button detailBtn = new Button(getTranslation("overview.details.button"));
     detailBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
     detailBtn.addClickListener(e -> openDetailDialog(asset));
-    actions.add(detailBtn);
 
-    // Delete button
+    Button reprocessBtn = new Button(getTranslation("overview.reprocess"));
+    reprocessBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+    reprocessBtn.addClickListener(e -> startReprocess(asset));
+
+    HorizontalLayout actionRow1 = new HorizontalLayout(detailBtn, reprocessBtn);
+    actionRow1.setSpacing(true);
+    actionRow1.setPadding(false);
+
     Button delBtn = new Button(TRASH.create());
     delBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_TERTIARY);
     delBtn.getElement().setAttribute("title", getTranslation("overview.delete.title"));
     delBtn.addClickListener(e -> confirmDelete(asset));
-    actions.add(delBtn);
 
-    // Reprocess button — re-runs AI stages (vision, semantic, sensitivity, embedding)
-    // on the file that is already stored on disk; does not create a new asset
-    Button reprocessBtn = new Button(getTranslation("overview.reprocess"));
-    reprocessBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
-    reprocessBtn.addClickListener(e -> startReprocess(asset));
-    actions.add(reprocessBtn);
+    HorizontalLayout actionRow2 = new HorizontalLayout(approveButton(asset), delBtn);
+    actionRow2.setSpacing(true);
+    actionRow2.setPadding(false);
+    actionRow2.setAlignItems(Alignment.CENTER);
+
+    VerticalLayout actions = new VerticalLayout(actionRow1, actionRow2);
+    actions.setPadding(false);
+    actions.setSpacing(false);
+    actions.getStyle().set("gap", "0.15rem");
 
     info.add(actions);
     card.add(info);

@@ -11,6 +11,7 @@ import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
 import com.svenruppert.imagerag.service.SemanticDerivationService;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -21,15 +22,13 @@ public class SemanticDerivationServiceImpl
 
   private static final String DERIVATION_PROMPT_TEMPLATE = """
       You are a structured data extractor. Given the following image description, extract structured fields as JSON.
-
       Image description:
       "%s"
-
       Return ONLY valid JSON with these exact fields (no markdown, no explanation):
       {
         "shortSummary": "<max 20 words summary>",
         "tags": ["tag1", "tag2", "tag3"],
-        "sourceCategory": "<FLOWER|CITY|MIXED|UNKNOWN>",
+        "sourceCategory": "<see allowed values below>",
         "sceneType": "<indoor|outdoor|urban|rural|natural|mixed>",
         "seasonHint": "<WINTER|SPRING|SUMMER|AUTUMN|UNKNOWN>",
         "containsPerson": <true|false>,
@@ -38,6 +37,21 @@ public class SemanticDerivationServiceImpl
         "containsReadableText": <true|false>,
         "containsLicensePlateHint": <true|false>
       }
+      Allowed sourceCategory values (choose the single best match):
+      Nature:     LANDSCAPE, MOUNTAIN, FOREST, BEACH_COASTAL, DESERT, RIVER_WATER,
+                  LAKE_POND, SKY_CLOUDS, FIELD_MEADOW, PLANT_BOTANICAL, SNOW_ICE,
+                  ROCK_GEOLOGY, FLOWER
+      Animals:    BIRD, MAMMAL_DOMESTIC, MAMMAL_WILD, REPTILE, INSECT, MARINE_LIFE
+      People:     PORTRAIT, GROUP_PEOPLE, CROWD, WORK_PROFESSIONAL, SPORT_ACTIVITY,
+                  FAMILY_CHILD
+      Urban:      ARCHITECTURE_EXTERIOR, ARCHITECTURE_INTERIOR, BRIDGE_INFRASTRUCTURE,
+                  MONUMENT_HISTORIC, PARK_GARDEN, MARKET_COMMERCIAL, NIGHT_SCENE, CITY
+      Vehicles:   CAR, TRUCK_HEAVY, MOTORCYCLE, BICYCLE, AIRCRAFT, WATERCRAFT,
+                  PUBLIC_TRANSPORT
+      Technology: ELECTRONICS, INDUSTRIAL_MACHINERY, MEDICAL_EQUIPMENT
+      Objects:    DOCUMENT_TEXT, SIGN_SIGNAGE, FOOD_DRINK, ARTWORK_GRAPHIC
+      Activities: SPORT_EVENT, OUTDOOR_ACTIVITY, CEREMONY_RITUAL
+      Other:      MIXED, UNKNOWN
       """;
 
   private final OllamaClient ollamaClient;
@@ -72,6 +86,11 @@ public class SemanticDerivationServiceImpl
     }
     if (analysis.getSourceCategory() == null) analysis.setSourceCategory(SourceCategory.UNKNOWN);
     if (analysis.getSeasonHint() == null) analysis.setSeasonHint(SeasonHint.UNKNOWN);
+
+    // Populate provenance fields so the detail view can show which models produced this analysis
+    analysis.setVisionModel(response.model() != null ? response.model() : config.getVisionModel());
+    analysis.setSemanticModel(config.getTextModel());
+    analysis.setAnalysisTimestamp(Instant.now());
 
     return analysis;
   }

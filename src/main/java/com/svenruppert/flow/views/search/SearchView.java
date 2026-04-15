@@ -6,10 +6,11 @@ import com.svenruppert.flow.views.detail.DetailDialog;
 import com.svenruppert.flow.views.shared.ViewModeToggle;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.*;
+import com.svenruppert.imagerag.domain.enums.CategoryGroup;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SearchMode;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
-import com.svenruppert.imagerag.domain.enums.SourceCategory;
+import com.svenruppert.imagerag.dto.SearchResult;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.PreviewService;
 import com.vaadin.flow.component.AttachEvent;
@@ -37,7 +38,10 @@ import com.vaadin.flow.shared.Registration;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Search Workbench — semantic image search with step-by-step transparency.
@@ -80,57 +84,71 @@ public class SearchView
 
   public static final String PATH = "search";
 
-  private static final int POLL_INTERVAL_MS  = 800;
+  private static final int POLL_INTERVAL_MS = 800;
   private static final int MAX_VISIBLE_CHIPS = 3;
-
+  private static final int PAGE_SIZE = 30;
+  // ── Boolean select values ─────────────────────────────────────────────────
+  private static final String BOOL_ANY = "any";
+  private static final String BOOL_YES = "yes";
+  private static final String BOOL_NO = "no";
   // ── Primary search bar ────────────────────────────────────────────────────
-  private final TextArea queryField   = new TextArea();
-  /** Runs only LLM query transformation; skips vector search. */
-  private final Button   transformBtn = new Button();
-  /** Runs the full pipeline: LLM transformation + vector search + results. */
-  private final Button   searchBtn    = new Button();
-
+  private final TextArea queryField = new TextArea();
+  /**
+   * Runs only LLM query transformation; skips vector search.
+   */
+  private final Button transformBtn = new Button();
+  /**
+   * Runs the full pipeline: LLM transformation + vector search + results.
+   */
+  private final Button searchBtn = new Button();
   // ── Recent search history ─────────────────────────────────────────────────
   private final Div recentSearchBar = new Div();
-
   // ── Search process inspector ──────────────────────────────────────────────
   private final SearchInspectorComponent inspector = new SearchInspectorComponent();
-
-  // ── View toggle (segmented control) ──────────────────────────────────────
-  private ViewModeToggle viewToggle;
-
   // ── Progress ──────────────────────────────────────────────────────────────
   private final ProgressBar progressBar = new ProgressBar();
-  private final Span        statusLabel = new Span();
-
+  private final Span statusLabel = new Span();
   // ── Advanced / editable search plan panel ────────────────────────────────
-  private final Details                advancedSection  = new Details();
-  private final TextArea               embeddingArea    = new TextArea();
-  private final Select<String>         personSelect     = new Select<>();
-  private final Select<String>         vehicleSelect    = new Select<>();
-  private final Select<String>         plateSelect      = new Select<>();
-  private final Select<SeasonHint>     seasonSelect     = new Select<>();
-  private final Select<SourceCategory> categorySelect   = new Select<>();
-  private final Select<RiskLevel>      privacySelect    = new Select<>();
-  /** Score threshold: minimum cosine similarity for a result to be kept. Default 0.45. */
-  private final NumberField            scoreField       = new NumberField();
-  private final Button                 refineBtn        = new Button();
-
+  private final Details advancedSection = new Details();
+  private final TextArea embeddingArea = new TextArea();
+  private final Select<String> personSelect = new Select<>();
+  private final Select<String> vehicleSelect = new Select<>();
+  private final Select<String> plateSelect = new Select<>();
+  private final Select<SeasonHint> seasonSelect = new Select<>();
+  private final Select<CategoryGroup> categorySelect = new Select<>();
+  private final Select<RiskLevel> privacySelect = new Select<>();
+  /**
+   * Score threshold: minimum cosine similarity for a result to be kept. Default 0.45.
+   */
+  private final NumberField scoreField = new NumberField();
+  private final Button refineBtn = new Button();
   // ── Results ───────────────────────────────────────────────────────────────
   private final Grid<SearchResultItem> resultsGrid = new Grid<>(SearchResultItem.class, false);
   private final Div tileContainer = new Div();
+  private final Button loadMoreTilesBtn = new Button("Load more");
+  /**
+   * Compact facet panel shown below the two-column top area after a search completes.
+   */
+  private final Div facetPanel = new Div();
+  // ── View toggle (segmented control) ──────────────────────────────────────
+  private ViewModeToggle viewToggle;
+
+  // ── Facet panel ───────────────────────────────────────────────────────────
   private boolean tileMode = false;
   private List<SearchResultItem> lastResults = List.of();
-
+  /**
+   * Subset of lastResults currently visible after facet filtering; null means show all.
+   */
+  private List<SearchResultItem> facetFilteredResults = null;
+  private int currentPage = 1;
+  /**
+   * Currently active facet key, e.g. "cat:NATURE" or "risk:HIGH", or null for "all".
+   */
+  private String activeFacetKey = null;
   // ── Runtime state ─────────────────────────────────────────────────────────
   private SearchPlan currentPlan = null;
   private volatile SearchRunState currentSearch;
   private Registration pollRegistration;
-
-  // ── Boolean select values ─────────────────────────────────────────────────
-  private static final String BOOL_ANY = "any";
-  private static final String BOOL_YES = "yes";
-  private static final String BOOL_NO  = "no";
 
   public SearchView() {
     // Natural page scroll — do NOT call setSizeFull() so the page can grow with content.
@@ -154,7 +172,7 @@ public class SearchView
     transformBtn.setText(getTranslation("search.button.transform"));
     transformBtn.addThemeVariants(ButtonVariant.LUMO_CONTRAST);
     transformBtn.getElement().setAttribute("title",
-        getTranslation("search.button.transform.tooltip"));
+                                           getTranslation("search.button.transform.tooltip"));
     transformBtn.addClickListener(e -> triggerTransformOnly());
 
     // Search — full pipeline: LLM + vector search + results
@@ -209,6 +227,19 @@ public class SearchView
     topArea.setSpacing(true);
     add(topArea);
 
+    // ── Facet panel — full width, below the two columns, above results ────
+    facetPanel.setVisible(false);
+    facetPanel.getStyle()
+        .set("display", "flex")
+        .set("flex-wrap", "wrap")
+        .set("gap", "0.5rem")
+        .set("align-items", "center")
+        .set("padding", "0.5rem 0")
+        .set("border-top", "1px solid var(--lumo-contrast-10pct)")
+        .set("border-bottom", "1px solid var(--lumo-contrast-10pct)")
+        .set("margin-bottom", "0.25rem");
+    add(facetPanel);
+
     // ── Results area — full width, below the two columns ──────────────────
 
     // View toggle (segmented control)
@@ -229,11 +260,28 @@ public class SearchView
         .set("width", "100%");
     tileContainer.setVisible(false);
     add(tileContainer);
+
+    // ── Load more button (tile view only) ─────────────────────────────────
+    loadMoreTilesBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
+    loadMoreTilesBtn.setVisible(false);
+    loadMoreTilesBtn.addClickListener(e -> {
+      currentPage++;
+      renderTiles(lastResults);
+    });
+    add(loadMoreTilesBtn);
+
+    // ── Action bar (Save Search, Load Saved, Export CSV) ─────────────────
+    add(buildSearchActionBar());
   }
 
   // -------------------------------------------------------------------------
   // Recent search history
   // -------------------------------------------------------------------------
+
+  private static String escapeCsv(String value) {
+    if (value == null) return "";
+    return value.replace("\"", "\"\"");
+  }
 
   private void buildRecentSearchBar() {
     recentSearchBar.getStyle()
@@ -272,7 +320,7 @@ public class SearchView
                             ButtonVariant.LUMO_CONTRAST);
       chip.getStyle().set("font-size", "var(--lumo-font-size-xs)");
       chip.getElement().setAttribute("title",
-          getTranslation("search.history.chip.tooltip"));
+                                     getTranslation("search.history.chip.tooltip"));
       chip.addClickListener(e -> {
         queryField.setValue(entry.getQuery());
         queryField.focus();
@@ -301,6 +349,10 @@ public class SearchView
     recentSearchBar.add(clearBtn);
   }
 
+  // -------------------------------------------------------------------------
+  // Advanced search parameters panel
+  // -------------------------------------------------------------------------
+
   private void openHistoryDialog() {
     PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
     new SearchHistoryDialog(
@@ -314,18 +366,14 @@ public class SearchView
     ).open();
   }
 
-  // -------------------------------------------------------------------------
-  // Advanced search parameters panel
-  // -------------------------------------------------------------------------
-
   private void buildAdvancedSection() {
     embeddingArea.setLabel(getTranslation("search.advanced.embedding"));
     embeddingArea.setWidthFull();
     embeddingArea.setMaxHeight("100px");
 
-    configureBoolSelect(personSelect,  getTranslation("search.advanced.person"));
+    configureBoolSelect(personSelect, getTranslation("search.advanced.person"));
     configureBoolSelect(vehicleSelect, getTranslation("search.advanced.vehicle"));
-    configureBoolSelect(plateSelect,   getTranslation("search.advanced.plate"));
+    configureBoolSelect(plateSelect, getTranslation("search.advanced.plate"));
 
     seasonSelect.setLabel(getTranslation("search.advanced.season"));
     seasonSelect.setItems(SeasonHint.values());
@@ -334,9 +382,9 @@ public class SearchView
     seasonSelect.setPlaceholder(getTranslation("search.filter.any"));
 
     categorySelect.setLabel(getTranslation("search.advanced.category"));
-    categorySelect.setItems(SourceCategory.values());
+    categorySelect.setItems(CategoryGroup.values());
     categorySelect.setItemLabelGenerator(c -> c == null
-        ? getTranslation("search.filter.any") : c.name());
+        ? getTranslation("search.filter.any") : c.getLabel());
     categorySelect.setPlaceholder(getTranslation("search.filter.any"));
 
     privacySelect.setLabel(getTranslation("search.advanced.privacy"));
@@ -373,41 +421,43 @@ public class SearchView
     advancedSection.setOpened(false);
   }
 
+  // -------------------------------------------------------------------------
+  // View mode toggle callback
+  // -------------------------------------------------------------------------
+
   private void configureBoolSelect(Select<String> sel, String label) {
     sel.setLabel(label);
     sel.setItems(BOOL_ANY, BOOL_YES, BOOL_NO);
     sel.setItemLabelGenerator(v -> switch (v) {
       case BOOL_YES -> getTranslation("search.yes");
-      case BOOL_NO  -> getTranslation("search.no");
-      default       -> getTranslation("search.filter.any");
+      case BOOL_NO -> getTranslation("search.no");
+      default -> getTranslation("search.filter.any");
     });
     sel.setValue(BOOL_ANY);
-  }
-
-  // -------------------------------------------------------------------------
-  // View mode toggle callback
-  // -------------------------------------------------------------------------
-
-  private void onTileModeChanged(boolean tiles) {
-    tileMode = tiles;
-    if (!lastResults.isEmpty()) {
-      resultsGrid.setVisible(!tileMode);
-      tileContainer.setVisible(tileMode);
-      if (tileMode) {
-        renderTiles(lastResults);
-      }
-    }
   }
 
   // -------------------------------------------------------------------------
   // Polling lifecycle
   // -------------------------------------------------------------------------
 
+  private void onTileModeChanged(boolean tiles) {
+    tileMode = tiles;
+    List<SearchResultItem> active = facetFilteredResults != null ? facetFilteredResults : lastResults;
+    if (!active.isEmpty()) {
+      currentPage = 1;
+      renderResultsView(active);
+    }
+  }
+
   @Override
   protected void onAttach(AttachEvent event) {
     super.onAttach(event);
     pollRegistration = event.getUI().addPollListener(e -> onPoll());
   }
+
+  // -------------------------------------------------------------------------
+  // Search triggering — three entry points, one shared implementation
+  // -------------------------------------------------------------------------
 
   @Override
   protected void onDetach(DetachEvent event) {
@@ -419,10 +469,6 @@ public class SearchView
     event.getUI().setPollInterval(-1);
     // The shared search executor is NOT shut down here — it is managed by ServiceRegistry.
   }
-
-  // -------------------------------------------------------------------------
-  // Search triggering — three entry points, one shared implementation
-  // -------------------------------------------------------------------------
 
   /**
    * TRANSFORM ONLY — runs LLM query understanding and stops before vector search.
@@ -475,11 +521,11 @@ public class SearchView
     inspector.setQueryInput(query != null ? query : "");
 
     SearchRunState state = new SearchRunState();
-    state.originalQuery  = (prebuiltPlan == null) ? query : null; // only persist on fresh searches
-    state.transformOnly  = transformOnly;
-    state.mode           = transformOnly ? SearchMode.TRANSFORM_ONLY
-                                        : SearchMode.TRANSFORM_AND_EXECUTE;
-    state.minScore       = effectiveThreshold();
+    state.originalQuery = (prebuiltPlan == null) ? query : null; // only persist on fresh searches
+    state.transformOnly = transformOnly;
+    state.mode = transformOnly ? SearchMode.TRANSFORM_ONLY
+        : SearchMode.TRANSFORM_AND_EXECUTE;
+    state.minScore = effectiveThreshold();
     currentSearch = state;
 
     setAllButtonsEnabled(false);
@@ -509,30 +555,30 @@ public class SearchView
     SearchPlan p = new SearchPlan();
     p.setOriginalQuery(currentPlan != null ? currentPlan.getOriginalQuery() : queryField.getValue());
     p.setEmbeddingText(embeddingArea.getValue().isBlank()
-                       ? (currentPlan != null ? currentPlan.getEmbeddingText() : queryField.getValue())
-                       : embeddingArea.getValue().trim());
+                           ? (currentPlan != null ? currentPlan.getEmbeddingText() : queryField.getValue())
+                           : embeddingArea.getValue().trim());
     p.setContainsPerson(boolFromSelect(personSelect));
     p.setContainsVehicle(boolFromSelect(vehicleSelect));
     p.setContainsLicensePlate(boolFromSelect(plateSelect));
     p.setSeasonHint(seasonSelect.getValue());
-    p.setSourceCategory(categorySelect.getValue());
+    p.setCategoryGroup(categorySelect.getValue());
     p.setPrivacyLevel(privacySelect.getValue());
     p.setExplanation(currentPlan != null ? currentPlan.getExplanation() : null);
     p.setMinScore(effectiveThreshold());
     return p;
   }
 
-  private Boolean boolFromSelect(Select<String> sel) {
-    return switch (sel.getValue()) {
-      case BOOL_YES -> Boolean.TRUE;
-      case BOOL_NO  -> Boolean.FALSE;
-      default       -> null;
-    };
-  }
-
   // -------------------------------------------------------------------------
   // Background search tasks (run on shared executor thread)
   // -------------------------------------------------------------------------
+
+  private Boolean boolFromSelect(Select<String> sel) {
+    return switch (sel.getValue()) {
+      case BOOL_YES -> Boolean.TRUE;
+      case BOOL_NO -> Boolean.FALSE;
+      default -> null;
+    };
+  }
 
   /**
    * Full flow: LLM query analysis then (optionally) vector search.
@@ -549,8 +595,8 @@ public class SearchView
           .understand(query);
       state.plan = plan;
       state.stepProgress = 2;  // LLM analysis done
-      logger().info("Query plan: embedding='{}', season={}, category={}",
-                    plan.getEmbeddingText(), plan.getSeasonHint(), plan.getSourceCategory());
+      logger().info("Query plan: embedding='{}', season={}, categoryGroup={}",
+                    plan.getEmbeddingText(), plan.getSeasonHint(), plan.getCategoryGroup());
 
       if (state.transformOnly) {
         // Stop here — vector search intentionally skipped
@@ -563,12 +609,15 @@ public class SearchView
 
       state.status = "search.status.vector";
       state.stepProgress = 3;  // search execution started
-      List<SearchResultItem> results = ServiceRegistry.getInstance()
+      SearchResult sr = ServiceRegistry.getInstance()
           .getSearchService()
           .search(plan);
-      state.results = results;
+      state.results = sr.items();
+      state.vectorCandidates = sr.vectorCandidates();
+      state.keywordCandidates = sr.keywordCandidates();
       state.stepProgress = 4;  // vector search done
-      logger().info("Search returned {} results", results.size());
+      logger().info("Search returned {} results (vec={}, bm25={})",
+                    sr.items().size(), sr.vectorCandidates(), sr.keywordCandidates());
     } catch (Exception ex) {
       logger().error("Search failed: {}", ex.getMessage(), ex);
       state.error = ex.getMessage();
@@ -576,6 +625,10 @@ public class SearchView
       state.done = true;
     }
   }
+
+  // -------------------------------------------------------------------------
+  // Poll handler — runs on the Vaadin UI thread
+  // -------------------------------------------------------------------------
 
   /**
    * Refined flow: skip LLM, use the supplied plan directly, always executes vector search.
@@ -588,12 +641,15 @@ public class SearchView
       state.stepProgress = 2;  // plan is already available (user edited it)
       logger().info("Refine search with edited plan: embedding='{}'", plan.getEmbeddingText());
       state.stepProgress = 3;
-      List<SearchResultItem> results = ServiceRegistry.getInstance()
+      SearchResult sr = ServiceRegistry.getInstance()
           .getSearchService()
           .search(plan);
-      state.results = results;
+      state.results = sr.items();
+      state.vectorCandidates = sr.vectorCandidates();
+      state.keywordCandidates = sr.keywordCandidates();
       state.stepProgress = 4;
-      logger().info("Refine search returned {} results", results.size());
+      logger().info("Refine search returned {} results (vec={}, bm25={})",
+                    sr.items().size(), sr.vectorCandidates(), sr.keywordCandidates());
     } catch (Exception ex) {
       logger().error("Refine search failed: {}", ex.getMessage(), ex);
       state.error = ex.getMessage();
@@ -603,7 +659,7 @@ public class SearchView
   }
 
   // -------------------------------------------------------------------------
-  // Poll handler — runs on the Vaadin UI thread
+  // Advanced panel population
   // -------------------------------------------------------------------------
 
   private void onPoll() {
@@ -646,7 +702,8 @@ public class SearchView
 
     // Final inspector states
     if (p >= 4 && s.results != null) {
-      inspector.setSearchCompleted(s.results.size(), s.minScore);
+      inspector.setSearchCompleted(s.results.size(), s.minScore,
+                                   s.vectorCandidates, s.keywordCandidates);
     }
     if (s.transformOnly) {
       inspector.skipExecutionSteps();
@@ -673,24 +730,20 @@ public class SearchView
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Advanced panel population
-  // -------------------------------------------------------------------------
-
   private void populateAdvancedPanel(SearchPlan plan) {
     embeddingArea.setValue(plan.getEmbeddingText() != null ? plan.getEmbeddingText() : "");
     personSelect.setValue(boolToSelect(plan.getContainsPerson()));
     vehicleSelect.setValue(boolToSelect(plan.getContainsVehicle()));
     plateSelect.setValue(boolToSelect(plan.getContainsLicensePlate()));
     seasonSelect.setValue(plan.getSeasonHint());
-    categorySelect.setValue(plan.getSourceCategory());
+    categorySelect.setValue(plan.getCategoryGroup());
     privacySelect.setValue(plan.getPrivacyLevel());
     scoreField.setValue(plan.getMinScore() != null ? plan.getMinScore() : 0.45);
     advancedSection.setOpened(true);
   }
 
   private String boolToSelect(Boolean value) {
-    if (Boolean.TRUE.equals(value))  return BOOL_YES;
+    if (Boolean.TRUE.equals(value)) return BOOL_YES;
     if (Boolean.FALSE.equals(value)) return BOOL_NO;
     return BOOL_ANY;
   }
@@ -705,6 +758,10 @@ public class SearchView
     return Math.max(0.0, Math.min(1.0, raw));
   }
 
+  // -------------------------------------------------------------------------
+  // Grid configuration
+  // -------------------------------------------------------------------------
+
   private void setAllButtonsEnabled(boolean enabled) {
     transformBtn.setEnabled(enabled);
     searchBtn.setEnabled(enabled);
@@ -712,7 +769,7 @@ public class SearchView
   }
 
   // -------------------------------------------------------------------------
-  // Grid configuration
+  // Results rendering
   // -------------------------------------------------------------------------
 
   private void configureResultsGrid() {
@@ -733,7 +790,7 @@ public class SearchView
 
     // Filename (goal M) and Description (goal M) columns removed.
 
-    resultsGrid.addColumn(r -> r.getSourceCategory() != null ? r.getSourceCategory().name() : "\u2014")
+    resultsGrid.addColumn(r -> CategoryRegistry.getUserLabel(r.getSourceCategory()))
         .setHeader(getTranslation("search.col.category")).setFlexGrow(1);
 
     resultsGrid.addColumn(r -> r.getSeasonHint() != null ? r.getSeasonHint().name() : "\u2014")
@@ -742,7 +799,7 @@ public class SearchView
     resultsGrid.addComponentColumn(r -> {
       Boolean pp = r.getContainsPerson();
       return new Span(pp == null ? "\u2014" : (pp ? getTranslation("search.yes")
-                                                  : getTranslation("search.no")));
+                                               : getTranslation("search.no")));
     }).setHeader(getTranslation("search.col.persons")).setFlexGrow(1);
 
     // Risk as icon (goal O: icons instead of text badges in table)
@@ -757,28 +814,23 @@ public class SearchView
     }).setHeader("").setFlexGrow(1);
   }
 
-  // -------------------------------------------------------------------------
-  // Results rendering
-  // -------------------------------------------------------------------------
-
   private void renderResults(List<SearchResultItem> results) {
     lastResults = results;
+    facetFilteredResults = null;  // clear any active facet filter on new search
+    activeFacetKey = null;
+    currentPage = 1;
     if (results.isEmpty()) {
       Notification.show(getTranslation("search.notfound"), 3000, Notification.Position.MIDDLE);
       resultsGrid.setVisible(false);
       tileContainer.setVisible(false);
+      loadMoreTilesBtn.setVisible(false);
       viewToggle.setVisible(false);
+      facetPanel.setVisible(false);
     } else {
+      buildFacetPanel(results);
+      facetPanel.setVisible(true);
       viewToggle.setVisible(true);
-      if (tileMode) {
-        renderTiles(results);
-        tileContainer.setVisible(true);
-        resultsGrid.setVisible(false);
-      } else {
-        resultsGrid.setItems(results);
-        resultsGrid.setVisible(true);
-        tileContainer.setVisible(false);
-      }
+      renderResultsView(results);
       Notification n = Notification.show(
           getTranslation("search.found", results.size()), 3000, Notification.Position.BOTTOM_END);
       n.addThemeVariants(NotificationVariant.LUMO_SUCCESS);
@@ -786,15 +838,176 @@ public class SearchView
   }
 
   // -------------------------------------------------------------------------
+  // Faceted filtering — compact click-to-filter chips above results
+  // -------------------------------------------------------------------------
+
+  /**
+   * Displays results in whichever mode (grid or tile) is currently active.
+   */
+  private void renderResultsView(List<SearchResultItem> items) {
+    if (tileMode) {
+      renderTiles(items);
+      tileContainer.setVisible(true);
+      resultsGrid.setVisible(false);
+    } else {
+      resultsGrid.setItems(items);
+      resultsGrid.setVisible(true);
+      tileContainer.setVisible(false);
+      loadMoreTilesBtn.setVisible(false);
+    }
+  }
+
+  /**
+   * Rebuilds the facet panel from {@code allResults}.
+   * Uses {@link #activeFacetKey} to highlight the currently selected chip.
+   *
+   * @param allResults full unfiltered result list (base for counts)
+   */
+  private void buildFacetPanel(List<SearchResultItem> allResults) {
+    facetPanel.removeAll();
+
+    // ── Label ─────────────────────────────────────────────────────────────
+    Span filterLabel = new Span("Filter: ");
+    filterLabel.getStyle()
+        .set("font-size", "var(--lumo-font-size-xs)")
+        .set("color", "var(--lumo-secondary-text-color)")
+        .set("font-weight", "600")
+        .set("flex-shrink", "0");
+    facetPanel.add(filterLabel);
+
+    // ── "All" chip — always shown, clears active facet ───────────────────
+    Button allChip = new Button("All (" + allResults.size() + ")");
+    allChip.addThemeVariants(ButtonVariant.LUMO_SMALL,
+                             activeFacetKey == null ? ButtonVariant.LUMO_PRIMARY : ButtonVariant.LUMO_TERTIARY);
+    allChip.getStyle().set("font-size", "var(--lumo-font-size-xs)");
+    allChip.addClickListener(e -> {
+      activeFacetKey = null;
+      facetFilteredResults = null;
+      buildFacetPanel(allResults);
+      currentPage = 1;
+      renderResultsView(allResults);
+    });
+    facetPanel.add(allChip);
+
+    // ── Category-group facets ─────────────────────────────────────────────
+    Map<CategoryGroup, Long> byCatGroup = allResults.stream()
+        .filter(r -> r.getSourceCategory() != null)
+        .collect(Collectors.groupingBy(
+            r -> CategoryRegistry.getGroup(r.getSourceCategory()),
+            Collectors.counting()));
+
+    // Sort by count descending for visual relevance
+    byCatGroup.entrySet().stream()
+        .sorted(Map.Entry.<CategoryGroup, Long>comparingByValue().reversed())
+        .forEach(entry -> {
+          CategoryGroup group = entry.getKey();
+          long count = entry.getValue();
+          String key = "cat:" + group.name();
+          boolean active = key.equals(activeFacetKey);
+
+          String label = group.name().charAt(0)
+              + group.name().substring(1).toLowerCase().replace("_", " ");
+          Button chip = new Button(label + " (" + count + ")");
+          chip.addThemeVariants(ButtonVariant.LUMO_SMALL,
+                                active ? ButtonVariant.LUMO_PRIMARY : ButtonVariant.LUMO_CONTRAST);
+          chip.getStyle().set("font-size", "var(--lumo-font-size-xs)");
+          chip.addClickListener(e -> applyFacet(allResults, key));
+          facetPanel.add(chip);
+        });
+
+    // ── Separator ─────────────────────────────────────────────────────────
+    if (!byCatGroup.isEmpty()) {
+      Span sep = new Span("|");
+      sep.getStyle()
+          .set("color", "var(--lumo-contrast-30pct)")
+          .set("font-size", "var(--lumo-font-size-xs)");
+      facetPanel.add(sep);
+    }
+
+    // ── Risk-level facets ─────────────────────────────────────────────────
+    Map<RiskLevel, Long> byRisk = allResults.stream()
+        .filter(r -> r.getRiskLevel() != null)
+        .collect(Collectors.groupingBy(SearchResultItem::getRiskLevel, Collectors.counting()));
+
+    byRisk.entrySet().stream()
+        .sorted(Map.Entry.<RiskLevel, Long>comparingByValue().reversed())
+        .forEach(entry -> {
+          RiskLevel risk = entry.getKey();
+          long count = entry.getValue();
+          String key = "risk:" + risk.name();
+          boolean active = key.equals(activeFacetKey);
+
+          Button chip = new Button(risk.name() + " (" + count + ")");
+          chip.addThemeVariants(ButtonVariant.LUMO_SMALL,
+                                active ? ButtonVariant.LUMO_PRIMARY : ButtonVariant.LUMO_TERTIARY);
+          chip.getStyle().set("font-size", "var(--lumo-font-size-xs)");
+          // Color-code by risk level
+          if (risk == RiskLevel.SENSITIVE) {
+            chip.getStyle().set("color", "var(--lumo-error-color)");
+          } else if (risk == RiskLevel.REVIEW) {
+            chip.getStyle().set("color", "var(--lumo-warning-color)");
+          }
+          chip.addClickListener(e -> applyFacet(allResults, key));
+          facetPanel.add(chip);
+        });
+  }
+
+  // -------------------------------------------------------------------------
   // Tile view for search results — fixed-height cards
   // -------------------------------------------------------------------------
 
+  /**
+   * Applies a facet filter by key and re-renders results.
+   * Clicking an already-active facet toggles it off (shows all results).
+   */
+  private void applyFacet(List<SearchResultItem> allResults, String facetKey) {
+    // Toggle: clicking the active facet clears it
+    if (facetKey.equals(activeFacetKey)) {
+      activeFacetKey = null;
+      facetFilteredResults = null;
+      buildFacetPanel(allResults);
+      currentPage = 1;
+      renderResultsView(allResults);
+      return;
+    }
+
+    activeFacetKey = facetKey;
+    List<SearchResultItem> filtered;
+    if (facetKey.startsWith("cat:")) {
+      String groupName = facetKey.substring(4);
+      filtered = allResults.stream()
+          .filter(r -> r.getSourceCategory() != null
+              && CategoryRegistry.getGroup(r.getSourceCategory()).name().equals(groupName))
+          .collect(Collectors.toList());
+    } else if (facetKey.startsWith("risk:")) {
+      String riskName = facetKey.substring(5);
+      filtered = allResults.stream()
+          .filter(r -> r.getRiskLevel() != null && r.getRiskLevel().name().equals(riskName))
+          .collect(Collectors.toList());
+    } else {
+      filtered = new ArrayList<>(allResults);
+    }
+
+    facetFilteredResults = filtered;
+    buildFacetPanel(allResults);
+    currentPage = 1;
+    renderResultsView(filtered);
+  }
+
   private void renderTiles(List<SearchResultItem> results) {
     tileContainer.removeAll();
-    for (int i = 0; i < results.size(); i++) {
+    int limit = currentPage * PAGE_SIZE;
+    int total = results.size();
+    int visible = Math.min(limit, total);
+    for (int i = 0; i < visible; i++) {
       tileContainer.add(buildResultTile(results.get(i), i + 1));
     }
+    loadMoreTilesBtn.setVisible(total > limit);
   }
+
+  // -------------------------------------------------------------------------
+  // Risk iconography
+  // -------------------------------------------------------------------------
 
   private Div buildResultTile(SearchResultItem r, int rank) {
     Div card = new Div();
@@ -845,22 +1058,15 @@ public class SearchView
     }
     info.add(rankBadge);
 
-    // Category — high-signal compact label
+    // Category — user-friendly label with coarse group
     if (r.getSourceCategory() != null) {
-      Span catSpan = new Span(r.getSourceCategory().name());
+      String catLabel = CategoryRegistry.getUserLabel(r.getSourceCategory())
+          + " \u00b7 " + CategoryRegistry.getGroupLabel(r.getSourceCategory());
+      Span catSpan = new Span(catLabel);
       catSpan.getStyle()
           .set("font-size", "var(--lumo-font-size-xs)")
           .set("color", "var(--lumo-secondary-text-color)");
       info.add(catSpan);
-    }
-
-    // Season hint — compact context
-    if (r.getSeasonHint() != null) {
-      Span seasonSpan = new Span(r.getSeasonHint().name());
-      seasonSpan.getStyle()
-          .set("font-size", "var(--lumo-font-size-xs)")
-          .set("color", "var(--lumo-secondary-text-color)");
-      info.add(seasonSpan);
     }
 
     // Risk icon
@@ -877,7 +1083,7 @@ public class SearchView
   }
 
   // -------------------------------------------------------------------------
-  // Risk iconography
+  // Thumbnail helpers
   // -------------------------------------------------------------------------
 
   private com.vaadin.flow.component.Component riskIcon(RiskLevel risk) {
@@ -887,25 +1093,21 @@ public class SearchView
       return dash;
     }
     Icon icon = switch (risk) {
-      case SAFE      -> VaadinIcon.CHECK_CIRCLE.create();
-      case REVIEW    -> VaadinIcon.QUESTION_CIRCLE.create();
+      case SAFE -> VaadinIcon.CHECK_CIRCLE.create();
+      case REVIEW -> VaadinIcon.QUESTION_CIRCLE.create();
       case SENSITIVE -> VaadinIcon.EXCLAMATION_CIRCLE_O.create();
     };
     String color = switch (risk) {
-      case SAFE      -> "var(--lumo-success-color)";
-      case REVIEW    -> "var(--lumo-warning-color, orange)";
+      case SAFE -> "var(--lumo-success-color)";
+      case REVIEW -> "var(--lumo-warning-color, orange)";
       case SENSITIVE -> "var(--lumo-error-color)";
     };
     icon.setSize("16px");
     icon.setColor(color);
     icon.getElement().setAttribute("title",
-        getTranslation("overview.risk.tooltip." + risk.name().toLowerCase()));
+                                   getTranslation("overview.risk.tooltip." + risk.name().toLowerCase()));
     return icon;
   }
-
-  // -------------------------------------------------------------------------
-  // Thumbnail helpers
-  // -------------------------------------------------------------------------
 
   private com.vaadin.flow.component.Component buildResultThumb(SearchResultItem r, String height) {
     try {
@@ -941,6 +1143,10 @@ public class SearchView
     return new Span("\u2014");
   }
 
+  // -------------------------------------------------------------------------
+  // Shared volatile search run state
+  // -------------------------------------------------------------------------
+
   private void openDetailDialog(SearchResultItem result) {
     PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
     ImageAsset asset = ps.findImage(result.getImageId()).orElse(null);
@@ -948,15 +1154,131 @@ public class SearchView
       Notification.show(getTranslation("search.image.notfound"), 3000, Notification.Position.MIDDLE);
       return;
     }
-    SemanticAnalysis analysis  = ps.findAnalysis(result.getImageId()).orElse(null);
+    SemanticAnalysis analysis = ps.findAnalysis(result.getImageId()).orElse(null);
     SensitivityAssessment assm = ps.findAssessment(result.getImageId()).orElse(null);
-    LocationSummary location   = ps.findLocation(result.getImageId()).orElse(null);
+    LocationSummary location = ps.findLocation(result.getImageId()).orElse(null);
     new DetailDialog(asset, analysis, assm, location).open();
   }
 
   // -------------------------------------------------------------------------
-  // Shared volatile search run state
+  // Save search / Load saved search / Export CSV
   // -------------------------------------------------------------------------
+
+  private com.vaadin.flow.component.orderedlayout.HorizontalLayout buildSearchActionBar() {
+    Button saveBtn = new Button(getTranslation("search.save"), e -> openSaveSearchDialog());
+    saveBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+
+    Button loadBtn = new Button(getTranslation("search.saved.title"), e -> openLoadSavedSearchDialog());
+    loadBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+
+    Anchor exportAnchor = buildCsvExportAnchor();
+
+    com.vaadin.flow.component.orderedlayout.HorizontalLayout bar =
+        new com.vaadin.flow.component.orderedlayout.HorizontalLayout(saveBtn, loadBtn, exportAnchor);
+    bar.setAlignItems(com.vaadin.flow.component.orderedlayout.FlexComponent.Alignment.CENTER);
+    bar.setSpacing(true);
+    return bar;
+  }
+
+  private Anchor buildCsvExportAnchor() {
+    StreamResource csvResource = new StreamResource("search-results.csv", () -> {
+      String csv = buildCsvContent(lastResults);
+      return new java.io.ByteArrayInputStream(csv.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    });
+    Anchor anchor = new Anchor(csvResource, getTranslation("search.export.csv"));
+    anchor.getElement().setAttribute("download", true);
+    anchor.getStyle().set("font-size", "var(--lumo-font-size-s)");
+    return anchor;
+  }
+
+  private String buildCsvContent(List<SearchResultItem> results) {
+    StringBuilder sb = new StringBuilder();
+    sb.append("Score,Filename,Category,Risk,Summary\n");
+    for (SearchResultItem r : results) {
+      sb.append(String.format("%.3f,\"%s\",\"%s\",\"%s\",\"%s\"\n",
+                              r.getScore(),
+                              escapeCsv(r.getTitle()),
+                              r.getSourceCategory() != null ? r.getSourceCategory().name() : "",
+                              r.getRiskLevel() != null ? r.getRiskLevel().name() : "",
+                              escapeCsv(r.getSummary())));
+    }
+    return sb.toString();
+  }
+
+  private void openSaveSearchDialog() {
+    com.vaadin.flow.component.dialog.Dialog dlg = new com.vaadin.flow.component.dialog.Dialog();
+    dlg.setHeaderTitle(getTranslation("search.save"));
+
+    com.vaadin.flow.component.textfield.TextField nameField =
+        new com.vaadin.flow.component.textfield.TextField(getTranslation("search.saved.name"));
+    nameField.setWidthFull();
+
+    Button saveBtn = new Button("Save", e -> {
+      String name = nameField.getValue();
+      if (name == null || name.isBlank()) return;
+      String query = queryField.getValue();
+      com.svenruppert.imagerag.domain.SavedSearchView view =
+          new com.svenruppert.imagerag.domain.SavedSearchView(name, query);
+      if (currentPlan != null) {
+        view.setEmbeddingText(currentPlan.getEmbeddingText());
+      }
+      ServiceRegistry.getInstance().getPersistenceService().saveSavedSearchView(view);
+      Notification.show("Search saved: " + name, 3000, Notification.Position.BOTTOM_END)
+          .addThemeVariants(NotificationVariant.LUMO_SUCCESS);
+      dlg.close();
+    });
+    saveBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+
+    Button cancelBtn = new Button("Cancel", e -> dlg.close());
+    cancelBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
+
+    dlg.add(nameField);
+    dlg.getFooter().add(cancelBtn, saveBtn);
+    dlg.open();
+  }
+
+  private void openLoadSavedSearchDialog() {
+    com.vaadin.flow.component.dialog.Dialog dlg = new com.vaadin.flow.component.dialog.Dialog();
+    dlg.setHeaderTitle(getTranslation("search.saved.title"));
+    dlg.setWidth("500px");
+
+    com.vaadin.flow.component.grid.Grid<com.svenruppert.imagerag.domain.SavedSearchView> savedGrid =
+        new com.vaadin.flow.component.grid.Grid<>(com.svenruppert.imagerag.domain.SavedSearchView.class, false);
+    savedGrid.addColumn(com.svenruppert.imagerag.domain.SavedSearchView::getName)
+        .setHeader(getTranslation("search.saved.name")).setFlexGrow(2);
+    savedGrid.addColumn(com.svenruppert.imagerag.domain.SavedSearchView::getQuery)
+        .setHeader("Query").setFlexGrow(3);
+
+    savedGrid.addComponentColumn(view -> {
+      Button loadBtn = new Button(getTranslation("search.saved.load"), e -> {
+        queryField.setValue(view.getQuery() != null ? view.getQuery() : "");
+        dlg.close();
+        triggerSearchAndExecute();
+      });
+      loadBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_PRIMARY);
+
+      Button delBtn = new Button(getTranslation("search.saved.delete"), e -> {
+        ServiceRegistry.getInstance().getPersistenceService().deleteSavedSearchView(view.getId());
+        savedGrid.setItems(ServiceRegistry.getInstance().getPersistenceService().getSavedSearchViews());
+      });
+      delBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR,
+                              ButtonVariant.LUMO_TERTIARY);
+
+      com.vaadin.flow.component.orderedlayout.HorizontalLayout actions =
+          new com.vaadin.flow.component.orderedlayout.HorizontalLayout(loadBtn, delBtn);
+      actions.setSpacing(true);
+      return actions;
+    }).setHeader("").setWidth("200px").setFlexGrow(0);
+
+    savedGrid.setItems(ServiceRegistry.getInstance().getPersistenceService().getSavedSearchViews());
+    savedGrid.setHeight("300px");
+    dlg.add(savedGrid);
+
+    Button closeBtn = new Button("Close", e -> dlg.close());
+    closeBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+    dlg.getFooter().add(closeBtn);
+    dlg.open();
+  }
 
   /**
    * Volatile holder for the in-progress background search.
@@ -966,27 +1288,41 @@ public class SearchView
    * {@link #stepProgress} drives real-time inspector updates during polling.
    */
   private static class SearchRunState {
-    /** i18n key for the current status label (e.g. "search.status.analyzing"). */
-    volatile String                 status       = "search.status.init";
-    volatile SearchPlan             plan         = null;
-    volatile List<SearchResultItem> results      = null;
-    volatile String                 error        = null;
-    volatile boolean                done         = false;
-    /** Whether this run stops after LLM analysis (no vector search). */
-    volatile boolean                transformOnly = false;
-    volatile SearchMode             mode         = SearchMode.TRANSFORM_AND_EXECUTE;
-    /** Original user query; null for refine runs (which are not persisted to history). */
-    volatile String                 originalQuery = null;
+    /**
+     * i18n key for the current status label (e.g. "search.status.analyzing").
+     */
+    volatile String status = "search.status.init";
+    volatile SearchPlan plan = null;
+    volatile List<SearchResultItem> results = null;
+    volatile String error = null;
+    volatile boolean done = false;
+    /**
+     * Whether this run stops after LLM analysis (no vector search).
+     */
+    volatile boolean transformOnly = false;
+    volatile SearchMode mode = SearchMode.TRANSFORM_AND_EXECUTE;
+    /**
+     * Original user query; null for refine runs (which are not persisted to history).
+     */
+    volatile String originalQuery = null;
     /**
      * Effective score threshold used for this search run.
      * Copied from the UI scoreField at the moment the run starts; passed to the
      * search plan so the service applies exactly the threshold the user configured.
      */
-    volatile double                 minScore = 0.45;
+    volatile double minScore = 0.45;
     /**
      * Step progress counter for live inspector updates.
      * 0 = starting, 1 = LLM started, 2 = LLM done, 3 = search started, 4 = search done.
      */
-    volatile int                    stepProgress = 0;
+    volatile int stepProgress = 0;
+    /**
+     * Number of vector candidates returned by the vector index before RRF fusion.
+     */
+    volatile int vectorCandidates = 0;
+    /**
+     * Number of BM25 candidates returned by the keyword index before RRF fusion.
+     */
+    volatile int keywordCandidates = 0;
   }
 }

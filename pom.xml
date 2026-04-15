@@ -240,6 +240,42 @@
             <artifactId>metadata-extractor</artifactId>
             <version>2.19.0</version>
         </dependency>
+
+        <!-- Markdown rendering — safe HTML generation from LLM-produced description text -->
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+            <version>0.22.0</version>
+        </dependency>
+
+        <!--
+            JVector: pure-Java approximate nearest-neighbour search (DiskANN / HNSW).
+            Version 4.0.0-rc.8 used to match the EclipseStore integration baseline.
+            Used by EclipseStoreGigaMapJVectorBackend as the vector-search engine;
+            EclipseStore remains the persistence layer (raw vectors stored in AppDataRoot).
+        -->
+        <dependency>
+            <groupId>io.github.jbellis</groupId>
+            <artifactId>jvector</artifactId>
+            <version>4.0.0-rc.8</version>
+        </dependency>
+
+        <!-- Lucene for BM25 keyword retrieval — 10.x required for Java 21+ Vector API support -->
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-core</artifactId>
+            <version>10.4.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-analysis-common</artifactId>
+            <version>10.4.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-queryparser</artifactId>
+            <version>10.4.0</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -510,46 +546,6 @@
             </build>
         </profile>
         <profile>
-            <id>_shadejar</id>
-            <build>
-                <finalName>application</finalName>
-                <plugins>
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-shade-plugin</artifactId>
-                        <configuration>
-                            <transformers>
-                                <transformer
-                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <!--                                    <mainClass>${app.main.class}</mainClass> &lt;!&ndash; Here you should put the main class of your application &ndash;&gt;-->
-                                </transformer>
-                            </transformers>
-                            <filters>
-                                <filter> <!-- This filter is needed to avoid a bug in the shade plugin -->
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>META-INF/*.SF</exclude>
-                                        <exclude>META-INF/*.DSA</exclude>
-                                        <exclude>META-INF/*.RSA</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
-                        </configuration>
-                        <executions>
-                            <execution>
-                                <phase>package</phase>
-                                <goals>
-                                    <goal>shade</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-                </plugins>
-            </build>
-
-        </profile>
-
-        <profile>
             <!-- Production mode is activated using -Pproduction -->
             <id>production</id>
 
@@ -580,61 +576,6 @@
                                 <phase>compile</phase>
                             </execution>
                         </executions>
-                    </plugin>
-                </plugins>
-            </build>
-        </profile>
-
-        <profile>
-            <id>it</id>
-            <build>
-                <plugins>
-                    <plugin>
-                        <groupId>org.eclipse.jetty</groupId>
-                        <artifactId>jetty-maven-plugin</artifactId>
-                        <!--                        <version>${jetty.version}</version>-->
-                        <version>11.0.26</version>
-                        <configuration>
-                            <scan>0</scan>
-                            <stopPort>8081</stopPort>
-                            <stopWait>5</stopWait>
-                            <stopKey>${project.artifactId}</stopKey>
-                        </configuration>
-                        <executions>
-                            <execution>
-                                <id>start-jetty</id>
-                                <phase>pre-integration-test</phase>
-                                <goals>
-                                    <goal>start</goal>
-                                </goals>
-                            </execution>
-                            <execution>
-                                <id>stop-jetty</id>
-                                <phase>post-integration-test</phase>
-                                <goals>
-                                    <goal>stop</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                    </plugin>
-
-                    <!-- Runs the integration tests (*IT) after the server is started -->
-                    <plugin>
-                        <groupId>org.apache.maven.plugins</groupId>
-                        <artifactId>maven-failsafe-plugin</artifactId>
-                        <version>3.5.2</version>
-                        <executions>
-                            <execution>
-                                <goals>
-                                    <goal>integration-test</goal>
-                                    <goal>verify</goal>
-                                </goals>
-                            </execution>
-                        </executions>
-                        <configuration>
-                            <trimStackTrace>false</trimStackTrace>
-                            <enableAssertions>true</enableAssertions>
-                        </configuration>
                     </plugin>
                 </plugins>
             </build>

@@ -14,7 +14,7 @@ public class OllamaConfig {
     this.port = 11434;
     this.visionModel = "gemma4:31b";
     this.textModel = "gemma4:31b";
-    this.embeddingModel = "nomic-embed-text";
+    this.embeddingModel = "nomic-embed-text-v2-moe";
     this.timeoutSeconds = 300; // gemma4:31b is large — needs more time
   }
 

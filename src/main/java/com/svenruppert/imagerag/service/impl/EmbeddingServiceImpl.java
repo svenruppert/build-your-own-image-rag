@@ -24,7 +24,7 @@ public class EmbeddingServiceImpl
 
     if (vector == null || vector.length == 0) {
       logger().warn("Ollama returned null/empty embedding — using zero-vector fallback");
-      return new float[768]; // nomic-embed-text dimension
+      return new float[0]; // return empty so callers can detect and skip indexing
     }
 
     logger().debug("Embedded text ({} chars) -> {} dimensions", text.length(), vector.length);

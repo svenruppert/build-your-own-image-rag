@@ -4,9 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.SearchPlan;
+import com.svenruppert.imagerag.domain.enums.CategoryGroup;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
-import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.service.QueryUnderstandingService;
 
@@ -18,9 +18,7 @@ public class QueryUnderstandingServiceImpl
   private static final String QUERY_PROMPT_TEMPLATE = """
       You are a search query analyzer for an image archive system.
       Analyze the following search query and extract structured search parameters.
-
       Query: "%s"
-
       Return ONLY valid JSON with these exact fields (no markdown, no explanation, no comments):
       {
         "embeddingText": "<rich semantic description for vector search, max 100 words>",
@@ -28,11 +26,10 @@ public class QueryUnderstandingServiceImpl
         "containsVehicle": <true|false|null>,
         "containsLicensePlate": <true|false|null>,
         "seasonHint": "<WINTER|SPRING|SUMMER|AUTUMN|UNKNOWN|null>",
-        "sourceCategory": "<FLOWER|CITY|MIXED|UNKNOWN|null>",
+        "categoryGroup": "<NATURE|ANIMALS|PEOPLE|URBAN|VEHICLES|TECHNOLOGY|OBJECTS_MEDIA|ACTIVITIES|UNCATEGORIZED|null>",
         "privacyLevel": "<SAFE|REVIEW|SENSITIVE|null>",
         "explanation": "<brief explanation of query interpretation>"
       }
-
       Rules:
       - embeddingText must always be filled with a rich semantic description relevant to the query
       - Use null (not quoted) when a filter does not apply to the query
@@ -40,11 +37,15 @@ public class QueryUnderstandingServiceImpl
       - containsVehicle: true when the query mentions cars, vehicles, trucks, motorcycles, etc.
       - containsLicensePlate: true when the query mentions license plates, number plates, Nummernschild, etc.
       - If containsLicensePlate is true, containsVehicle should also be true
-      - seasonHint, sourceCategory, privacyLevel must be null if not explicitly implied by the query
+      - categoryGroup: NATURE for landscape/plant/weather, ANIMALS for wildlife/pets,
+        PEOPLE for portraits/crowds, URBAN for buildings/cities, VEHICLES for cars/aircraft,
+        TECHNOLOGY for electronics/machinery, OBJECTS_MEDIA for documents/food/art,
+        ACTIVITIES for sports/events; null if the query does not imply a specific category
+      - seasonHint, categoryGroup, privacyLevel must be null if not explicitly implied by the query
       """;
 
-  private final OllamaClient  ollamaClient;
-  private final ObjectMapper  objectMapper = new ObjectMapper();
+  private final OllamaClient ollamaClient;
+  private final ObjectMapper objectMapper = new ObjectMapper();
 
   public QueryUnderstandingServiceImpl(OllamaClient ollamaClient) {
     this.ollamaClient = ollamaClient;
@@ -89,14 +90,14 @@ public class QueryUnderstandingServiceImpl
       plan.setContainsLicensePlate(nullableBool(node, "containsLicensePlate"));
 
       plan.setSeasonHint(nullableEnum(node, "seasonHint", SeasonHint.class));
-      plan.setSourceCategory(nullableEnum(node, "sourceCategory", SourceCategory.class));
+      plan.setCategoryGroup(nullableEnum(node, "categoryGroup", CategoryGroup.class));
       plan.setPrivacyLevel(nullableEnum(node, "privacyLevel", RiskLevel.class));
       plan.setExplanation(node.path("explanation").asText(null));
 
       logger().info(
-          "SearchPlan: embedding='{}', person={}, vehicle={}, licensePlate={}, season={}, category={}",
+          "SearchPlan: embedding='{}', person={}, vehicle={}, licensePlate={}, season={}, categoryGroup={}",
           plan.getEmbeddingText(), plan.getContainsPerson(), plan.getContainsVehicle(),
-          plan.getContainsLicensePlate(), plan.getSeasonHint(), plan.getSourceCategory());
+          plan.getContainsLicensePlate(), plan.getSeasonHint(), plan.getCategoryGroup());
 
     } catch (Exception e) {
       logger().warn("Failed to parse SearchPlan JSON: {}. Using raw query as fallback.",

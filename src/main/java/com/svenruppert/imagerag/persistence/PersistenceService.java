@@ -2,30 +2,28 @@ package com.svenruppert.imagerag.persistence;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.*;
-import org.eclipse.store.storage.embedded.types.EmbeddedStorage;
-import org.eclipse.store.storage.embedded.types.EmbeddedStorageManager;
-
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SearchMode;
 import com.svenruppert.imagerag.domain.enums.SensitivityFlag;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
+import org.eclipse.store.storage.embedded.types.EmbeddedStorage;
+import org.eclipse.store.storage.embedded.types.EmbeddedStorageManager;
 
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 public class PersistenceService
     implements HasLogger {
 
+  private static final int MAX_RECENT_SEARCHES = 20;
   private final EmbeddedStorageManager storage;
   private final AppDataRoot root;
+
+  // -------------------------------------------------------------------------
+  // Save operations
+  // -------------------------------------------------------------------------
 
   public PersistenceService(Path storagePath) {
     AppDataRoot candidate = new AppDataRoot();
@@ -37,10 +35,14 @@ public class PersistenceService
       // Any field added after the first persistence run will be null in loaded data.
       // Calling getApprovedImageIds() triggers lazy init (creates the HashSet if null),
       // then we persist the root once to save the new field reference.
-      existingRoot.getApprovedImageIds(); // lazy init if null
-      existingRoot.getRecentSearches();   // lazy init if null (added later)
-      existingRoot.getHashIndex();        // lazy init if null (added later)
-      storage.store(existingRoot);        // persist updated field references
+      existingRoot.getApprovedImageIds();    // lazy init if null
+      existingRoot.getRecentSearches();      // lazy init if null (added later)
+      existingRoot.getHashIndex();           // lazy init if null (added later)
+      existingRoot.getOcrResults();          // lazy init if null (added later)
+      existingRoot.getSavedSearchViews();    // lazy init if null (added later)
+      existingRoot.getAuditLog();            // lazy init if null (added later)
+      existingRoot.getRawVectorStore();      // lazy init if null (added for GIGAMAP_JVECTOR backend)
+      storage.store(existingRoot);           // persist updated field references
       migrateEnumSets();                  // fix any EnumSet fields broken by Unsafe reconstruction
       logger().info("EclipseStore loaded existing data: {} images, {} approved, {} recent searches",
                     root.getImages().size(), root.getApprovedImageIds().size(),
@@ -52,10 +54,6 @@ public class PersistenceService
       logger().info("EclipseStore initialized with fresh root");
     }
   }
-
-  // -------------------------------------------------------------------------
-  // Save operations
-  // -------------------------------------------------------------------------
 
   public void saveImage(ImageAsset asset) {
     root.getImages().put(asset.getId(), asset);
@@ -82,13 +80,17 @@ public class PersistenceService
     storage.store(root.getAssessments());
   }
 
+  // -------------------------------------------------------------------------
+  // Delete — removes all data associated with an image across all collections
+  // -------------------------------------------------------------------------
+
   public void saveVectorEntry(UUID imageId, VectorEntry entry) {
     root.getVectorEntries().put(imageId, entry);
     storage.store(root.getVectorEntries());
   }
 
   // -------------------------------------------------------------------------
-  // Delete — removes all data associated with an image across all collections
+  // Privacy / approval
   // -------------------------------------------------------------------------
 
   /**
@@ -120,7 +122,7 @@ public class PersistenceService
   }
 
   // -------------------------------------------------------------------------
-  // Privacy / approval
+  // In-place updates for user corrections
   // -------------------------------------------------------------------------
 
   /**
@@ -130,10 +132,6 @@ public class PersistenceService
     root.getApprovedImageIds().add(imageId);
     storage.store(root.getApprovedImageIds());
   }
-
-  // -------------------------------------------------------------------------
-  // In-place updates for user corrections
-  // -------------------------------------------------------------------------
 
   /**
    * Update the risk level of an existing assessment in place and persist the change.
@@ -165,6 +163,10 @@ public class PersistenceService
     storage.store(root.getApprovedImageIds());
   }
 
+  // -------------------------------------------------------------------------
+  // Find / query
+  // -------------------------------------------------------------------------
+
   /**
    * Returns {@code true} if the image has been approved for search.
    */
@@ -172,15 +174,17 @@ public class PersistenceService
     return root.getApprovedImageIds().contains(imageId);
   }
 
-  // -------------------------------------------------------------------------
-  // Find / query
-  // -------------------------------------------------------------------------
-
   public Optional<ImageAsset> findImage(UUID imageId) {
     return Optional.ofNullable(root.getImages().get(imageId));
   }
 
   public List<ImageAsset> findAllImages() {
+    return root.getImages().values().stream()
+        .filter(a -> !a.isDeleted())
+        .collect(Collectors.toList());
+  }
+
+  public List<ImageAsset> findAllImagesIncludingDeleted() {
     return new ArrayList<>(root.getImages().values());
   }
 
@@ -204,13 +208,13 @@ public class PersistenceService
     return Optional.ofNullable(root.getVectorEntries().get(imageId));
   }
 
-  public List<UUID> findAllIndexedImageIds() {
-    return new ArrayList<>(root.getVectorEntries().keySet());
-  }
-
   // -------------------------------------------------------------------------
   // Hash-based duplicate detection
   // -------------------------------------------------------------------------
+
+  public List<UUID> findAllIndexedImageIds() {
+    return new ArrayList<>(root.getVectorEntries().keySet());
+  }
 
   /**
    * Returns the imageId of an already-stored asset whose file content matches
@@ -247,6 +251,10 @@ public class PersistenceService
     storage.store(root.getHashIndex());
   }
 
+  // -------------------------------------------------------------------------
+  // Recent search history
+  // -------------------------------------------------------------------------
+
   /**
    * Rebuilds the hash index from scratch by iterating all stored {@link ImageAsset}s.
    * Call once on application startup to make the index consistent with any images
@@ -265,12 +273,6 @@ public class PersistenceService
     storage.store(index);
     logger().info("Hash index rebuilt: {} entries", indexed);
   }
-
-  // -------------------------------------------------------------------------
-  // Recent search history
-  // -------------------------------------------------------------------------
-
-  private static final int MAX_RECENT_SEARCHES = 20;
 
   /**
    * Prepends the search entry to the recent-search list (case-insensitive deduplication
@@ -330,6 +332,117 @@ public class PersistenceService
     root.getRecentSearches().clear();
     storage.store(root.getRecentSearches());
     logger().info("Recent search history cleared");
+  }
+
+  // -------------------------------------------------------------------------
+  // Raw vector store — used by the GIGAMAP_JVECTOR backend
+  // -------------------------------------------------------------------------
+
+  /**
+   * Persists a raw embedding vector for the given image.
+   * Called by {@code EclipseStoreGigaMapJVectorBackend} whenever a vector is indexed.
+   * EclipseStore is the durable source of truth; the JVector HNSW index is rebuilt
+   * from these values at startup.
+   */
+  public void saveRawVector(UUID imageId, float[] vector) {
+    root.getRawVectorStore().put(imageId, vector);
+    storage.store(root.getRawVectorStore());
+  }
+
+  /**
+   * Removes the raw embedding vector for the given image.
+   * Called on delete / remove by the {@code GIGAMAP_JVECTOR} backend.
+   */
+  public void removeRawVector(UUID imageId) {
+    root.getRawVectorStore().remove(imageId);
+    storage.store(root.getRawVectorStore());
+  }
+
+  /**
+   * Returns a snapshot of all persisted raw vectors.
+   * Used by {@code EclipseStoreGigaMapJVectorBackend} to rebuild the JVector
+   * HNSW index at startup without calling the embedding model.
+   */
+  public Map<UUID, float[]> findAllRawVectors() {
+    return new HashMap<>(root.getRawVectorStore());
+  }
+
+  /**
+   * Returns the number of raw vectors currently persisted.
+   * Used to decide whether a one-time migration from the in-memory backend is needed.
+   */
+  public int getRawVectorCount() {
+    return root.getRawVectorStore().size();
+  }
+
+  // -------------------------------------------------------------------------
+  // OcrResult
+  // -------------------------------------------------------------------------
+
+  public void saveOcrResult(UUID imageId, OcrResult result) {
+    root.getOcrResults().put(imageId, result);
+    storage.store(root.getOcrResults());
+  }
+
+  public Optional<OcrResult> findOcrResult(UUID imageId) {
+    return Optional.ofNullable(root.getOcrResults().get(imageId));
+  }
+
+  // -------------------------------------------------------------------------
+  // SavedSearchView
+  // -------------------------------------------------------------------------
+
+  public void saveSavedSearchView(SavedSearchView view) {
+    root.getSavedSearchViews().add(view);
+    storage.store(root.getSavedSearchViews());
+  }
+
+  public List<SavedSearchView> getSavedSearchViews() {
+    return Collections.unmodifiableList(root.getSavedSearchViews());
+  }
+
+  public void deleteSavedSearchView(UUID viewId) {
+    root.getSavedSearchViews().removeIf(v -> viewId.equals(v.getId()));
+    storage.store(root.getSavedSearchViews());
+  }
+
+  // -------------------------------------------------------------------------
+  // AuditEntry
+  // -------------------------------------------------------------------------
+
+  public void addAuditEntry(AuditEntry entry) {
+    List<AuditEntry> log = root.getAuditLog();
+    log.add(0, entry);
+    // Keep last 500 entries
+    while (log.size() > 500) log.remove(log.size() - 1);
+    storage.store(log);
+  }
+
+  public List<AuditEntry> getAuditLog() {
+    return Collections.unmodifiableList(root.getAuditLog());
+  }
+
+  // -------------------------------------------------------------------------
+  // Soft delete / restore
+  // -------------------------------------------------------------------------
+
+  public void softDeleteImage(UUID imageId, String reason) {
+    findImage(imageId).ifPresent(asset -> {
+      asset.setDeleted(true);
+      asset.setDeletedAt(java.time.Instant.now());
+      asset.setDeletedReason(reason);
+      storage.store(asset);
+    });
+    unapproveImage(imageId);
+  }
+
+  public void restoreImage(UUID imageId) {
+    findImage(imageId).ifPresent(asset -> {
+      asset.setDeleted(false);
+      asset.setDeletedAt(null);
+      asset.setDeletedReason(null);
+      storage.store(asset);
+    });
   }
 
   public void shutdown() {

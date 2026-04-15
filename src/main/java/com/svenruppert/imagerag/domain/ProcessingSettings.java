@@ -17,7 +17,9 @@ package com.svenruppert.imagerag.domain;
  */
 public class ProcessingSettings {
 
-  /** Allowed values for both ingestion and search parallelism. */
+  /**
+   * Allowed values for both ingestion and search parallelism.
+   */
   public static final int[] ALLOWED_PARALLELISM = {1, 2, 4};
 
   private volatile int ingestionParallelism = 1;
@@ -27,6 +29,17 @@ public class ProcessingSettings {
    * Currently informational — the per-session executor remains single-threaded.
    */
   private volatile int searchParallelism = 1;
+
+  private static int clamp(int requested) {
+    // Return the largest allowed value that does not exceed requested
+    int result = 1;
+    for (int allowed : ALLOWED_PARALLELISM) {
+      if (allowed <= requested) {
+        result = allowed;
+      }
+    }
+    return result;
+  }
 
   public int getIngestionParallelism() {
     return ingestionParallelism;
@@ -50,16 +63,5 @@ public class ProcessingSettings {
    */
   public void setSearchParallelism(int value) {
     this.searchParallelism = clamp(value);
-  }
-
-  private static int clamp(int requested) {
-    // Return the largest allowed value that does not exceed requested
-    int result = 1;
-    for (int allowed : ALLOWED_PARALLELISM) {
-      if (allowed <= requested) {
-        result = allowed;
-      }
-    }
-    return result;
   }
 }

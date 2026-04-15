@@ -31,15 +31,16 @@ import java.util.function.Consumer;
  * <p>Any structural change to the history (delete or clear) invokes the {@code onChanged}
  * callback so the caller can refresh the compact chip bar.
  */
-public class SearchHistoryDialog extends Dialog {
+public class SearchHistoryDialog
+    extends Dialog {
 
   private static final DateTimeFormatter DATE_FMT =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
-  private final PersistenceService               ps;
-  private final Consumer<RecentSearchEntry>       onSelect;
-  private final Runnable                          onChanged;
-  private final Grid<RecentSearchEntry>           grid =
+  private final PersistenceService ps;
+  private final Consumer<RecentSearchEntry> onSelect;
+  private final Runnable onChanged;
+  private final Grid<RecentSearchEntry> grid =
       new Grid<>(RecentSearchEntry.class, false);
 
   /**
@@ -54,8 +55,8 @@ public class SearchHistoryDialog extends Dialog {
   public SearchHistoryDialog(PersistenceService ps,
                              Consumer<RecentSearchEntry> onSelect,
                              Runnable onChanged) {
-    this.ps        = ps;
-    this.onSelect  = onSelect;
+    this.ps = ps;
+    this.onSelect = onSelect;
     this.onChanged = onChanged;
 
     setHeaderTitle("Search History");

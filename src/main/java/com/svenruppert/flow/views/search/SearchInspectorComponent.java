@@ -39,20 +39,15 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
  * <p>UI update methods are designed to be called repeatedly from the polling handler —
  * they are idempotent and simply overwrite the previous state.
  */
-public class SearchInspectorComponent extends VerticalLayout {
+public class SearchInspectorComponent
+    extends VerticalLayout {
 
   // ── Status colours ────────────────────────────────────────────────────────────
-  private static final String COLOR_PENDING   = "var(--lumo-contrast-30pct)";
-  private static final String COLOR_ACTIVE    = "var(--lumo-primary-color)";
+  private static final String COLOR_PENDING = "var(--lumo-contrast-30pct)";
+  private static final String COLOR_ACTIVE = "var(--lumo-primary-color)";
   private static final String COLOR_COMPLETED = "var(--lumo-success-color)";
-  private static final String COLOR_SKIPPED   = "var(--lumo-contrast-15pct)";
-  private static final String COLOR_FAILED    = "var(--lumo-error-color)";
-
-  /** Step status values. */
-  public enum StepStatus {
-    PENDING, ACTIVE, COMPLETED, SKIPPED, FAILED
-  }
-
+  private static final String COLOR_SKIPPED = "var(--lumo-contrast-15pct)";
+  private static final String COLOR_FAILED = "var(--lumo-error-color)";
   // ── Step rows (8 steps) ───────────────────────────────────────────────────────
   private final StepRow stepQuery;
   private final StepRow stepLlm;
@@ -62,7 +57,6 @@ public class SearchInspectorComponent extends VerticalLayout {
   private final StepRow stepRetrieval;
   private final StepRow stepFiltering;
   private final StepRow stepResults;
-
   public SearchInspectorComponent() {
     setPadding(false);
     setSpacing(false);
@@ -73,45 +67,49 @@ public class SearchInspectorComponent extends VerticalLayout {
         .set("background", "var(--lumo-base-color)")
         .set("width", "100%");
 
-    stepQuery      = new StepRow("1", "User Query",           "Waiting for query\u2026");
-    stepLlm        = new StepRow("2", "Query Understanding",  "Waiting\u2026");
-    stepTransformed = new StepRow("3", "Transformed Query",   "Waiting\u2026");
-    stepParams     = new StepRow("4", "Derived Parameters",   "Waiting\u2026");
-    stepSearchPrep = new StepRow("5", "Search Preparation",   "Waiting\u2026");
-    stepRetrieval  = new StepRow("6", "Candidate Retrieval",  "Waiting\u2026");
-    stepFiltering  = new StepRow("7", "Filtering",            "Waiting\u2026");
-    stepResults    = new StepRow("8", "Result Generation",    "Waiting\u2026");
+    stepQuery = new StepRow("1", "User Query", "Waiting for query\u2026");
+    stepLlm = new StepRow("2", "Query Understanding", "Waiting\u2026");
+    stepTransformed = new StepRow("3", "Transformed Query", "Waiting\u2026");
+    stepParams = new StepRow("4", "Derived Parameters", "Waiting\u2026");
+    stepSearchPrep = new StepRow("5", "Search Preparation", "Waiting\u2026");
+    stepRetrieval = new StepRow("6", "Candidate Retrieval", "Waiting\u2026");
+    stepFiltering = new StepRow("7", "Filtering", "Waiting\u2026");
+    stepResults = new StepRow("8", "Result Generation", "Waiting\u2026");
 
     add(stepQuery, stepLlm, stepTransformed, stepParams,
         stepSearchPrep, stepRetrieval, stepFiltering, stepResults);
     reset();
   }
 
-  // ── Public update API (called from the UI polling handler) ───────────────────
-
   /**
    * Resets all steps to PENDING and clears all detail content.
    * Must be called at the start of each new search run.
    */
   public void reset() {
-    stepQuery.update(StepStatus.PENDING,      "Waiting for query\u2026",   null);
-    stepLlm.update(StepStatus.PENDING,        "Waiting\u2026",             null);
-    stepTransformed.update(StepStatus.PENDING, "Waiting\u2026",            null);
-    stepParams.update(StepStatus.PENDING,     "Waiting\u2026",             null);
-    stepSearchPrep.update(StepStatus.PENDING, "Waiting\u2026",             null);
-    stepRetrieval.update(StepStatus.PENDING,  "Waiting\u2026",             null);
-    stepFiltering.update(StepStatus.PENDING,  "Waiting\u2026",             null);
-    stepResults.update(StepStatus.PENDING,    "Waiting\u2026",             null);
+    stepQuery.update(StepStatus.PENDING, "Waiting for query\u2026", null);
+    stepLlm.update(StepStatus.PENDING, "Waiting\u2026", null);
+    stepTransformed.update(StepStatus.PENDING, "Waiting\u2026", null);
+    stepParams.update(StepStatus.PENDING, "Waiting\u2026", null);
+    stepSearchPrep.update(StepStatus.PENDING, "Waiting\u2026", null);
+    stepRetrieval.update(StepStatus.PENDING, "Waiting\u2026", null);
+    stepFiltering.update(StepStatus.PENDING, "Waiting\u2026", null);
+    stepResults.update(StepStatus.PENDING, "Waiting\u2026", null);
   }
 
-  /** Marks step 1 (User Query) as COMPLETED with the query text. */
+  // ── Public update API (called from the UI polling handler) ───────────────────
+
+  /**
+   * Marks step 1 (User Query) as COMPLETED with the query text.
+   */
   public void setQueryInput(String query) {
     stepQuery.update(StepStatus.COMPLETED,
                      "Query: " + truncate(query, 80),
                      query);
   }
 
-  /** Marks step 2 (Query Understanding) as ACTIVE. */
+  /**
+   * Marks step 2 (Query Understanding) as ACTIVE.
+   */
   public void setLlmActive() {
     stepLlm.update(StepStatus.ACTIVE, "Analyzing with language model\u2026", null);
   }
@@ -145,15 +143,29 @@ public class SearchInspectorComponent extends VerticalLayout {
   /**
    * Marks steps 5-8 as COMPLETED once the search has returned results.
    *
+   * <p>Step 6 (Candidate Retrieval) shows both vector and BM25 candidate counts,
+   * making the hybrid fusion step transparent.
    * <p>Step 7 (Filtering) shows the effective score threshold so the user can
    * understand exactly how strict the similarity cutoff was.
    *
    * @param resultCount  number of results after all filters
    * @param threshold    effective minimum score threshold that was applied
+   * @param vectorCands  number of candidates from the vector (semantic) channel
+   * @param keywordCands number of candidates from the BM25 (keyword) channel
    */
-  public void setSearchCompleted(int resultCount, double threshold) {
+  public void setSearchCompleted(int resultCount, double threshold,
+                                 int vectorCands, int keywordCands) {
     stepSearchPrep.update(StepStatus.COMPLETED, "Embedding computed", null);
-    stepRetrieval.update(StepStatus.COMPLETED,  "Vector search complete", null);
+    String retrievalSummary = String.format(
+        "Vector: %d candidates · BM25: %d candidates · RRF fusion applied",
+        vectorCands, keywordCands);
+    String retrievalDetail = String.format(
+        "Semantic (vector) channel: %d candidates%n"
+            + "Keyword (BM25/Lucene) channel: %d candidates%n"
+            + "Fusion: Reciprocal Rank Fusion (RRF, k=60)%n"
+            + "Merged candidates scored and sorted by combined RRF score",
+        vectorCands, keywordCands);
+    stepRetrieval.update(StepStatus.COMPLETED, retrievalSummary, retrievalDetail);
     stepFiltering.update(StepStatus.COMPLETED,
                          String.format("Score \u2265 %.2f \u2014 %d result(s) kept", threshold, resultCount),
                          String.format("Score threshold: %.2f%nResults kept: %d", threshold, resultCount));
@@ -169,9 +181,9 @@ public class SearchInspectorComponent extends VerticalLayout {
   public void skipExecutionSteps() {
     String note = "Skipped \u2014 Transform Only mode";
     stepSearchPrep.update(StepStatus.SKIPPED, note, null);
-    stepRetrieval.update(StepStatus.SKIPPED,  note, null);
-    stepFiltering.update(StepStatus.SKIPPED,  note, null);
-    stepResults.update(StepStatus.SKIPPED,    "Not executed \u2014 Transform Only mode", null);
+    stepRetrieval.update(StepStatus.SKIPPED, note, null);
+    stepFiltering.update(StepStatus.SKIPPED, note, null);
+    stepResults.update(StepStatus.SKIPPED, "Not executed \u2014 Transform Only mode", null);
   }
 
   /**
@@ -190,35 +202,35 @@ public class SearchInspectorComponent extends VerticalLayout {
                             error);
       stepRetrieval.update(StepStatus.SKIPPED, skippedNote, null);
       stepFiltering.update(StepStatus.SKIPPED, skippedNote, null);
-      stepResults.update(StepStatus.SKIPPED,   skippedNote, null);
+      stepResults.update(StepStatus.SKIPPED, skippedNote, null);
     } else {
       // Failure during or before LLM analysis
       stepLlm.update(StepStatus.FAILED,
                      "LLM analysis failed: " + truncate(error, 80),
                      error);
       stepTransformed.update(StepStatus.SKIPPED, skippedNote, null);
-      stepParams.update(StepStatus.SKIPPED,      skippedNote, null);
-      stepSearchPrep.update(StepStatus.SKIPPED,  skippedNote, null);
-      stepRetrieval.update(StepStatus.SKIPPED,   skippedNote, null);
-      stepFiltering.update(StepStatus.SKIPPED,   skippedNote, null);
-      stepResults.update(StepStatus.SKIPPED,     skippedNote, null);
+      stepParams.update(StepStatus.SKIPPED, skippedNote, null);
+      stepSearchPrep.update(StepStatus.SKIPPED, skippedNote, null);
+      stepRetrieval.update(StepStatus.SKIPPED, skippedNote, null);
+      stepFiltering.update(StepStatus.SKIPPED, skippedNote, null);
+      stepResults.update(StepStatus.SKIPPED, skippedNote, null);
     }
   }
-
-  // ── Helpers ──────────────────────────────────────────────────────────────────
 
   private String truncate(String s, int max) {
     if (s == null) return "\u2014";
     return s.length() > max ? s.substring(0, max) + "\u2026" : s;
   }
 
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
   private String buildParamSummary(SearchPlan plan) {
     StringBuilder sb = new StringBuilder();
     if (plan.getSeasonHint() != null) {
       sb.append("Season: ").append(plan.getSeasonHint().name()).append("  ");
     }
-    if (plan.getSourceCategory() != null) {
-      sb.append("Category: ").append(plan.getSourceCategory().name()).append("  ");
+    if (plan.getCategoryGroup() != null) {
+      sb.append("Category: ").append(plan.getCategoryGroup().getLabel()).append("  ");
     }
     if (plan.getContainsPerson() != null) {
       sb.append("Person: ").append(plan.getContainsPerson() ? "yes" : "no").append("  ");
@@ -249,8 +261,8 @@ public class SearchInspectorComponent extends VerticalLayout {
     if (plan.getSeasonHint() != null) {
       sb.append("Season: ").append(plan.getSeasonHint().name()).append("\n");
     }
-    if (plan.getSourceCategory() != null) {
-      sb.append("Category: ").append(plan.getSourceCategory().name()).append("\n");
+    if (plan.getCategoryGroup() != null) {
+      sb.append("Category Group: ").append(plan.getCategoryGroup().getLabel()).append("\n");
     }
     if (plan.getPrivacyLevel() != null) {
       sb.append("Max Privacy Level: ").append(plan.getPrivacyLevel().name()).append("\n");
@@ -259,6 +271,13 @@ public class SearchInspectorComponent extends VerticalLayout {
       sb.append("Score Threshold: ").append(String.format("%.2f", plan.getMinScore())).append("\n");
     }
     return sb.isEmpty() ? null : sb.toString().trim();
+  }
+
+  /**
+   * Step status values.
+   */
+  public enum StepStatus {
+    PENDING, ACTIVE, COMPLETED, SKIPPED, FAILED
   }
 
   // ── StepRow — inner component for a single pipeline step ─────────────────────
@@ -270,14 +289,15 @@ public class SearchInspectorComponent extends VerticalLayout {
    * <p>All content is updated via {@link #update(StepStatus, String, String)}, which
    * replaces the existing summary and detail content in one call.
    */
-  private static class StepRow extends Div {
+  private static class StepRow
+      extends Div {
 
-    private final Div    indicator;
-    private final Span   titleSpan;
-    private final Span   summarySpan;
-    private final Div    right;
-    private Details      detailsPanel = null;
-    private StepStatus   currentStatus = StepStatus.PENDING;
+    private final Div indicator;
+    private final Span titleSpan;
+    private final Span summarySpan;
+    private final Div right;
+    private Details detailsPanel = null;
+    private StepStatus currentStatus = StepStatus.PENDING;
 
     StepRow(String number, String title, String defaultSummary) {
       getStyle()
@@ -359,19 +379,19 @@ public class SearchInspectorComponent extends VerticalLayout {
 
     private void applyStatusStyle(StepStatus status) {
       String color = switch (status) {
-        case PENDING   -> COLOR_PENDING;
-        case ACTIVE    -> COLOR_ACTIVE;
+        case PENDING -> COLOR_PENDING;
+        case ACTIVE -> COLOR_ACTIVE;
         case COMPLETED -> COLOR_COMPLETED;
-        case SKIPPED   -> COLOR_SKIPPED;
-        case FAILED    -> COLOR_FAILED;
+        case SKIPPED -> COLOR_SKIPPED;
+        case FAILED -> COLOR_FAILED;
       };
       indicator.getStyle().set("background", color);
 
       boolean dimmed = status == StepStatus.PENDING || status == StepStatus.SKIPPED;
       titleSpan.getStyle().set("color",
-          dimmed ? "var(--lumo-disabled-text-color)" : "");
+                               dimmed ? "var(--lumo-disabled-text-color)" : "");
       summarySpan.getStyle().set("color",
-          dimmed ? "var(--lumo-disabled-text-color)" : "var(--lumo-secondary-text-color)");
+                                 dimmed ? "var(--lumo-disabled-text-color)" : "var(--lumo-secondary-text-color)");
     }
 
     StepStatus getCurrentStatus() {

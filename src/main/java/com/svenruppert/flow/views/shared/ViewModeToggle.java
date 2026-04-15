@@ -25,7 +25,8 @@ import java.util.function.Consumer;
  * <p>The component emits a change event only when the mode actually flips — clicking
  * the already-active button is a no-op.
  */
-public class ViewModeToggle extends HorizontalLayout {
+public class ViewModeToggle
+    extends HorizontalLayout {
 
   private static final String LABEL_TABLE = "Table";
   private static final String LABEL_TILES = "Tiles";
@@ -83,9 +84,9 @@ public class ViewModeToggle extends HorizontalLayout {
   /**
    * Builds a single segment button with an icon and a text label side-by-side.
    *
-   * @param icon      icon to display left of the label
-   * @param label     text label
-   * @param leftEdge  {@code true} if this is the left button (rounded left corners only)
+   * @param icon     icon to display left of the label
+   * @param label    text label
+   * @param leftEdge {@code true} if this is the left button (rounded left corners only)
    */
   private Button buildSegmentButton(VaadinIcon icon, String label, boolean leftEdge) {
     Icon ico = icon.create();

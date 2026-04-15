@@ -38,6 +38,37 @@ public class AppDataRoot {
    */
   private Map<String, UUID> hashIndex;
 
+  /**
+   * OCR extraction results, keyed by imageId.
+   * Not declared final for EclipseStore Unsafe reconstruction compatibility.
+   */
+  private Map<UUID, OcrResult> ocrResults;
+
+  /**
+   * User-saved search configurations.
+   * Not declared final for EclipseStore Unsafe reconstruction compatibility.
+   */
+  private List<SavedSearchView> savedSearchViews;
+
+  /**
+   * Audit log of critical state-changing actions (newest first, capped at 500).
+   * Not declared final for EclipseStore Unsafe reconstruction compatibility.
+   */
+  private List<AuditEntry> auditLog;
+
+  /**
+   * Raw embedding vectors keyed by imageId.
+   *
+   * <p>This is the EclipseStore-managed durable store for the
+   * {@code GIGAMAP_JVECTOR} vector-search backend — conceptually the "GigaMap"
+   * that persists the float[] embeddings so the JVector HNSW index can be
+   * rebuilt at startup <em>without</em> calling the embedding model again.
+   *
+   * <p>The {@code IN_MEMORY} backend does not use this map.
+   * Not declared final for EclipseStore Unsafe reconstruction compatibility.
+   */
+  private Map<UUID, float[]> rawVectorStore;
+
   public Map<UUID, ImageAsset> getImages() {
     return images;
   }
@@ -94,5 +125,47 @@ public class AppDataRoot {
       hashIndex = new HashMap<>();
     }
     return hashIndex;
+  }
+
+  /**
+   * Returns the OCR results map, lazily initialising it if null.
+   */
+  public Map<UUID, OcrResult> getOcrResults() {
+    if (ocrResults == null) {
+      ocrResults = new HashMap<>();
+    }
+    return ocrResults;
+  }
+
+  /**
+   * Returns the saved search views list, lazily initialising it if null.
+   */
+  public List<SavedSearchView> getSavedSearchViews() {
+    if (savedSearchViews == null) {
+      savedSearchViews = new ArrayList<>();
+    }
+    return savedSearchViews;
+  }
+
+  /**
+   * Returns the audit log list, lazily initialising it if null.
+   */
+  public List<AuditEntry> getAuditLog() {
+    if (auditLog == null) {
+      auditLog = new ArrayList<>();
+    }
+    return auditLog;
+  }
+
+  /**
+   * Returns the raw-vector store, lazily initialising it if null.
+   * Used exclusively by the {@code GIGAMAP_JVECTOR} backend.
+   * The map is owned by EclipseStore and persisted as part of the data root.
+   */
+  public Map<UUID, float[]> getRawVectorStore() {
+    if (rawVectorStore == null) {
+      rawVectorStore = new HashMap<>();
+    }
+    return rawVectorStore;
   }
 }

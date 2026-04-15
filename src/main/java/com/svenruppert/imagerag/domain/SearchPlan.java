@@ -1,8 +1,8 @@
 package com.svenruppert.imagerag.domain;
 
+import com.svenruppert.imagerag.domain.enums.CategoryGroup;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
-import com.svenruppert.imagerag.domain.enums.SourceCategory;
 
 public class SearchPlan {
 
@@ -12,7 +12,11 @@ public class SearchPlan {
   private Boolean containsVehicle;
   private Boolean containsLicensePlate;
   private SeasonHint seasonHint;
-  private SourceCategory sourceCategory;
+  /**
+   * Coarse category group filter chosen by the LLM or the user.
+   * Null means no category filter is applied.
+   */
+  private CategoryGroup categoryGroup;
   private RiskLevel privacyLevel;
   private String explanation;
   /**
@@ -73,12 +77,12 @@ public class SearchPlan {
     this.seasonHint = v;
   }
 
-  public SourceCategory getSourceCategory() {
-    return sourceCategory;
+  public CategoryGroup getCategoryGroup() {
+    return categoryGroup;
   }
 
-  public void setSourceCategory(SourceCategory v) {
-    this.sourceCategory = v;
+  public void setCategoryGroup(CategoryGroup v) {
+    this.categoryGroup = v;
   }
 
   public RiskLevel getPrivacyLevel() {

@@ -14,9 +14,13 @@ package com.svenruppert.imagerag.pipeline;
  */
 public enum JobType {
 
-  /** Fresh upload from the user — full pipeline including storage and deduplication. */
+  /**
+   * Fresh upload from the user — full pipeline including storage and deduplication.
+   */
   INGEST_UPLOAD,
 
-  /** Reprocessing of an already-stored image — AI stages only, storage skipped. */
+  /**
+   * Reprocessing of an already-stored image — AI stages only, storage skipped.
+   */
   REPROCESS_EXISTING
 }

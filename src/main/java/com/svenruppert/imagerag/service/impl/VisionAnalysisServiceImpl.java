@@ -24,7 +24,6 @@ public class VisionAnalysisServiceImpl
       - Vehicles: are vehicles visible?
       - Text: is readable text or signage visible?
       - Special details: GPS clues, architectural style, botanical details if relevant
-
       Write a coherent paragraph description suitable for semantic retrieval.
       Do not mention that this is an AI analysis. Be specific and objective.
       """;

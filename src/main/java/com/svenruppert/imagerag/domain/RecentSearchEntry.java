@@ -18,7 +18,9 @@ import java.time.Instant;
  */
 public class RecentSearchEntry {
 
-  /** The exact query string that the user typed into the search field. */
+  /**
+   * The exact query string that the user typed into the search field.
+   */
   private String query;
 
   /**
@@ -34,18 +36,22 @@ public class RecentSearchEntry {
    */
   private SearchMode mode;
 
-  /** Wall-clock time at which the search was executed. */
+  /**
+   * Wall-clock time at which the search was executed.
+   */
   private Instant timestamp;
 
-  /** No-arg constructor required for EclipseStore Unsafe reconstruction. */
+  /**
+   * No-arg constructor required for EclipseStore Unsafe reconstruction.
+   */
   public RecentSearchEntry() {
   }
 
   public RecentSearchEntry(String query, String finalQuery, SearchMode mode, Instant timestamp) {
-    this.query      = query;
+    this.query = query;
     this.finalQuery = finalQuery;
-    this.mode       = mode;
-    this.timestamp  = timestamp;
+    this.mode = mode;
+    this.timestamp = timestamp;
   }
 
   public String getQuery() {

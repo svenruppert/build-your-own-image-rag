@@ -27,7 +27,7 @@ public class ReprocessingServiceImpl
 
   public ReprocessingServiceImpl(IngestionPipeline pipeline,
                                  PersistenceService persistenceService) {
-    this.pipeline           = pipeline;
+    this.pipeline = pipeline;
     this.persistenceService = persistenceService;
   }
 

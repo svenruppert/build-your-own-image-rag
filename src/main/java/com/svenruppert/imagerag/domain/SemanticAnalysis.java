@@ -22,6 +22,19 @@ public class SemanticAnalysis {
   private Boolean containsReadableText;
   private Boolean containsLicensePlateHint;
 
+  /**
+   * Model that produced the vision analysis (e.g. "gemma4:31b").
+   */
+  private String visionModel;
+  /**
+   * Model used to derive semantic fields (same model, kept explicit).
+   */
+  private String semanticModel;
+  /**
+   * Timestamp when this analysis was produced.
+   */
+  private java.time.Instant analysisTimestamp;
+
   public SemanticAnalysis() {
   }
 
@@ -119,5 +132,29 @@ public class SemanticAnalysis {
 
   public void setContainsLicensePlateHint(Boolean containsLicensePlateHint) {
     this.containsLicensePlateHint = containsLicensePlateHint;
+  }
+
+  public String getVisionModel() {
+    return visionModel;
+  }
+
+  public void setVisionModel(String visionModel) {
+    this.visionModel = visionModel;
+  }
+
+  public String getSemanticModel() {
+    return semanticModel;
+  }
+
+  public void setSemanticModel(String semanticModel) {
+    this.semanticModel = semanticModel;
+  }
+
+  public java.time.Instant getAnalysisTimestamp() {
+    return analysisTimestamp;
+  }
+
+  public void setAnalysisTimestamp(java.time.Instant analysisTimestamp) {
+    this.analysisTimestamp = analysisTimestamp;
   }
 }

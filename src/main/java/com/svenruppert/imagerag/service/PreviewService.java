@@ -36,10 +36,10 @@ public interface PreviewService {
    * If generation fails the method returns {@code null}; callers should fall back
    * to streaming the original or showing a placeholder.
    *
-   * @param imageId       image identifier
-   * @param originalPath  path to the full-resolution original image
-   * @param resourceName  name used for the {@link StreamResource} (typically
-   *                      the stored filename)
+   * @param imageId      image identifier
+   * @param originalPath path to the full-resolution original image
+   * @param resourceName name used for the {@link StreamResource} (typically
+   *                     the stored filename)
    * @return a {@link StreamResource} for the preview, or {@code null} on error
    */
   StreamResource getTilePreview(UUID imageId, Path originalPath, String resourceName);

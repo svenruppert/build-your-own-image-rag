@@ -105,7 +105,7 @@ public class IngestionJob {
    * @param existingFilename original filename of that existing asset
    */
   public synchronized void markDuplicate(UUID existingId, String existingFilename) {
-    this.duplicateOfId       = existingId;
+    this.duplicateOfId = existingId;
     this.duplicateOfFilename = existingFilename;
     transition(JobStep.DUPLICATE);
   }

@@ -7,17 +7,22 @@ import com.svenruppert.flow.views.overview.OverviewView;
 import com.svenruppert.flow.views.pipeline.PipelineView;
 import com.svenruppert.flow.views.search.SearchView;
 import com.svenruppert.flow.views.upload.UploadView;
+import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.applayout.AppLayout;
 import com.vaadin.flow.component.applayout.DrawerToggle;
+import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.html.H1;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.Scroller;
-import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.sidenav.SideNav;
 import com.vaadin.flow.component.sidenav.SideNavItem;
+import com.vaadin.flow.server.VaadinSession;
 import com.vaadin.flow.theme.lumo.LumoUtility;
+
+import java.util.Locale;
 
 import static com.vaadin.flow.component.icon.VaadinIcon.*;
 
@@ -38,18 +43,43 @@ public class MainLayout
     DrawerToggle toggle = new DrawerToggle();
     H2 viewTitle = new H2(getTranslation("app.subtitle"));
 
-    HorizontalLayout wrapper = new HorizontalLayout(toggle, viewTitle);
-    wrapper.setAlignItems(FlexComponent.Alignment.CENTER);
-    wrapper.setSpacing(false);
+    HorizontalLayout left = new HorizontalLayout(toggle, viewTitle);
+    left.setAlignItems(FlexComponent.Alignment.CENTER);
+    left.setSpacing(false);
 
-    VerticalLayout viewHeader = new VerticalLayout(wrapper);
-    viewHeader.setPadding(false);
-    viewHeader.setSpacing(false);
+    // Language toggle — EN / DE
+    Button enBtn = new Button("EN", e -> switchLanguage("en"));
+    Button deBtn = new Button("DE", e -> switchLanguage("de"));
+    enBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+    deBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+    enBtn.getElement().setAttribute("title", "Switch to English");
+    deBtn.getElement().setAttribute("title", "Auf Deutsch wechseln");
+
+    HorizontalLayout langButtons = new HorizontalLayout(enBtn, deBtn);
+    langButtons.setSpacing(false);
+    langButtons.getStyle().set("margin-left", "auto");
+
+    HorizontalLayout navbar = new HorizontalLayout(left, langButtons);
+    navbar.setWidthFull();
+    navbar.setAlignItems(FlexComponent.Alignment.CENTER);
+    navbar.setSpacing(false);
+    navbar.getStyle().set("padding-right", "var(--lumo-space-m)");
 
     addToDrawer(appTitle, scroller);
-    addToNavbar(viewHeader);
+    addToNavbar(navbar);
 
     setPrimarySection(Section.DRAWER);
+  }
+
+  /**
+   * Stores the chosen locale in the {@link VaadinSession} and reloads the page so
+   * that all translated strings are re-evaluated with the new locale.
+   * The locale is restored on reload by {@code AppInitializer}'s UIInitListener.
+   */
+  private void switchLanguage(String lang) {
+    Locale locale = Locale.forLanguageTag(lang);
+    VaadinSession.getCurrent().setAttribute("app.locale", locale);
+    UI.getCurrent().getPage().reload();
   }
 
   private SideNav getPrimaryNavigation() {

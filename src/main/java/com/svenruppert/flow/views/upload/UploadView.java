@@ -14,13 +14,13 @@ import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.upload.Upload;
-import com.vaadin.flow.component.upload.receivers.MultiFileMemoryBuffer;
+import com.vaadin.flow.component.upload.receivers.MultiFileBuffer;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.file.Path;
 
 @PageTitle("Upload Images")
 @Route(value = UploadView.PATH, layout = MainLayout.class)
@@ -41,18 +41,21 @@ public class UploadView
     RouterLink pipelineLink = new RouterLink(getTranslation("upload.pipeline.link"), PipelineView.class);
     add(pipelineLink);
 
-    MultiFileMemoryBuffer buffer = new MultiFileMemoryBuffer();
+    // Disk-backed buffer — avoids loading all 200 files into memory simultaneously.
+    // Each file is written to a temp file on disk; we pass the path to the pipeline
+    // which reads it lazily at processing time.
+    MultiFileBuffer buffer = new MultiFileBuffer();
     Upload upload = new Upload(buffer);
     upload.setAcceptedFileTypes("image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp");
-    upload.setMaxFiles(50);
+    upload.setMaxFiles(200);
     upload.setMaxFileSize(50 * 1024 * 1024); // 50 MB per file
     upload.setWidthFull();
 
     upload.addSucceededListener(event -> {
       String filename = event.getFileName();
       String mimeType = event.getMIMEType();
-      InputStream stream = buffer.getInputStream(filename);
-      submitToQueue(filename, mimeType, stream);
+      Path tempFile = buffer.getFileData(filename).getFile().toPath();
+      submitToQueue(filename, mimeType, tempFile);
     });
 
     upload.addAllFinishedListener(event ->
@@ -74,15 +77,17 @@ public class UploadView
   }
 
   /**
-   * Buffers the stream and hands it to {@link com.svenruppert.imagerag.pipeline.IngestionPipeline}.
-   * This runs on the Vaadin UI thread but is fast (only reads bytes into memory).
-   * The actual heavy processing runs on a virtual thread inside the pipeline.
+   * Hands the temp-file path to {@link com.svenruppert.imagerag.pipeline.IngestionPipeline}.
+   * This runs on the Vaadin UI thread and is fast — no bytes are read here.
+   * The pipeline reads and deletes the temp file when the job is actually processed,
+   * so at most {@code parallelism} files occupy RAM at any given time regardless of
+   * how many files are queued.
    */
-  private void submitToQueue(String filename, String mimeType, InputStream stream) {
+  private void submitToQueue(String filename, String mimeType, Path tempFile) {
     try {
       IngestionJob job = ServiceRegistry.getInstance()
           .getIngestionPipeline()
-          .submit(stream, filename, mimeType);
+          .submitFromPath(tempFile, filename, mimeType);
 
       Notification n = Notification.show(
           getTranslation("upload.queued", filename, job.getJobId().toString().substring(0, 8)),

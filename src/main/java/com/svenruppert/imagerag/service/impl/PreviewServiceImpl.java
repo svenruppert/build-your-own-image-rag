@@ -27,9 +27,13 @@ import java.util.UUID;
 public class PreviewServiceImpl
     implements PreviewService, HasLogger {
 
-  /** Maximum width of a tile preview in pixels. */
-  private static final int TILE_MAX_WIDTH  = 400;
-  /** Maximum height of a tile preview in pixels. */
+  /**
+   * Maximum width of a tile preview in pixels.
+   */
+  private static final int TILE_MAX_WIDTH = 400;
+  /**
+   * Maximum height of a tile preview in pixels.
+   */
   private static final int TILE_MAX_HEIGHT = 300;
 
   private final Path previewRoot;
@@ -94,13 +98,13 @@ public class PreviewServiceImpl
 
     // Compute scale to fit within target box
     double scale = Math.min(
-        TILE_MAX_WIDTH  / (double) original.getWidth(),
+        TILE_MAX_WIDTH / (double) original.getWidth(),
         TILE_MAX_HEIGHT / (double) original.getHeight());
 
     // Never up-scale tiny images
     scale = Math.min(scale, 1.0);
 
-    int newW = Math.max(1, (int) (original.getWidth()  * scale));
+    int newW = Math.max(1, (int) (original.getWidth() * scale));
     int newH = Math.max(1, (int) (original.getHeight() * scale));
 
     // Scale with bilinear interpolation

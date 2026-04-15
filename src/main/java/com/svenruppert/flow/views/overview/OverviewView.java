@@ -3,6 +3,7 @@ package com.svenruppert.flow.views.overview;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
+import com.svenruppert.flow.views.shared.CategoryChooserComponent;
 import com.svenruppert.flow.views.shared.ViewModeToggle;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.*;
@@ -10,9 +11,10 @@ import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.PreviewService;
+import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
-import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
+import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.grid.GridVariant;
 import com.vaadin.flow.component.html.*;
@@ -33,6 +35,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 
 import static com.vaadin.flow.component.icon.VaadinIcon.*;
 
@@ -57,21 +60,25 @@ public class OverviewView
     implements BeforeEnterObserver, HasLogger {
 
   public static final String PATH = "overview";
-
+  private static final int PAGE_SIZE = 30;
+  private static final String VIS_ALL = "all";
+  private static final String VIS_APPROVED = "approved";
+  private static final String VIS_LOCKED = "locked";
   private final Grid<ImageAsset> grid = new Grid<>(ImageAsset.class, false);
-  private final Div              tileContainer = new Div();
-  private boolean tileMode = false;
-  private ViewModeToggle viewToggle;
-
+  private final Div tileContainer = new Div();
+  private final Button loadMoreTilesBtn = new Button();
+  private final Span selectedCountLabel = new Span();
+  private final HorizontalLayout batchToolbar = new HorizontalLayout();
   // ── Filter state ──────────────────────────────────────────────────────────
   private final ImageOverviewFilter filter = new ImageOverviewFilter();
-  private final Select<SourceCategory> filterCategory   = new Select<>();
-  private final Select<RiskLevel>      filterRisk       = new Select<>();
-  private final Select<String>         filterVisibility = new Select<>();
-  private static final String VIS_ALL     = "all";
-  private static final String VIS_APPROVED = "approved";
-  private static final String VIS_LOCKED  = "locked";
-
+  private final Select<RiskLevel> filterRisk = new Select<>();
+  private final Select<String> filterVisibility = new Select<>();
+  private boolean tileMode = false;
+  private ViewModeToggle viewToggle;
+  private List<ImageAsset> currentFilteredImages = List.of();
+  private int currentPage = 1;
+  // Initialized lazily in buildFilterBar() because getTranslation() requires attachment.
+  private CategoryChooserComponent filterCategory;
   private List<ImageAsset> allImages = List.of();
 
   public OverviewView() {
@@ -95,6 +102,9 @@ public class OverviewView
     // ── Filter bar ────────────────────────────────────────────────────────
     add(buildFilterBar());
 
+    // ── Batch action toolbar (hidden until items selected) ────────────────
+    add(buildBatchToolbar());
+
     // ── Table view ────────────────────────────────────────────────────────
     configureGrid();
     add(grid);
@@ -109,6 +119,16 @@ public class OverviewView
         .set("width", "100%");
     tileContainer.setVisible(false);
     add(tileContainer);
+
+    // ── Load more button (tile view only) ──────────────────────────────────
+    loadMoreTilesBtn.setText("Load more");
+    loadMoreTilesBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
+    loadMoreTilesBtn.setVisible(false);
+    loadMoreTilesBtn.addClickListener(e -> {
+      currentPage++;
+      renderTiles(currentFilteredImages);
+    });
+    add(loadMoreTilesBtn);
   }
 
   // -------------------------------------------------------------------------
@@ -116,13 +136,14 @@ public class OverviewView
   // -------------------------------------------------------------------------
 
   private HorizontalLayout buildFilterBar() {
-    // Category filter
-    filterCategory.setLabel(getTranslation("overview.filter.category"));
-    filterCategory.setItems(SourceCategory.values());
-    filterCategory.setPlaceholder(getTranslation("overview.filter.all"));
-    filterCategory.setItemLabelGenerator(c -> c == null ? getTranslation("overview.filter.all") : c.name());
-    filterCategory.addValueChangeListener(e -> {
-      filter.setCategory(e.getValue());
+    // Cascading category chooser: group → specific category
+    filterCategory = new CategoryChooserComponent(
+        getTranslation("overview.filter.category"),
+        getTranslation("overview.filter.category.specific"),
+        getTranslation("overview.filter.all"));
+    filterCategory.addChangeListener(() -> {
+      filter.setCategory(filterCategory.getSelectedGroup());
+      filter.setSpecificCategory(filterCategory.getSelectedCategory());
       applyFilter();
     });
 
@@ -141,15 +162,15 @@ public class OverviewView
     filterVisibility.setItems(VIS_ALL, VIS_APPROVED, VIS_LOCKED);
     filterVisibility.setItemLabelGenerator(v -> switch (v) {
       case VIS_APPROVED -> getTranslation("overview.filter.approved");
-      case VIS_LOCKED   -> getTranslation("overview.filter.locked");
-      default           -> getTranslation("overview.filter.all");
+      case VIS_LOCKED -> getTranslation("overview.filter.locked");
+      default -> getTranslation("overview.filter.all");
     });
     filterVisibility.setValue(VIS_ALL);
     filterVisibility.addValueChangeListener(e -> {
       filter.setApproved(switch (e.getValue()) {
         case VIS_APPROVED -> Boolean.TRUE;
-        case VIS_LOCKED   -> Boolean.FALSE;
-        default           -> null;
+        case VIS_LOCKED -> Boolean.FALSE;
+        default -> null;
       });
       applyFilter();
     });
@@ -163,9 +184,77 @@ public class OverviewView
     return bar;
   }
 
+  // -------------------------------------------------------------------------
+  // Batch toolbar
+  // -------------------------------------------------------------------------
+
+  private HorizontalLayout buildBatchToolbar() {
+    selectedCountLabel.getStyle().set("font-size", "var(--lumo-font-size-s)")
+        .set("align-self", "flex-end");
+
+    Button approveAllBtn = new Button(getTranslation("overview.batch.approve"), e -> batchApprove());
+    approveAllBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_SUCCESS,
+                                   ButtonVariant.LUMO_TERTIARY);
+
+    Button lockAllBtn = new Button(getTranslation("overview.batch.lock"), e -> batchLock());
+    lockAllBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_CONTRAST,
+                                ButtonVariant.LUMO_TERTIARY);
+
+    Button archiveAllBtn = new Button(getTranslation("overview.batch.delete"), e -> batchArchive());
+    archiveAllBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR,
+                                   ButtonVariant.LUMO_TERTIARY);
+
+    Button reprocessAllBtn = new Button(getTranslation("overview.batch.reprocess"), e -> batchReprocess());
+    reprocessAllBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+
+    batchToolbar.add(selectedCountLabel, approveAllBtn, lockAllBtn, archiveAllBtn, reprocessAllBtn);
+    batchToolbar.setAlignItems(Alignment.CENTER);
+    batchToolbar.setSpacing(true);
+    batchToolbar.setVisible(false);
+    return batchToolbar;
+  }
+
+  private void batchApprove() {
+    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    Set<ImageAsset> selected = grid.getSelectedItems();
+    selected.forEach(a -> ps.approveImage(a.getId()));
+    showNotification(getTranslation("overview.approved", selected.size() + " images"), true);
+    loadData();
+  }
+
+  private void batchLock() {
+    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    Set<ImageAsset> selected = grid.getSelectedItems();
+    selected.forEach(a -> ps.unapproveImage(a.getId()));
+    showNotification(getTranslation("overview.locked", selected.size() + " images"), false);
+    loadData();
+  }
+
+  private void batchArchive() {
+    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    Set<ImageAsset> selected = grid.getSelectedItems();
+    selected.forEach(a -> ps.softDeleteImage(a.getId(), "Batch archive from overview"));
+    showNotification(selected.size() + " images archived", false);
+    loadData();
+  }
+
+  private void batchReprocess() {
+    Set<ImageAsset> selected = grid.getSelectedItems();
+    int count = 0;
+    for (ImageAsset asset : selected) {
+      try {
+        ServiceRegistry.getInstance().getReprocessingService().reprocess(asset.getId());
+        count++;
+      } catch (Exception ex) {
+        logger().warn("Failed to reprocess {}: {}", asset.getId(), ex.getMessage());
+      }
+    }
+    showNotification(getTranslation("overview.reprocess.started", count + " images"), true);
+  }
+
   private void resetFilters() {
     filter.reset();
-    filterCategory.setValue(null);
+    filterCategory.reset();
     filterRisk.setValue(null);
     filterVisibility.setValue(VIS_ALL);
     applyFilter();
@@ -173,9 +262,12 @@ public class OverviewView
 
   private void applyFilter() {
     PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
-    List<ImageAsset> filtered = filter.apply(allImages, ps);
-    grid.setItems(filtered);
-    if (tileMode) renderTiles(filtered);
+    currentFilteredImages = filter.apply(allImages, ps);
+    grid.setItems(currentFilteredImages);
+    if (tileMode) {
+      currentPage = 1;
+      renderTiles(currentFilteredImages);
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -186,9 +278,12 @@ public class OverviewView
     tileMode = tiles;
     grid.setVisible(!tileMode);
     tileContainer.setVisible(tileMode);
+    loadMoreTilesBtn.setVisible(false);
     if (tileMode) {
       PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
-      renderTiles(filter.apply(allImages, ps));
+      currentFilteredImages = filter.apply(allImages, ps);
+      currentPage = 1;
+      renderTiles(currentFilteredImages);
     }
   }
 
@@ -201,6 +296,13 @@ public class OverviewView
     // setAllRowsVisible: grid sizes to fit all rows; the page scrolls naturally.
     grid.setAllRowsVisible(true);
     grid.addThemeVariants(GridVariant.LUMO_ROW_STRIPES);
+    grid.setSelectionMode(Grid.SelectionMode.MULTI);
+    grid.addSelectionListener(e -> {
+      int count = e.getAllSelectedItems().size();
+      boolean hasSelection = count > 0;
+      batchToolbar.setVisible(hasSelection);
+      selectedCountLabel.setText(getTranslation("overview.selected.count", count));
+    });
 
     // Thumbnail
     grid.addComponentColumn(asset -> buildThumb(asset, "60px"))
@@ -210,19 +312,22 @@ public class OverviewView
     grid.addColumn(ImageAsset::getOriginalFilename)
         .setHeader(getTranslation("overview.col.filename")).setFlexGrow(2).setSortable(true);
 
-    // Category (editable)
+    // Category (editable — fine-grained SourceCategory with user-friendly labels)
     grid.addComponentColumn(asset -> {
       PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
       SourceCategory cur = ps.findAnalysis(asset.getId()).map(SemanticAnalysis::getSourceCategory).orElse(null);
-      if (cur == null) return new Span("—");
+      if (cur == null) return new Span("\u2014");
       Select<SourceCategory> sel = new Select<>();
       sel.setItems(SourceCategory.values());
       sel.setValue(cur);
+      sel.setItemLabelGenerator(CategoryRegistry::getUserLabel);
       sel.getStyle().set("font-size", "var(--lumo-font-size-s)");
       sel.addValueChangeListener(e -> {
         if (e.getValue() != null && e.getValue() != e.getOldValue()) {
           ps.updateSourceCategory(asset.getId(), e.getValue());
-          showNotification(getTranslation("overview.category.updated", e.getValue().name()), true);
+          showNotification(
+              getTranslation("overview.category.updated",
+                             CategoryRegistry.getUserLabel(e.getValue())), true);
         }
       });
       return sel;
@@ -279,7 +384,13 @@ public class OverviewView
 
   private void renderTiles(List<ImageAsset> images) {
     tileContainer.removeAll();
-    for (ImageAsset asset : images) tileContainer.add(buildTileCard(asset));
+    int limit = currentPage * PAGE_SIZE;
+    int total = images.size();
+    List<ImageAsset> visible = images.subList(0, Math.min(limit, total));
+    for (ImageAsset asset : visible) {
+      tileContainer.add(buildTileCard(asset));
+    }
+    loadMoreTilesBtn.setVisible(total > limit);
   }
 
   private Div buildTileCard(ImageAsset asset) {
@@ -328,10 +439,12 @@ public class OverviewView
     name.getElement().setAttribute("title", asset.getOriginalFilename());
     info.add(name);
 
-    // Category
+    // Category — shows user-friendly label (e.g. "Landscape") and coarse group
     SourceCategory cat = ps.findAnalysis(asset.getId()).map(SemanticAnalysis::getSourceCategory).orElse(null);
     if (cat != null) {
-      Span catSpan = new Span(getTranslation("overview.col.category") + ": " + cat.name());
+      String catDisplay = CategoryRegistry.getUserLabel(cat)
+          + " \u00b7 " + CategoryRegistry.getGroupLabel(cat);
+      Span catSpan = new Span(catDisplay);
       catSpan.getStyle().set("font-size", "var(--lumo-font-size-xs)")
           .set("color", "var(--lumo-secondary-text-color)");
       info.add(catSpan);
@@ -399,26 +512,26 @@ public class OverviewView
    * Returns a coloured icon representing the image's risk level, with a tooltip.
    * SAFE = green check, REVIEW = orange question, SENSITIVE = red exclamation.
    */
-  private com.vaadin.flow.component.Component riskIcon(RiskLevel risk) {
+  private Component riskIcon(RiskLevel risk) {
     if (risk == null) {
       Span dash = new Span("—");
       dash.getStyle().set("font-size", "var(--lumo-font-size-xs)");
       return dash;
     }
     Icon icon = switch (risk) {
-      case SAFE      -> VaadinIcon.CHECK_CIRCLE.create();
-      case REVIEW    -> VaadinIcon.QUESTION_CIRCLE.create();
+      case SAFE -> VaadinIcon.CHECK_CIRCLE.create();
+      case REVIEW -> VaadinIcon.QUESTION_CIRCLE.create();
       case SENSITIVE -> VaadinIcon.EXCLAMATION_CIRCLE_O.create();
     };
     String color = switch (risk) {
-      case SAFE      -> "var(--lumo-success-color)";
-      case REVIEW    -> "var(--lumo-warning-color, orange)";
+      case SAFE -> "var(--lumo-success-color)";
+      case REVIEW -> "var(--lumo-warning-color, orange)";
       case SENSITIVE -> "var(--lumo-error-color)";
     };
     icon.setSize("18px");
     icon.setColor(color);
     icon.getElement().setAttribute("title",
-        getTranslation("overview.risk.tooltip." + risk.name().toLowerCase()));
+                                   getTranslation("overview.risk.tooltip." + risk.name().toLowerCase()));
     return icon;
   }
 
@@ -426,14 +539,14 @@ public class OverviewView
    * Returns an eye/eye-slash icon indicating whether the image is approved for
    * search results, with a tooltip.
    */
-  private com.vaadin.flow.component.Component visibilityIcon(ImageAsset asset, PersistenceService ps) {
+  private Component visibilityIcon(ImageAsset asset, PersistenceService ps) {
     boolean approved = ps.isApproved(asset.getId());
     Icon icon = approved ? VaadinIcon.EYE.create() : VaadinIcon.EYE_SLASH.create();
     icon.setSize("18px");
     icon.setColor(approved ? "var(--lumo-primary-color)" : "var(--lumo-contrast-50pct)");
     icon.getElement().setAttribute("title",
-        getTranslation(approved ? "overview.visibility.tooltip.approved"
-                                : "overview.visibility.tooltip.locked"));
+                                   getTranslation(approved ? "overview.visibility.tooltip.approved"
+                                                      : "overview.visibility.tooltip.locked"));
     return icon;
   }
 
@@ -445,7 +558,7 @@ public class OverviewView
    * Builds a thumbnail component using the cached {@link PreviewService} preview.
    * Falls back to streaming the original file if the preview cannot be generated.
    */
-  private com.vaadin.flow.component.Component buildThumb(ImageAsset asset, String height) {
+  private Component buildThumb(ImageAsset asset, String height) {
     try {
       PreviewService previews = ServiceRegistry.getInstance().getPreviewService();
       Path originalPath = ServiceRegistry.getInstance()
@@ -539,20 +652,46 @@ public class OverviewView
   }
 
   private void confirmDelete(ImageAsset asset) {
-    ConfirmDialog dialog = new ConfirmDialog();
-    dialog.setHeader(getTranslation("overview.delete.title"));
-    dialog.setText(getTranslation("overview.delete.text", asset.getOriginalFilename()));
-    dialog.setCancelable(true);
-    dialog.setCancelText(getTranslation("overview.delete.cancel"));
-    dialog.setConfirmText(getTranslation("overview.delete.confirm"));
-    dialog.setConfirmButtonTheme("error primary");
-    dialog.addConfirmListener(e -> deleteImage(asset));
+    Dialog dialog = new Dialog();
+    dialog.setHeaderTitle(getTranslation("overview.delete.title"));
+
+    VerticalLayout body = new VerticalLayout();
+    body.add(new Paragraph(getTranslation("overview.delete.text", asset.getOriginalFilename())));
+
+    Button archiveBtn = new Button(getTranslation("overview.archive"), e -> {
+      softDeleteImage(asset);
+      dialog.close();
+    });
+    archiveBtn.addThemeVariants(ButtonVariant.LUMO_CONTRAST, ButtonVariant.LUMO_PRIMARY);
+
+    Button hardDeleteBtn = new Button(getTranslation("overview.delete.hard"), e -> {
+      hardDeleteImage(asset);
+      dialog.close();
+    });
+    hardDeleteBtn.addThemeVariants(ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_PRIMARY);
+
+    Button cancelBtn = new Button(getTranslation("overview.delete.cancel"), e -> dialog.close());
+    cancelBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
+
+    dialog.getFooter().add(cancelBtn, archiveBtn, hardDeleteBtn);
+    dialog.add(body);
     dialog.open();
   }
 
-  private void deleteImage(ImageAsset asset) {
+  private void softDeleteImage(ImageAsset asset) {
+    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    ps.softDeleteImage(asset.getId(), "User deleted from overview");
+    ServiceRegistry.getInstance().getAuditService()
+        .log("SOFT_DELETE", asset.getId(), asset.getOriginalFilename(), "User archived from overview");
+    showNotification(getTranslation("overview.archive") + ": " + asset.getOriginalFilename(), false);
+    loadData();
+  }
+
+  private void hardDeleteImage(ImageAsset asset) {
     try {
       ServiceRegistry.getInstance().deleteImage(asset.getId());
+      ServiceRegistry.getInstance().getAuditService()
+          .log("HARD_DELETE", asset.getId(), asset.getOriginalFilename(), "User permanently deleted");
       showNotification(getTranslation("overview.deleted", asset.getOriginalFilename()), false);
       loadData();
     } catch (Exception ex) {
@@ -588,11 +727,8 @@ public class OverviewView
 
   private void loadData() {
     allImages = ServiceRegistry.getInstance().getPersistenceService().findAllImages();
+    currentPage = 1;
     applyFilter();
-    if (tileMode) {
-      PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
-      renderTiles(filter.apply(allImages, ps));
-    }
   }
 
   @Override

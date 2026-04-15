@@ -1,10 +1,8 @@
 package com.svenruppert.flow.views.detail;
 
+import com.svenruppert.flow.views.shared.MarkdownRenderer;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
-import com.svenruppert.imagerag.domain.ImageAsset;
-import com.svenruppert.imagerag.domain.LocationSummary;
-import com.svenruppert.imagerag.domain.SemanticAnalysis;
-import com.svenruppert.imagerag.domain.SensitivityAssessment;
+import com.svenruppert.imagerag.domain.*;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -14,6 +12,7 @@ import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.tabs.TabSheet;
 import com.vaadin.flow.server.StreamResource;
 
 import java.io.InputStream;
@@ -21,6 +20,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Optional;
 
 public class DetailDialog
     extends Dialog {
@@ -37,11 +37,59 @@ public class DetailDialog
     setMaxHeight("90vh");
     setCloseOnOutsideClick(true);
 
-    VerticalLayout content = new VerticalLayout();
-    content.setPadding(false);
-    content.setSpacing(true);
+    ServiceRegistry kr = ServiceRegistry.getInstance();
+    Optional<OcrResult> ocrOpt = kr.getPersistenceService().findOcrResult(asset.getId());
 
-    // ── Thumbnail preview ─────────────────────────────────────────────────────
+    TabSheet tabs = new TabSheet();
+    tabs.setWidthFull();
+
+    // ── Tab 1: Overview ───────────────────────────────────────────────────────
+    tabs.add(getTranslation("detail.tab.overview"),
+             buildOverviewTab(asset));
+
+    // ── Tab 2: Analysis ───────────────────────────────────────────────────────
+    tabs.add(getTranslation("detail.tab.analysis"),
+             buildAnalysisTab(analysis));
+
+    // ── Tab 3: Privacy ────────────────────────────────────────────────────────
+    tabs.add(getTranslation("detail.tab.privacy"),
+             buildPrivacyTab(assessment));
+
+    // ── Tab 4: Location ───────────────────────────────────────────────────────
+    tabs.add(getTranslation("detail.tab.location"),
+             buildLocationTab(location));
+
+    // ── Tab 5: Provenance ─────────────────────────────────────────────────────
+    tabs.add(getTranslation("detail.tab.provenance"),
+             buildProvenanceTab(analysis, ocrOpt.orElse(null)));
+
+    add(tabs);
+
+    // Footer: Reprocess + Close
+    Button reprocessBtn = new Button("Reprocess");
+    reprocessBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
+    reprocessBtn.getElement().setAttribute("title",
+                                           "Re-run the full AI pipeline: vision \u2192 semantic \u2192 sensitivity \u2192 embedding. "
+                                               + "Existing analysis data is overwritten. "
+                                               + "Visibility is re-evaluated: SAFE images are auto-approved; "
+                                               + "any other risk level locks the image and requires manual approval in the Overview.");
+    reprocessBtn.addClickListener(e -> reprocessAndClose(asset));
+
+    Button closeBtn = new Button("Close", e -> close());
+    closeBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+    getFooter().add(reprocessBtn, closeBtn);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Tab content builders
+  // ---------------------------------------------------------------------------
+
+  private VerticalLayout buildOverviewTab(ImageAsset asset) {
+    VerticalLayout layout = new VerticalLayout();
+    layout.setPadding(true);
+    layout.setSpacing(true);
+
+    // Thumbnail
     try {
       Path imgPath = ServiceRegistry.getInstance()
           .getImageStorageService().resolvePath(asset.getId());
@@ -56,145 +104,211 @@ public class DetailDialog
               }
             });
         Image preview = new Image(res, asset.getOriginalFilename());
-        preview.setMaxHeight("280px");
+        preview.setMaxHeight("240px");
         preview.setMaxWidth("100%");
         preview.getStyle()
             .set("object-fit", "contain")
             .set("border-radius", "8px")
             .set("display", "block")
             .set("margin", "0 auto 8px");
-        Div previewWrapper = new Div(preview);
-        previewWrapper.getStyle()
+        Div wrapper = new Div(preview);
+        wrapper.getStyle()
             .set("text-align", "center")
             .set("background", "var(--lumo-contrast-5pct)")
             .set("border-radius", "8px")
             .set("padding", "8px");
-        content.add(previewWrapper);
+        layout.add(wrapper);
       }
     } catch (Exception ignored) {
-      // Thumbnail is optional — proceed without it
+      // Thumbnail is optional
     }
 
-    // ── Technical metadata ────────────────────────────────────────────────────
-    content.add(new H3("Technical Metadata"));
-    FormLayout techForm = new FormLayout();
-    techForm.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
-
-    techForm.addFormItem(new Span(asset.getId().toString()), "ID");
-    techForm.addFormItem(new Span(asset.getMimeType()), "MIME Type");
-    techForm.addFormItem(new Span(formatSize(asset.getFileSize())), "File Size");
-    techForm.addFormItem(new Span(asset.getWidth() + " × " + asset.getHeight()), "Dimensions");
-    techForm.addFormItem(new Span(asset.getUploadedAt() != null
-                                      ? DATE_FMT.format(asset.getUploadedAt()) : "—"), "Uploaded");
-    techForm.addFormItem(new Span(String.valueOf(asset.isExifPresent())), "EXIF Present");
-    techForm.addFormItem(new Span(String.valueOf(asset.isGpsPresent())), "GPS Present");
-    techForm.addFormItem(new Span(asset.getSha256() != null
-                                      ? asset.getSha256().substring(0, 16) + "…" : "—"), "SHA-256");
-    content.add(techForm);
-
-    // ── Location ──────────────────────────────────────────────────────────────
-    if (location != null) {
-      content.add(new H3("Location"));
-      FormLayout locForm = new FormLayout();
-      locForm.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
-      locForm.addFormItem(new Span(location.getCity() != null ? location.getCity() : "—"), "City");
-      locForm.addFormItem(new Span(location.getRegion() != null ? location.getRegion() : "—"), "Region");
-      locForm.addFormItem(new Span(location.getCountry() != null ? location.getCountry() : "—"), "Country");
-      if (location.getLatitude() != null && location.getLongitude() != null) {
-        locForm.addFormItem(new Span(String.format("%.5f, %.5f",
-                                                   location.getLatitude(), location.getLongitude())),
-                            "Coordinates");
-      }
-      content.add(locForm);
-    }
-
-    // ── Semantic Analysis ─────────────────────────────────────────────────────
-    if (analysis != null) {
-      content.add(new H3("Semantic Analysis"));
-      FormLayout semForm = new FormLayout();
-      semForm.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
-
-      semForm.addFormItem(new Span(str(analysis.getSourceCategory())), "Category");
-      semForm.addFormItem(new Span(str(analysis.getSeasonHint())), "Season");
-      semForm.addFormItem(new Span(analysis.getSceneType() != null ? analysis.getSceneType() : "—"), "Scene Type");
-      semForm.addFormItem(new Span(bool(analysis.getContainsPerson())), "Contains Person");
-      semForm.addFormItem(new Span(bool(analysis.getContainsVehicle())), "Contains Vehicle");
-      semForm.addFormItem(new Span(bool(analysis.getContainsLicensePlateHint())), "License Plate");
-      semForm.addFormItem(new Span(bool(analysis.getContainsReadableText())), "Readable Text");
-      content.add(semForm);
-
-      if (analysis.getTags() != null && !analysis.getTags().isEmpty()) {
-        HorizontalLayout tags = new HorizontalLayout();
-        tags.getStyle().set("flex-wrap", "wrap");
-        for (String tag : analysis.getTags()) {
-          Span badge = new Span(tag);
-          badge.getElement().getThemeList().add("badge");
-          tags.add(badge);
-        }
-        content.add(new H4("Tags"), tags);
-      }
-
-      if (analysis.getSummary() != null) {
-        content.add(new H4("Full Description"));
-        Paragraph para = new Paragraph(analysis.getSummary());
-        para.getStyle().set("white-space", "pre-wrap");
-        content.add(para);
-      }
-    }
-
-    // ── Sensitivity Assessment ────────────────────────────────────────────────
-    if (assessment != null) {
-      content.add(new H3("Privacy & Sensitivity"));
-      FormLayout privForm = new FormLayout();
-      privForm.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
-
-      Span riskBadge = new Span(assessment.getRiskLevel().name());
-      riskBadge.getElement().getThemeList().add("badge");
-      switch (assessment.getRiskLevel()) {
-        case SAFE -> riskBadge.getElement().getThemeList().add("success");
-        case REVIEW -> riskBadge.getElement().getThemeList().add("contrast");
-        case SENSITIVE -> riskBadge.getElement().getThemeList().add("error");
-        default -> throw new RuntimeException("Should never reach..");
-      }
-      privForm.addFormItem(riskBadge, "Risk Level");
-      privForm.addFormItem(new Span(String.valueOf(assessment.isReviewRequired())), "Review Required");
-      privForm.addFormItem(new Span(str(assessment.getRecommendedStorageMode())), "Storage Mode");
-      content.add(privForm);
-
-      if (assessment.getFlags() != null && !assessment.getFlags().isEmpty()) {
-        HorizontalLayout flagRow = new HorizontalLayout();
-        flagRow.getStyle().set("flex-wrap", "wrap");
-        for (var flag : assessment.getFlags()) {
-          Span f = new Span(flag.name().replace("_", " ").toLowerCase());
-          f.getElement().getThemeList().add("badge");
-          f.getElement().getThemeList().add("contrast");
-          flagRow.add(f);
-        }
-        content.add(new H4("Flags"), flagRow);
-      }
-
-      if (assessment.getNotes() != null) {
-        content.add(new Paragraph("Notes: " + assessment.getNotes()));
-      }
-    }
-
-    add(content);
-
-    // Footer: Reprocess + Close
-    Button reprocessBtn = new Button("Reprocess");
-    reprocessBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
-    reprocessBtn.getElement().setAttribute("title",
-        "Re-run the full AI pipeline: vision \u2192 semantic \u2192 sensitivity \u2192 embedding. "
-        + "Existing analysis data is overwritten. "
-        + "Visibility is re-evaluated: SAFE images are auto-approved; "
-        + "any other risk level locks the image and requires manual approval in the Overview.");
-    reprocessBtn.addClickListener(e -> reprocessAndClose(asset));
-
-
-    Button closeBtn = new Button("Close", e -> close());
-    closeBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-    getFooter().add(reprocessBtn, closeBtn);
+    // File info form
+    FormLayout form = new FormLayout();
+    form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
+    form.addFormItem(new Span(asset.getId().toString()), "ID");
+    form.addFormItem(new Span(asset.getMimeType()), "MIME Type");
+    form.addFormItem(new Span(formatSize(asset.getFileSize())), "File Size");
+    form.addFormItem(new Span(asset.getWidth() + " \u00d7 " + asset.getHeight()), "Dimensions");
+    form.addFormItem(new Span(asset.getUploadedAt() != null
+                                  ? DATE_FMT.format(asset.getUploadedAt()) : "\u2014"), "Uploaded");
+    form.addFormItem(new Span(String.valueOf(asset.isExifPresent())), "EXIF Present");
+    form.addFormItem(new Span(String.valueOf(asset.isGpsPresent())), "GPS Present");
+    form.addFormItem(new Span(asset.getSha256() != null
+                                  ? asset.getSha256().substring(0, 16) + "\u2026" : "\u2014"), "SHA-256");
+    layout.add(form);
+    return layout;
   }
+
+  private VerticalLayout buildAnalysisTab(SemanticAnalysis analysis) {
+    VerticalLayout layout = new VerticalLayout();
+    layout.setPadding(true);
+    layout.setSpacing(true);
+
+    if (analysis == null) {
+      layout.add(new Paragraph("\u2014 No analysis available \u2014"));
+      return layout;
+    }
+
+    FormLayout form = new FormLayout();
+    form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
+
+    String catLabel = CategoryRegistry.getUserLabel(analysis.getSourceCategory())
+        + " (" + CategoryRegistry.getGroupLabel(analysis.getSourceCategory()) + ")";
+    form.addFormItem(new Span(catLabel), "Category");
+    form.addFormItem(new Span(str(analysis.getSeasonHint())), "Season");
+    form.addFormItem(new Span(analysis.getSceneType() != null ? analysis.getSceneType() : "\u2014"), "Scene Type");
+    form.addFormItem(new Span(bool(analysis.getContainsPerson())), "Contains Person");
+    form.addFormItem(new Span(bool(analysis.getContainsVehicle())), "Contains Vehicle");
+    form.addFormItem(new Span(bool(analysis.getContainsLicensePlateHint())), "License Plate");
+    form.addFormItem(new Span(bool(analysis.getContainsReadableText())), "Readable Text");
+    layout.add(form);
+
+    if (analysis.getTags() != null && !analysis.getTags().isEmpty()) {
+      HorizontalLayout tags = new HorizontalLayout();
+      tags.getStyle().set("flex-wrap", "wrap");
+      for (String tag : analysis.getTags()) {
+        Span badge = new Span(tag);
+        badge.getElement().getThemeList().add("badge");
+        tags.add(badge);
+      }
+      layout.add(new H4("Tags"), tags);
+    }
+
+    if (analysis.getSummary() != null) {
+      layout.add(new H4("Full Description"));
+      layout.add(MarkdownRenderer.render(analysis.getSummary()));
+    }
+
+    return layout;
+  }
+
+  private VerticalLayout buildPrivacyTab(SensitivityAssessment assessment) {
+    VerticalLayout layout = new VerticalLayout();
+    layout.setPadding(true);
+    layout.setSpacing(true);
+
+    if (assessment == null) {
+      layout.add(new Paragraph("\u2014 No sensitivity assessment available \u2014"));
+      return layout;
+    }
+
+    FormLayout form = new FormLayout();
+    form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
+
+    Span riskBadge = new Span(assessment.getRiskLevel().name());
+    riskBadge.getElement().getThemeList().add("badge");
+    switch (assessment.getRiskLevel()) {
+      case SAFE -> riskBadge.getElement().getThemeList().add("success");
+      case REVIEW -> riskBadge.getElement().getThemeList().add("contrast");
+      case SENSITIVE -> riskBadge.getElement().getThemeList().add("error");
+      default -> throw new RuntimeException("Should never reach..");
+    }
+    form.addFormItem(riskBadge, "Risk Level");
+    form.addFormItem(new Span(String.valueOf(assessment.isReviewRequired())), "Review Required");
+    form.addFormItem(new Span(str(assessment.getRecommendedStorageMode())), "Storage Mode");
+    layout.add(form);
+
+    if (assessment.getFlags() != null && !assessment.getFlags().isEmpty()) {
+      HorizontalLayout flagRow = new HorizontalLayout();
+      flagRow.getStyle().set("flex-wrap", "wrap");
+      for (var flag : assessment.getFlags()) {
+        Span f = new Span(flag.name().replace("_", " ").toLowerCase());
+        f.getElement().getThemeList().add("badge");
+        f.getElement().getThemeList().add("contrast");
+        flagRow.add(f);
+      }
+      layout.add(new H4("Flags"), flagRow);
+    }
+
+    if (assessment.getNotes() != null) {
+      layout.add(new Paragraph("Notes: " + assessment.getNotes()));
+    }
+
+    return layout;
+  }
+
+  private VerticalLayout buildLocationTab(LocationSummary location) {
+    VerticalLayout layout = new VerticalLayout();
+    layout.setPadding(true);
+    layout.setSpacing(true);
+
+    if (location == null) {
+      layout.add(new Paragraph("\u2014 No location data available \u2014"));
+      return layout;
+    }
+
+    FormLayout form = new FormLayout();
+    form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
+    form.addFormItem(new Span(location.getCity() != null ? location.getCity() : "\u2014"), "City");
+    form.addFormItem(new Span(location.getRegion() != null ? location.getRegion() : "\u2014"), "Region");
+    form.addFormItem(new Span(location.getCountry() != null ? location.getCountry() : "\u2014"), "Country");
+    if (location.getLatitude() != null && location.getLongitude() != null) {
+      form.addFormItem(new Span(String.format("%.5f, %.5f",
+                                              location.getLatitude(), location.getLongitude())),
+                       "Coordinates");
+    }
+    layout.add(form);
+    return layout;
+  }
+
+  private VerticalLayout buildProvenanceTab(SemanticAnalysis analysis, OcrResult ocr) {
+    VerticalLayout layout = new VerticalLayout();
+    layout.setPadding(true);
+    layout.setSpacing(true);
+
+    FormLayout form = new FormLayout();
+    form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
+
+    String visionModel = "\u2014";
+    String semanticModel = "\u2014";
+    String analysisTime = "\u2014";
+
+    if (analysis != null) {
+      if (analysis.getVisionModel() != null) {
+        visionModel = analysis.getVisionModel();
+      }
+      if (analysis.getSemanticModel() != null) {
+        semanticModel = analysis.getSemanticModel();
+      }
+      if (analysis.getAnalysisTimestamp() != null) {
+        analysisTime = DATE_FMT.format(analysis.getAnalysisTimestamp());
+      }
+    }
+
+    form.addFormItem(new Span(visionModel),
+                     getTranslation("detail.provenance.vision.model"));
+    form.addFormItem(new Span(semanticModel),
+                     getTranslation("detail.provenance.semantic.model"));
+    form.addFormItem(new Span(analysisTime),
+                     getTranslation("detail.provenance.analysis.time"));
+    layout.add(form);
+
+    // OCR text section
+    layout.add(new H4(getTranslation("detail.provenance.ocr.text")));
+    if (ocr != null && ocr.isTextFound() && ocr.getExtractedText() != null) {
+      Div ocrBox = new Div();
+      ocrBox.getStyle()
+          .set("background", "var(--lumo-contrast-5pct)")
+          .set("border-radius", "6px")
+          .set("padding", "12px")
+          .set("font-family", "monospace")
+          .set("white-space", "pre-wrap")
+          .set("word-break", "break-word")
+          .set("max-height", "200px")
+          .set("overflow-y", "auto");
+      ocrBox.setText(ocr.getExtractedText());
+      layout.add(ocrBox);
+    } else {
+      layout.add(new Paragraph("\u2014 No text extracted \u2014"));
+    }
+
+    return layout;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
 
   private String formatSize(long bytes) {
     if (bytes < 1024) return bytes + " B";
@@ -203,11 +317,11 @@ public class DetailDialog
   }
 
   private String str(Object value) {
-    return value != null ? value.toString() : "—";
+    return value != null ? value.toString() : "\u2014";
   }
 
   private String bool(Boolean value) {
-    if (value == null) return "—";
+    if (value == null) return "\u2014";
     return value ? "Yes" : "No";
   }
 

@@ -18,6 +18,22 @@ public class ImageAsset {
   private boolean exifPresent;
   private boolean gpsPresent;
 
+  /**
+   * True when this image has been soft-deleted (archived).
+   * Soft-deleted images are hidden from normal search and overview flows
+   * but not immediately removed from storage.
+   * Not declared final — EclipseStore Unsafe reconstruction compatibility.
+   */
+  private boolean deleted;
+  /**
+   * Timestamp of the soft-delete action. Null when not deleted.
+   */
+  private java.time.Instant deletedAt;
+  /**
+   * Optional reason text for the deletion.
+   */
+  private String deletedReason;
+
   public ImageAsset() {
   }
 
@@ -133,5 +149,29 @@ public class ImageAsset {
 
   public void setGpsPresent(boolean gpsPresent) {
     this.gpsPresent = gpsPresent;
+  }
+
+  public boolean isDeleted() {
+    return deleted;
+  }
+
+  public void setDeleted(boolean deleted) {
+    this.deleted = deleted;
+  }
+
+  public java.time.Instant getDeletedAt() {
+    return deletedAt;
+  }
+
+  public void setDeletedAt(java.time.Instant deletedAt) {
+    this.deletedAt = deletedAt;
+  }
+
+  public String getDeletedReason() {
+    return deletedReason;
+  }
+
+  public void setDeletedReason(String deletedReason) {
+    this.deletedReason = deletedReason;
   }
 }

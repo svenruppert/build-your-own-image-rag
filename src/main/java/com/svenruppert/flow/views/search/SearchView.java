@@ -7,6 +7,7 @@ import com.svenruppert.flow.views.shared.ViewModeToggle;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
+import com.svenruppert.imagerag.domain.enums.SearchMode;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.persistence.PersistenceService;
@@ -38,23 +39,35 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * Semantic image search view.
+ * Search Workbench — semantic image search with step-by-step transparency.
  *
- * <p>Features:
+ * <h3>Two explicit modes</h3>
  * <ul>
- *   <li>Simple search bar for natural language queries.</li>
- *   <li>Recent search history: chips rendered below the search bar let the user
- *       repeat any of the last {@code N} queries with a single click.</li>
- *   <li>Collapsible <em>Advanced Parameters</em> panel: shows the LLM-derived search
- *       plan after a first search and lets the user edit individual fields before
- *       re-running (skipping LLM re-analysis).</li>
- *   <li>Collapsible <em>Search Transparency</em> panel after results arrive: shows
- *       original query, final embedding text, applied filters, and result count.</li>
- *   <li>Results in table or tile/card view with cached thumbnail previews.
- *       The view toggle is a segmented control ({@link ViewModeToggle}).</li>
- *   <li>Tile cards show a rank badge (#1 / #2 / …), category, and a risk icon.</li>
- *   <li>Double-click on a tile opens the detail dialog.</li>
+ *   <li><b>Transform Only</b> — runs LLM query understanding and stops.  The user can
+ *       inspect the transformation result in the {@link SearchInspectorComponent} and
+ *       optionally adjust the derived parameters in the Advanced panel before executing.</li>
+ *   <li><b>Search</b> — full pipeline: LLM understanding → vector search → results.</li>
  * </ul>
+ *
+ * <h3>Iterative workflow</h3>
+ * The intended use pattern is:
+ * <ol>
+ *   <li>Enter a natural language query.</li>
+ *   <li>Click <em>Transform Only</em> to see how the system interprets the query.</li>
+ *   <li>Optionally edit the derived parameters in the Advanced panel.</li>
+ *   <li>Click <em>Search</em> (or <em>Refine Search</em> if parameters were edited)
+ *       to run the actual search.</li>
+ * </ol>
+ *
+ * <h3>History</h3>
+ * Up to {@value #MAX_VISIBLE_CHIPS} recent searches are shown as chips below the search
+ * bar.  Clicking a chip copies the original query back into the search field without
+ * re-executing — the user can then edit it or choose a mode.  A "More history" button
+ * opens {@link SearchHistoryDialog} for full history management including multi-select
+ * deletion.
+ *
+ * <p>History is persisted <em>after</em> each run completes so that the entry always
+ * captures the original query together with the LLM-transformed final query.
  *
  * <p>Background searches use client-side polling (no {@code @Push} required).
  */
@@ -66,20 +79,21 @@ public class SearchView
 
   public static final String PATH = "search";
 
-  private static final int POLL_INTERVAL_MS = 800;
-
-  // ── Background search execution ────────────────────────────────────────────
-  // Uses the shared search executor from ServiceRegistry so that the
-  // ProcessingSettings.searchParallelism setting is actually effective.
-  // Do NOT hold a local executor reference — the shared pool is sized and
-  // managed by ServiceRegistry.updateSearchParallelism().
+  private static final int POLL_INTERVAL_MS  = 800;
+  private static final int MAX_VISIBLE_CHIPS = 3;
 
   // ── Primary search bar ────────────────────────────────────────────────────
   private final TextArea queryField   = new TextArea();
-  private final Button   searchButton = new Button();
+  /** Runs only LLM query transformation; skips vector search. */
+  private final Button   transformBtn = new Button();
+  /** Runs the full pipeline: LLM transformation + vector search + results. */
+  private final Button   searchBtn    = new Button();
 
   // ── Recent search history ─────────────────────────────────────────────────
   private final Div recentSearchBar = new Div();
+
+  // ── Search process inspector ──────────────────────────────────────────────
+  private final SearchInspectorComponent inspector = new SearchInspectorComponent();
 
   // ── View toggle (segmented control) ──────────────────────────────────────
   private ViewModeToggle viewToggle;
@@ -99,10 +113,6 @@ public class SearchView
   private final Select<RiskLevel>      privacySelect    = new Select<>();
   private final Button                 refineBtn        = new Button();
 
-  // ── Search transparency panel ─────────────────────────────────────────────
-  private final Details        transparencySection = new Details();
-  private final VerticalLayout transparencyContent = new VerticalLayout();
-
   // ── Results ───────────────────────────────────────────────────────────────
   private final Grid<SearchResultItem> resultsGrid = new Grid<>(SearchResultItem.class, false);
   private final Div tileContainer = new Div();
@@ -110,10 +120,6 @@ public class SearchView
   private List<SearchResultItem> lastResults = List.of();
 
   // ── Runtime state ─────────────────────────────────────────────────────────
-  /**
-   * The last derived (or user-edited) search plan.
-   * Written in the Vaadin UI thread only; safe to read from the same thread.
-   */
   private SearchPlan currentPlan = null;
   private volatile SearchRunState currentSearch;
   private Registration pollRegistration;
@@ -124,37 +130,45 @@ public class SearchView
   private static final String BOOL_NO  = "no";
 
   public SearchView() {
-    setSizeFull();
+    // Natural page scroll — do NOT call setSizeFull() so the page can grow with content.
+    setWidthFull();
     setPadding(true);
     setSpacing(true);
 
     add(new H2(getTranslation("search.title")));
     add(new Paragraph(getTranslation("search.description")));
 
-    // ── Search bar ─────────────────────────────────────────────────────────
+    // ── Left column: controls (search bar + history + advanced panel + progress) ────
+    // ── Right column: interactive step inspector ───────────────────────────────────
+
+    // Search bar
     queryField.setLabel(getTranslation("search.query.label"));
     queryField.setWidthFull();
     queryField.setPlaceholder(getTranslation("search.query.placeholder"));
     queryField.setMinHeight("80px");
 
-    searchButton.setText(getTranslation("search.button"));
-    searchButton.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-    searchButton.addClickListener(e -> triggerSearch(false));
+    // Transform Only — stops after LLM analysis; vector search is skipped
+    transformBtn.setText(getTranslation("search.button.transform"));
+    transformBtn.addThemeVariants(ButtonVariant.LUMO_CONTRAST);
+    transformBtn.getElement().setAttribute("title",
+        getTranslation("search.button.transform.tooltip"));
+    transformBtn.addClickListener(e -> triggerTransformOnly());
 
-    HorizontalLayout searchBar = new HorizontalLayout(queryField, searchButton);
+    // Search — full pipeline: LLM + vector search + results
+    searchBtn.setText(getTranslation("search.button"));
+    searchBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+    searchBtn.addClickListener(e -> triggerSearchAndExecute());
+
+    VerticalLayout btnCol = new VerticalLayout(transformBtn, searchBtn);
+    btnCol.setPadding(false);
+    btnCol.setSpacing(true);
+
+    HorizontalLayout searchBar = new HorizontalLayout(queryField, btnCol);
     searchBar.setWidthFull();
     searchBar.setAlignItems(Alignment.END);
     searchBar.setFlexGrow(1, queryField);
-    add(searchBar);
 
-    // ── Recent search history ──────────────────────────────────────────────
-    buildRecentSearchBar();
-    add(recentSearchBar);
-
-    // ── Advanced panel ─────────────────────────────────────────────────────
-    add(buildAdvancedSection());
-
-    // ── Progress ───────────────────────────────────────────────────────────
+    // Progress indicators
     progressBar.setIndeterminate(true);
     progressBar.setWidthFull();
     progressBar.setVisible(false);
@@ -162,33 +176,56 @@ public class SearchView
         .set("font-size", "var(--lumo-font-size-s)")
         .set("color", "var(--lumo-secondary-text-color)");
     statusLabel.setVisible(false);
-    add(progressBar, statusLabel);
 
-    // ── Transparency panel ─────────────────────────────────────────────────
-    add(buildTransparencySection());
+    // Recent search history chip bar
+    buildRecentSearchBar();
 
-    // ── View toggle (segmented control) ───────────────────────────────────
+    // Advanced panel
+    buildAdvancedSection();
+
+    // Left column: search input → history → advanced → progress
+    VerticalLayout leftCol = new VerticalLayout(
+        searchBar, recentSearchBar, advancedSection, progressBar, statusLabel);
+    leftCol.setPadding(false);
+    leftCol.setSpacing(true);
+    leftCol.setMinWidth("340px");
+    leftCol.setWidth("50%");
+
+    // Right column: step inspector
+    inspector.setWidthFull();
+    VerticalLayout rightCol = new VerticalLayout(inspector);
+    rightCol.setPadding(false);
+    rightCol.setSpacing(false);
+    rightCol.setWidth("50%");
+    rightCol.setMinWidth("300px");
+
+    // Two-column top area
+    HorizontalLayout topArea = new HorizontalLayout(leftCol, rightCol);
+    topArea.setWidthFull();
+    topArea.setAlignItems(Alignment.START);
+    topArea.setSpacing(true);
+    add(topArea);
+
+    // ── Results area — full width, below the two columns ──────────────────
+
+    // View toggle (segmented control)
     viewToggle = new ViewModeToggle(false, this::onTileModeChanged);
     viewToggle.setVisible(false);
     add(viewToggle);
 
-    // ── Results grid ───────────────────────────────────────────────────────
+    // Results grid
     configureResultsGrid();
     add(resultsGrid);
-    setFlexGrow(1, resultsGrid);
 
-    // ── Tile container ─────────────────────────────────────────────────────
+    // Tile container
     tileContainer.getStyle()
         .set("display", "grid")
         .set("grid-template-columns", "repeat(auto-fill, minmax(220px, 1fr))")
         .set("gap", "1rem")
-        .set("overflow-y", "auto")
         .set("padding", "0.5rem")
-        .set("width", "100%")
-        .set("height", "100%");
+        .set("width", "100%");
     tileContainer.setVisible(false);
     add(tileContainer);
-    setFlexGrow(1, tileContainer);
   }
 
   // -------------------------------------------------------------------------
@@ -222,16 +259,32 @@ public class SearchView
         .set("flex-shrink", "0");
     recentSearchBar.add(label);
 
-    for (RecentSearchEntry entry : recent) {
+    // Show at most MAX_VISIBLE_CHIPS entries as clickable chips.
+    // Clicking a chip copies the original query into the field — does NOT trigger search.
+    int visible = Math.min(recent.size(), MAX_VISIBLE_CHIPS);
+    for (int i = 0; i < visible; i++) {
+      RecentSearchEntry entry = recent.get(i);
       Button chip = new Button(entry.getQuery());
       chip.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY,
                             ButtonVariant.LUMO_CONTRAST);
       chip.getStyle().set("font-size", "var(--lumo-font-size-xs)");
+      chip.getElement().setAttribute("title",
+          getTranslation("search.history.chip.tooltip"));
       chip.addClickListener(e -> {
         queryField.setValue(entry.getQuery());
-        triggerSearch(false);
+        queryField.focus();
       });
       recentSearchBar.add(chip);
+    }
+
+    // "More history" button when there are entries beyond the visible limit
+    if (recent.size() > MAX_VISIBLE_CHIPS) {
+      int hidden = recent.size() - MAX_VISIBLE_CHIPS;
+      Button moreBtn = new Button(getTranslation("search.history.more", hidden));
+      moreBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+      moreBtn.getStyle().set("font-size", "var(--lumo-font-size-xs)");
+      moreBtn.addClickListener(e -> openHistoryDialog());
+      recentSearchBar.add(moreBtn);
     }
 
     Button clearBtn = new Button(getTranslation("search.history.clear"));
@@ -245,46 +298,54 @@ public class SearchView
     recentSearchBar.add(clearBtn);
   }
 
+  private void openHistoryDialog() {
+    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    new SearchHistoryDialog(
+        ps,
+        entry -> {
+          // Load the original query back into the field for editing — do NOT execute
+          queryField.setValue(entry.getQuery());
+          queryField.focus();
+        },
+        this::refreshRecentChips
+    ).open();
+  }
+
   // -------------------------------------------------------------------------
   // Advanced search parameters panel
   // -------------------------------------------------------------------------
 
-  private Details buildAdvancedSection() {
-    // Embedding text
+  private void buildAdvancedSection() {
     embeddingArea.setLabel(getTranslation("search.advanced.embedding"));
     embeddingArea.setWidthFull();
     embeddingArea.setMaxHeight("100px");
 
-    // Boolean triples
     configureBoolSelect(personSelect,  getTranslation("search.advanced.person"));
     configureBoolSelect(vehicleSelect, getTranslation("search.advanced.vehicle"));
     configureBoolSelect(plateSelect,   getTranslation("search.advanced.plate"));
 
-    // Season
     seasonSelect.setLabel(getTranslation("search.advanced.season"));
     seasonSelect.setItems(SeasonHint.values());
     seasonSelect.setItemLabelGenerator(s -> s == null
         ? getTranslation("search.filter.any") : s.name());
     seasonSelect.setPlaceholder(getTranslation("search.filter.any"));
 
-    // Category
     categorySelect.setLabel(getTranslation("search.advanced.category"));
     categorySelect.setItems(SourceCategory.values());
     categorySelect.setItemLabelGenerator(c -> c == null
         ? getTranslation("search.filter.any") : c.name());
     categorySelect.setPlaceholder(getTranslation("search.filter.any"));
 
-    // Privacy level
     privacySelect.setLabel(getTranslation("search.advanced.privacy"));
     privacySelect.setItems(RiskLevel.values());
     privacySelect.setItemLabelGenerator(r -> r == null
         ? getTranslation("search.filter.any") : r.name());
     privacySelect.setPlaceholder(getTranslation("search.filter.any"));
 
-    // Refine button
+    // "Refine Search" — skip LLM and use the edited plan directly
     refineBtn.setText(getTranslation("search.advanced.refine"));
     refineBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_SMALL);
-    refineBtn.addClickListener(e -> triggerSearch(true));
+    refineBtn.addClickListener(e -> triggerRefine());
 
     HorizontalLayout boolRow = new HorizontalLayout(personSelect, vehicleSelect, plateSelect);
     boolRow.setSpacing(true);
@@ -299,7 +360,6 @@ public class SearchView
     advancedSection.setSummaryText(getTranslation("search.advanced.header"));
     advancedSection.add(content);
     advancedSection.setOpened(false);
-    return advancedSection;
   }
 
   private void configureBoolSelect(Select<String> sel, String label) {
@@ -311,80 +371,6 @@ public class SearchView
       default       -> getTranslation("search.filter.any");
     });
     sel.setValue(BOOL_ANY);
-  }
-
-  // -------------------------------------------------------------------------
-  // Transparency panel
-  // -------------------------------------------------------------------------
-
-  private Details buildTransparencySection() {
-    transparencyContent.setPadding(false);
-    transparencyContent.setSpacing(false);
-    transparencySection.setSummaryText(getTranslation("search.transparency.header"));
-    transparencySection.add(transparencyContent);
-    transparencySection.setOpened(false);
-    transparencySection.setVisible(false);
-    return transparencySection;
-  }
-
-  private void populateTransparency(SearchPlan plan, int resultCount) {
-    transparencyContent.removeAll();
-
-    if (plan.getOriginalQuery() != null) {
-      addTransparencyRow(getTranslation("search.transparency.original"), plan.getOriginalQuery());
-    }
-
-    addTransparencyRow(getTranslation("search.transparency.embedding"), plan.getEmbeddingText());
-
-    // Applied filters
-    StringBuilder filters = new StringBuilder();
-    if (plan.getContainsPerson() != null) {
-      filters.append(getTranslation("search.advanced.person")).append(": ")
-          .append(plan.getContainsPerson() ? getTranslation("search.yes")
-                                           : getTranslation("search.no")).append("  ");
-    }
-    if (plan.getContainsVehicle() != null) {
-      filters.append(getTranslation("search.advanced.vehicle")).append(": ")
-          .append(plan.getContainsVehicle() ? getTranslation("search.yes")
-                                            : getTranslation("search.no")).append("  ");
-    }
-    if (plan.getContainsLicensePlate() != null) {
-      filters.append(getTranslation("search.advanced.plate")).append(": ")
-          .append(plan.getContainsLicensePlate() ? getTranslation("search.yes")
-                                                 : getTranslation("search.no")).append("  ");
-    }
-    if (plan.getSeasonHint() != null) {
-      filters.append(getTranslation("search.advanced.season")).append(": ")
-          .append(plan.getSeasonHint().name()).append("  ");
-    }
-    if (plan.getSourceCategory() != null) {
-      filters.append(getTranslation("search.advanced.category")).append(": ")
-          .append(plan.getSourceCategory().name()).append("  ");
-    }
-    if (!filters.isEmpty()) {
-      addTransparencyRow(getTranslation("search.transparency.filters"),
-                         filters.toString().trim());
-    }
-
-    if (plan.getExplanation() != null) {
-      addTransparencyRow(getTranslation("search.plan.explanation"), plan.getExplanation());
-    }
-
-    addTransparencyRow(getTranslation("search.transparency.count"), String.valueOf(resultCount));
-
-    transparencySection.setVisible(true);
-    transparencySection.setOpened(true);
-  }
-
-  private void addTransparencyRow(String label, String value) {
-    HorizontalLayout row = new HorizontalLayout();
-    row.setSpacing(true);
-    Span lbl = new Span(label + ":");
-    lbl.getStyle().set("font-weight", "600").set("min-width", "160px").set("flex-shrink", "0");
-    Span val = new Span(value);
-    val.getStyle().set("color", "var(--lumo-secondary-text-color)").set("white-space", "pre-wrap");
-    row.add(lbl, val);
-    transparencyContent.add(row);
   }
 
   // -------------------------------------------------------------------------
@@ -424,60 +410,88 @@ public class SearchView
   }
 
   // -------------------------------------------------------------------------
-  // Search triggering
+  // Search triggering — three entry points, one shared implementation
   // -------------------------------------------------------------------------
 
   /**
-   * Triggers a search.
-   *
-   * @param useEditedPlan {@code true} → collect the user-edited plan from the advanced
-   *                      panel and search directly with it (no LLM re-analysis);
-   *                      {@code false} → full analyze + search from the query field
+   * TRANSFORM ONLY — runs LLM query understanding and stops before vector search.
+   * The user can review the transformation in the inspector, then choose to search
+   * or further edit the parameters.
    */
-  private void triggerSearch(boolean useEditedPlan) {
+  private void triggerTransformOnly() {
     String query = queryField.getValue();
-    if (!useEditedPlan && (query == null || query.isBlank())) {
+    if (query == null || query.isBlank()) {
       Notification.show(getTranslation("search.error.empty"), 3000, Notification.Position.MIDDLE);
       return;
     }
+    startSearch(query, null, true);
+  }
 
-    // Persist to recent history (full searches only, not refinements)
-    if (!useEditedPlan && query != null && !query.isBlank()) {
-      ServiceRegistry.getInstance().getPersistenceService().addRecentSearch(query);
-      refreshRecentChips();
+  /**
+   * TRANSFORM AND EXECUTE — runs the full pipeline: LLM understanding then vector search.
+   */
+  private void triggerSearchAndExecute() {
+    String query = queryField.getValue();
+    if (query == null || query.isBlank()) {
+      Notification.show(getTranslation("search.error.empty"), 3000, Notification.Position.MIDDLE);
+      return;
     }
+    startSearch(query, null, false);
+  }
 
-    SearchPlan planToUse = null;
-    if (useEditedPlan && currentPlan != null) {
-      planToUse = collectPlanFromAdvancedPanel();
+  /**
+   * REFINE — skips LLM and executes vector search with the user-edited parameters
+   * from the Advanced panel.  Does not add a history entry (refinements are not
+   * separate search sessions).
+   */
+  private void triggerRefine() {
+    if (currentPlan == null) {
+      return;
     }
+    SearchPlan edited = collectPlanFromAdvancedPanel();
+    startSearch(edited.getOriginalQuery(), edited, false);
+  }
+
+  /**
+   * Common search entry point.
+   *
+   * @param query         the original user query (used for history persistence)
+   * @param prebuiltPlan  when non-null, skip LLM and use this plan directly (Refine path)
+   * @param transformOnly when true, stop after LLM analysis and skip vector search
+   */
+  private void startSearch(String query, SearchPlan prebuiltPlan, boolean transformOnly) {
+    inspector.reset();
+    inspector.setQueryInput(query != null ? query : "");
 
     SearchRunState state = new SearchRunState();
+    state.originalQuery  = (prebuiltPlan == null) ? query : null; // only persist on fresh searches
+    state.transformOnly  = transformOnly;
+    state.mode           = transformOnly ? SearchMode.TRANSFORM_ONLY
+                                        : SearchMode.TRANSFORM_AND_EXECUTE;
     currentSearch = state;
 
-    searchButton.setEnabled(false);
-    refineBtn.setEnabled(false);
+    setAllButtonsEnabled(false);
     progressBar.setVisible(true);
     statusLabel.setText(getTranslation("search.status.init"));
     statusLabel.setVisible(true);
-    transparencySection.setVisible(false);
     resultsGrid.setVisible(false);
     tileContainer.setVisible(false);
     viewToggle.setVisible(false);
 
     getUI().ifPresent(ui -> ui.setPollInterval(POLL_INTERVAL_MS));
 
-    final SearchPlan fixedPlan = planToUse;
-    if (fixedPlan != null) {
-      ServiceRegistry.getInstance().getSearchExecutor().submit(() -> runSearchWithPlan(state, fixedPlan));
+    if (prebuiltPlan != null) {
+      ServiceRegistry.getInstance().getSearchExecutor()
+          .submit(() -> runSearchWithPlan(state, prebuiltPlan));
     } else {
-      ServiceRegistry.getInstance().getSearchExecutor().submit(() -> runSearch(state, query));
+      ServiceRegistry.getInstance().getSearchExecutor()
+          .submit(() -> runSearch(state, query));
     }
   }
 
   /**
-   * Collects current values from the advanced panel editable fields and returns
-   * a new {@link SearchPlan} (preserving originalQuery from {@link #currentPlan}).
+   * Collects the current values from the Advanced panel editable fields and returns a
+   * new {@link SearchPlan} (preserving {@code originalQuery} from {@link #currentPlan}).
    */
   private SearchPlan collectPlanFromAdvancedPanel() {
     SearchPlan p = new SearchPlan();
@@ -504,26 +518,40 @@ public class SearchView
   }
 
   // -------------------------------------------------------------------------
-  // Background search tasks
+  // Background search tasks (run on shared executor thread)
   // -------------------------------------------------------------------------
 
-  /** Full flow: LLM analyze then vector search. */
+  /**
+   * Full flow: LLM query analysis then (optionally) vector search.
+   * Sets {@link SearchRunState#stepProgress} at each stage so the polling handler
+   * can update the inspector in real time.
+   */
   private void runSearch(SearchRunState state, String query) {
     try {
       state.status = "search.status.analyzing";
+      state.stepProgress = 1;  // LLM analysis started
       logger().info("Starting query understanding for: {}", query);
       SearchPlan plan = ServiceRegistry.getInstance()
           .getQueryUnderstandingService()
           .understand(query);
       state.plan = plan;
+      state.stepProgress = 2;  // LLM analysis done
       logger().info("Query plan: embedding='{}', season={}, category={}",
                     plan.getEmbeddingText(), plan.getSeasonHint(), plan.getSourceCategory());
 
+      if (state.transformOnly) {
+        // Stop here — vector search intentionally skipped
+        logger().info("Transform Only mode: stopping after LLM analysis");
+        return;
+      }
+
       state.status = "search.status.vector";
+      state.stepProgress = 3;  // vector search started
       List<SearchResultItem> results = ServiceRegistry.getInstance()
           .getSearchService()
           .search(plan);
       state.results = results;
+      state.stepProgress = 4;  // vector search done
       logger().info("Search returned {} results", results.size());
     } catch (Exception ex) {
       logger().error("Search failed: {}", ex.getMessage(), ex);
@@ -533,16 +561,22 @@ public class SearchView
     }
   }
 
-  /** Refined flow: skip LLM, use the supplied plan directly. */
+  /**
+   * Refined flow: skip LLM, use the supplied plan directly, always executes vector search.
+   */
   private void runSearchWithPlan(SearchRunState state, SearchPlan plan) {
     try {
+      // LLM was skipped; mark steps 1-2 as if completed so inspector shows them correctly
       state.status = "search.status.vector";
       state.plan = plan;
+      state.stepProgress = 2;  // plan is already available (user edited it)
       logger().info("Refine search with edited plan: embedding='{}'", plan.getEmbeddingText());
+      state.stepProgress = 3;
       List<SearchResultItem> results = ServiceRegistry.getInstance()
           .getSearchService()
           .search(plan);
       state.results = results;
+      state.stepProgress = 4;
       logger().info("Refine search returned {} results", results.size());
     } catch (Exception ex) {
       logger().error("Refine search failed: {}", ex.getMessage(), ex);
@@ -553,7 +587,7 @@ public class SearchView
   }
 
   // -------------------------------------------------------------------------
-  // Poll handler — runs on the UI thread
+  // Poll handler — runs on the Vaadin UI thread
   // -------------------------------------------------------------------------
 
   private void onPoll() {
@@ -562,34 +596,65 @@ public class SearchView
       return;
     }
 
+    // Live inspector step updates (idempotent — safe to call every 800 ms)
+    int p = s.stepProgress;
+    if (p >= 1) {
+      inspector.setLlmActive();
+    }
+    if (p >= 2 && s.plan != null) {
+      inspector.setLlmCompleted(s.plan);
+    }
+    if (p >= 3) {
+      inspector.setVectorActive();
+    }
+
     statusLabel.setText(getTranslation(s.status));
     if (!s.done) {
       return;
     }
 
-    // Search finished
+    // ── Search finished ────────────────────────────────────────────────────
     getUI().ifPresent(ui -> ui.setPollInterval(-1));
     currentSearch = null;
     progressBar.setVisible(false);
     statusLabel.setVisible(false);
-    searchButton.setEnabled(true);
-    refineBtn.setEnabled(true);
+    setAllButtonsEnabled(true);
 
     if (s.error != null) {
       Notification n = Notification.show(
           getTranslation("search.error.failed", s.error), 5000, Notification.Position.MIDDLE);
       n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+      inspector.setFailed(s.error, s.stepProgress);
       return;
     }
 
-    // Populate the advanced panel with derived (editable) plan values
+    // Final inspector states
+    if (p >= 4 && s.results != null) {
+      inspector.setVectorCompleted(s.results.size());
+    }
+    if (s.transformOnly) {
+      inspector.skipExecutionSteps();
+    }
+
+    // Populate advanced panel with editable plan values
     if (s.plan != null) {
       currentPlan = s.plan;
       populateAdvancedPanel(s.plan);
-      populateTransparency(s.plan, s.results != null ? s.results.size() : 0);
     }
 
-    renderResults(s.results != null ? s.results : List.of());
+    // Persist to history after completion — captures original + final LLM query.
+    // Only fresh searches (not refinements) are stored; originalQuery is null for refine.
+    if (s.originalQuery != null && !s.originalQuery.isBlank()) {
+      String finalQuery = s.plan != null ? s.plan.getEmbeddingText() : null;
+      ServiceRegistry.getInstance().getPersistenceService()
+          .addRecentSearch(s.originalQuery, finalQuery, s.mode);
+      refreshRecentChips();
+    }
+
+    // Show results only when the full search pipeline ran
+    if (!s.transformOnly) {
+      renderResults(s.results != null ? s.results : List.of());
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -613,43 +678,49 @@ public class SearchView
     return BOOL_ANY;
   }
 
+  private void setAllButtonsEnabled(boolean enabled) {
+    transformBtn.setEnabled(enabled);
+    searchBtn.setEnabled(enabled);
+    refineBtn.setEnabled(enabled);
+  }
+
   // -------------------------------------------------------------------------
   // Grid configuration
   // -------------------------------------------------------------------------
 
   private void configureResultsGrid() {
     resultsGrid.setWidthFull();
-    resultsGrid.setHeightFull();
+    // Do not call setHeightFull() — the grid auto-sizes with its content so the page
+    // can scroll naturally (goal L: results area fully usable, no squeezing).
+    resultsGrid.setAllRowsVisible(true);
     resultsGrid.setVisible(false);
 
-    resultsGrid.addComponentColumn(r -> buildResultThumb(r, "60px"))
+    // Thumbnail — 90px height, 110px column width (goal N: larger thumbnails)
+    resultsGrid.addComponentColumn(r -> buildResultThumb(r, "90px"))
         .setHeader(getTranslation("search.col.preview"))
-        .setWidth("80px").setFlexGrow(0);
+        .setWidth("110px").setFlexGrow(0);
 
     resultsGrid.addColumn(r -> String.format("%.3f", r.getScore()))
         .setHeader(getTranslation("search.col.score")).setWidth("80px").setFlexGrow(0)
         .setSortable(true);
 
-    resultsGrid.addColumn(SearchResultItem::getTitle)
-        .setHeader(getTranslation("search.col.filename")).setFlexGrow(2).setSortable(true);
+    // Filename (goal M) and Description (goal M) columns removed.
 
-    resultsGrid.addColumn(r -> r.getSourceCategory() != null ? r.getSourceCategory().name() : "—")
+    resultsGrid.addColumn(r -> r.getSourceCategory() != null ? r.getSourceCategory().name() : "\u2014")
         .setHeader(getTranslation("search.col.category")).setFlexGrow(1);
 
-    resultsGrid.addColumn(r -> r.getSeasonHint() != null ? r.getSeasonHint().name() : "—")
+    resultsGrid.addColumn(r -> r.getSeasonHint() != null ? r.getSeasonHint().name() : "\u2014")
         .setHeader(getTranslation("search.col.season")).setFlexGrow(1);
 
     resultsGrid.addComponentColumn(r -> {
-      Boolean p = r.getContainsPerson();
-      return new Span(p == null ? "—" : (p ? getTranslation("search.yes")
-                                           : getTranslation("search.no")));
+      Boolean pp = r.getContainsPerson();
+      return new Span(pp == null ? "\u2014" : (pp ? getTranslation("search.yes")
+                                                  : getTranslation("search.no")));
     }).setHeader(getTranslation("search.col.persons")).setFlexGrow(1);
 
-    resultsGrid.addComponentColumn(r -> riskBadge(r.getRiskLevel()))
-        .setHeader(getTranslation("search.col.risk")).setFlexGrow(1);
-
-    resultsGrid.addColumn(SearchResultItem::getSummary)
-        .setHeader(getTranslation("search.col.description")).setFlexGrow(4);
+    // Risk as icon (goal O: icons instead of text badges in table)
+    resultsGrid.addComponentColumn(r -> riskIcon(r.getRiskLevel()))
+        .setHeader(getTranslation("search.col.risk")).setWidth("70px").setFlexGrow(0);
 
     resultsGrid.addComponentColumn(r -> {
       Button btn = new Button(getTranslation("search.col.details"));
@@ -657,19 +728,6 @@ public class SearchView
       btn.addClickListener(e -> openDetailDialog(r));
       return btn;
     }).setHeader("").setFlexGrow(1);
-  }
-
-  private Span riskBadge(RiskLevel risk) {
-    if (risk == null) return new Span("—");
-    Span badge = new Span(risk.name());
-    badge.getElement().getThemeList().add("badge");
-    switch (risk) {
-      case SAFE      -> badge.getElement().getThemeList().add("success");
-      case REVIEW    -> badge.getElement().getThemeList().add("contrast");
-      case SENSITIVE -> badge.getElement().getThemeList().add("error");
-      default        -> throw new IllegalStateException("Unexpected risk level: " + risk);
-    }
-    return badge;
   }
 
   // -------------------------------------------------------------------------
@@ -701,7 +759,7 @@ public class SearchView
   }
 
   // -------------------------------------------------------------------------
-  // Tile view for search results
+  // Tile view for search results — fixed-height cards
   // -------------------------------------------------------------------------
 
   private void renderTiles(List<SearchResultItem> results) {
@@ -713,6 +771,8 @@ public class SearchView
 
   private Div buildResultTile(SearchResultItem r, int rank) {
     Div card = new Div();
+    // Fixed height: all cards stay the same size regardless of content length.
+    // The info section below the thumbnail scrolls if its content overflows.
     card.getStyle()
         .set("border", "1px solid var(--lumo-contrast-10pct)")
         .set("border-radius", "var(--lumo-border-radius-l)")
@@ -720,24 +780,35 @@ public class SearchView
         .set("background", "var(--lumo-base-color)")
         .set("display", "flex")
         .set("flex-direction", "column")
+        .set("height", "360px")
         .set("cursor", "default");
 
-    // Double-click → detail dialog
     card.getElement().addEventListener("dblclick", e -> openDetailDialog(r));
 
-    // Thumbnail
+    // Thumbnail — fixed height, does not shrink
     Div thumbWrapper = new Div(buildResultThumb(r, "150px"));
     thumbWrapper.getStyle()
         .set("background", "var(--lumo-contrast-5pct)")
-        .set("display", "flex").set("align-items", "center").set("justify-content", "center")
-        .set("min-height", "120px").set("overflow", "hidden");
+        .set("display", "flex")
+        .set("align-items", "center")
+        .set("justify-content", "center")
+        .set("height", "150px")
+        .set("flex-shrink", "0")
+        .set("overflow", "hidden");
     card.add(thumbWrapper);
 
+    // Info section — takes remaining height, scrolls on overflow
     Div info = new Div();
-    info.getStyle().set("padding", "0.5rem").set("display", "flex")
-        .set("flex-direction", "column").set("gap", "0.25rem");
+    info.getStyle()
+        .set("padding", "0.5rem")
+        .set("display", "flex")
+        .set("flex-direction", "column")
+        .set("gap", "0.25rem")
+        .set("flex", "1")
+        .set("min-height", "0")
+        .set("overflow-y", "auto");
 
-    // ── Rank badge ─────────────────────────────────────────────────────────
+    // Rank badge
     Span rankBadge = new Span("#" + rank + "  " + String.format("%.3f", r.getScore()));
     rankBadge.getElement().getThemeList().add("badge");
     if (rank == 1) {
@@ -747,15 +818,19 @@ public class SearchView
     }
     info.add(rankBadge);
 
-    // ── Filename ───────────────────────────────────────────────────────────
-    Span name = new Span(r.getTitle() != null ? r.getTitle() : "—");
-    name.getStyle().set("font-weight", "600").set("font-size", "var(--lumo-font-size-s)")
-        .set("overflow", "hidden").set("text-overflow", "ellipsis")
-        .set("white-space", "nowrap").set("display", "block");
+    // Filename
+    Span name = new Span(r.getTitle() != null ? r.getTitle() : "\u2014");
+    name.getStyle()
+        .set("font-weight", "600")
+        .set("font-size", "var(--lumo-font-size-s)")
+        .set("overflow", "hidden")
+        .set("text-overflow", "ellipsis")
+        .set("white-space", "nowrap")
+        .set("display", "block");
     name.getElement().setAttribute("title", r.getTitle() != null ? r.getTitle() : "");
     info.add(name);
 
-    // ── Category ───────────────────────────────────────────────────────────
+    // Category
     if (r.getSourceCategory() != null) {
       Span catSpan = new Span(r.getSourceCategory().name());
       catSpan.getStyle()
@@ -764,20 +839,22 @@ public class SearchView
       info.add(catSpan);
     }
 
-    // ── Risk icon ──────────────────────────────────────────────────────────
+    // Risk icon
     info.add(riskIcon(r.getRiskLevel()));
 
-    // ── Description excerpt ────────────────────────────────────────────────
+    // Description excerpt
     if (r.getSummary() != null) {
       String excerpt = r.getSummary().length() > 80
-          ? r.getSummary().substring(0, 80) + "…" : r.getSummary();
+          ? r.getSummary().substring(0, 80) + "\u2026" : r.getSummary();
       Span desc = new Span(excerpt);
-      desc.getStyle().set("font-size", "var(--lumo-font-size-xs)")
-          .set("color", "var(--lumo-secondary-text-color)").set("white-space", "normal");
+      desc.getStyle()
+          .set("font-size", "var(--lumo-font-size-xs)")
+          .set("color", "var(--lumo-secondary-text-color)")
+          .set("white-space", "normal");
       info.add(desc);
     }
 
-    // ── Details button (explicit action; double-click is the shortcut) ─────
+    // Details button
     Button detailBtn = new Button(getTranslation("search.col.details"));
     detailBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_PRIMARY);
     detailBtn.addClickListener(e -> openDetailDialog(r));
@@ -791,13 +868,9 @@ public class SearchView
   // Risk iconography
   // -------------------------------------------------------------------------
 
-  /**
-   * Returns a coloured icon representing the risk level, with a tooltip.
-   * SAFE = green check, REVIEW = orange question mark, SENSITIVE = red exclamation.
-   */
   private com.vaadin.flow.component.Component riskIcon(RiskLevel risk) {
     if (risk == null) {
-      Span dash = new Span("—");
+      Span dash = new Span("\u2014");
       dash.getStyle().set("font-size", "var(--lumo-font-size-xs)");
       return dash;
     }
@@ -826,18 +899,16 @@ public class SearchView
     try {
       PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
       ImageAsset asset = ps.findImage(r.getImageId()).orElse(null);
-      if (asset == null) return new Span("—");
+      if (asset == null) return new Span("\u2014");
 
       PreviewService previews = ServiceRegistry.getInstance().getPreviewService();
       Path originalPath = ServiceRegistry.getInstance()
           .getImageStorageService().resolvePath(asset.getId());
-
-      if (!Files.exists(originalPath)) return new Span("—");
+      if (!Files.exists(originalPath)) return new Span("\u2014");
 
       StreamResource res = previews.getTilePreview(asset.getId(), originalPath,
                                                    asset.getStoredFilename());
       if (res == null) {
-        // Fallback: stream original
         res = new StreamResource(asset.getStoredFilename(), () -> {
           try {
             return Files.newInputStream(originalPath);
@@ -855,7 +926,7 @@ public class SearchView
     } catch (Exception e) {
       logger().debug("Could not load thumbnail for search result {}", r.getImageId(), e);
     }
-    return new Span("—");
+    return new Span("\u2014");
   }
 
   private void openDetailDialog(SearchResultItem result) {
@@ -872,14 +943,32 @@ public class SearchView
   }
 
   // -------------------------------------------------------------------------
-  // Shared volatile search state
+  // Shared volatile search run state
   // -------------------------------------------------------------------------
 
+  /**
+   * Volatile holder for the in-progress background search.
+   *
+   * <p>Written by the background executor thread; read by the Vaadin UI polling handler.
+   * All fields are {@code volatile} to ensure visibility across threads without locking.
+   * {@link #stepProgress} drives real-time inspector updates during polling.
+   */
   private static class SearchRunState {
-    volatile String                 status  = "search.status.init";
-    volatile SearchPlan             plan    = null;
-    volatile List<SearchResultItem> results = null;
-    volatile String                 error   = null;
-    volatile boolean                done    = false;
+    /** i18n key for the current status label (e.g. "search.status.analyzing"). */
+    volatile String                 status       = "search.status.init";
+    volatile SearchPlan             plan         = null;
+    volatile List<SearchResultItem> results      = null;
+    volatile String                 error        = null;
+    volatile boolean                done         = false;
+    /** Whether this run stops after LLM analysis (no vector search). */
+    volatile boolean                transformOnly = false;
+    volatile SearchMode             mode         = SearchMode.TRANSFORM_AND_EXECUTE;
+    /** Original user query; null for refine runs (which are not persisted to history). */
+    volatile String                 originalQuery = null;
+    /**
+     * Step progress counter for live inspector updates.
+     * 0 = starting, 1 = LLM started, 2 = LLM done, 3 = vector started, 4 = vector done.
+     */
+    volatile int                    stepProgress = 0;
   }
 }

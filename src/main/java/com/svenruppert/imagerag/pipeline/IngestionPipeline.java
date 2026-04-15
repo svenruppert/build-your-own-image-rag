@@ -111,6 +111,30 @@ public class IngestionPipeline
   }
 
   /**
+   * Submits a reprocessing job for an already-stored image asset.
+   *
+   * <p>Unlike {@link #submit}, no bytes are read from a stream — the image file already
+   * exists on disk.  The job skips file storage and duplicate detection and re-runs only
+   * the AI-heavy stages: vision analysis, semantic derivation, sensitivity assessment,
+   * embedding, and vector index update.
+   *
+   * <p>The job is visible in the pipeline UI just like a regular upload job but carries
+   * {@link JobType#REPROCESS_EXISTING} to distinguish it from uploads.
+   *
+   * @param asset the image asset to reprocess; must already exist in the image store
+   * @return the created {@link IngestionJob} for status tracking
+   */
+  public IngestionJob submitReprocess(ImageAsset asset) {
+    IngestionJob job = new IngestionJob(asset.getOriginalFilename(), asset.getMimeType(),
+                                       JobType.REPROCESS_EXISTING);
+    jobs.add(job);
+    Future<?> future = executor.submit(() -> reprocess(job, asset));
+    job.setFuture(future);
+    logger().info("Reprocess job queued: {} ({})", asset.getOriginalFilename(), job.getJobId());
+    return job;
+  }
+
+  /**
    * Cancels a specific job. Safe to call from any thread, including the Vaadin UI thread.
    * If the job is QUEUED it will be removed from the executor queue before it starts.
    * If it is already RUNNING the worker thread is interrupted at the next checkpoint.
@@ -176,6 +200,85 @@ public class IngestionPipeline
       return HexFormat.of().formatHex(hash);
     } catch (Exception e) {
       return null; // hash unavailable; duplicate check skipped
+    }
+  }
+
+  private void reprocess(IngestionJob job, ImageAsset asset) {
+    UUID imageId = asset.getId();
+    try {
+      // Step 1: Load image from disk
+      checkCancelled();
+      job.transition(JobStep.LOADING_IMAGE);
+      java.nio.file.Path imagePath = imageStorageService.resolvePath(imageId);
+      logger().info("[reprocess][{}] Loading image from {}", asset.getOriginalFilename(), imagePath);
+
+      // Step 2: Vision analysis (LLM — slow)
+      checkCancelled();
+      job.transition(JobStep.ANALYZING_VISION);
+      com.svenruppert.imagerag.dto.VisionAnalysisResponse visionResponse =
+          visionAnalysisService.analyzeImage(imagePath);
+      logger().info("[reprocess][{}] Vision done (successful={})",
+                    asset.getOriginalFilename(), visionResponse.successful());
+
+      // Step 3: Semantic derivation — overwrites existing analysis
+      checkCancelled();
+      job.transition(JobStep.DERIVING_SEMANTICS);
+      SemanticAnalysis semanticAnalysis = semanticDerivationService.derive(imageId, visionResponse);
+      persistenceService.saveAnalysis(imageId, semanticAnalysis);
+
+      // Step 4: Sensitivity assessment — re-evaluate using stored metadata/location
+      checkCancelled();
+      job.transition(JobStep.ASSESSING_SENSITIVITY);
+      ImageMetadataInfo metadataInfo = persistenceService.findMetadata(imageId).orElse(null);
+      LocationSummary locationSummary = persistenceService.findLocation(imageId).orElse(null);
+      SensitivityAssessment assessment = sensitivityAssessmentService.assess(
+          asset, metadataInfo, locationSummary, semanticAnalysis);
+      persistenceService.saveAssessment(imageId, assessment);
+      logger().info("[reprocess][{}] Risk: {} | Flags: {}",
+                    asset.getOriginalFilename(), assessment.getRiskLevel(), assessment.getFlags());
+
+      // Re-evaluate visibility — intentionally resets any prior manual approval/lock.
+      // SAFE → auto-approved; other → locked (requires manual approval in Overview).
+      if (assessment.getRiskLevel() == RiskLevel.SAFE) {
+        persistenceService.approveImage(imageId);
+        logger().info("[reprocess][{}] Auto-approved (SAFE)", asset.getOriginalFilename());
+      } else {
+        persistenceService.unapproveImage(imageId);
+        logger().info("[reprocess][{}] Locked ({} risk)",
+                      asset.getOriginalFilename(), assessment.getRiskLevel());
+      }
+
+      // Step 5: Embedding
+      checkCancelled();
+      job.transition(JobStep.EMBEDDING);
+      String embeddingText = buildEmbeddingText(semanticAnalysis);
+      float[] vector = embeddingService.embed(embeddingText);
+
+      // Step 6: Vector index — remove stale entry, insert fresh one
+      if (vector != null && vector.length > 0) {
+        checkCancelled();
+        job.transition(JobStep.INDEXING);
+        vectorIndexService.remove(imageId);
+        vectorIndexService.index(imageId, vector);
+        VectorEntry entry = new VectorEntry(imageId, "nomic-embed-text",
+                                            vector.length, Instant.now());
+        persistenceService.saveVectorEntry(imageId, entry);
+        logger().info("[reprocess][{}] Indexed {} dims",
+                      asset.getOriginalFilename(), vector.length);
+      } else {
+        logger().warn("[reprocess][{}] Empty embedding — vector index not updated",
+                      asset.getOriginalFilename());
+      }
+
+      job.complete(imageId);
+      logger().info("[reprocess][{}] COMPLETED", asset.getOriginalFilename());
+
+    } catch (InterruptedException e) {
+      job.transition(JobStep.CANCELLED);
+      logger().info("[reprocess][{}] Cancelled by interrupt", asset.getOriginalFilename());
+    } catch (Exception e) {
+      logger().error("[reprocess][{}] FAILED: {}", asset.getOriginalFilename(), e.getMessage(), e);
+      job.fail(e.getMessage());
     }
   }
 

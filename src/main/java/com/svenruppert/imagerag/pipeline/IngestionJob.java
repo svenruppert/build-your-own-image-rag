@@ -15,6 +15,7 @@ public class IngestionJob {
   private final String filename;
   private final String mimeType;
   private final Instant submittedAt;
+  private final JobType jobType;
 
   private volatile JobStep currentStep = JobStep.QUEUED;
   private volatile Instant startedAt;
@@ -36,9 +37,14 @@ public class IngestionJob {
   private volatile String duplicateOfFilename;
 
   public IngestionJob(String filename, String mimeType) {
+    this(filename, mimeType, JobType.INGEST_UPLOAD);
+  }
+
+  public IngestionJob(String filename, String mimeType, JobType jobType) {
     this.jobId = UUID.randomUUID();
     this.filename = filename;
     this.mimeType = mimeType;
+    this.jobType = jobType;
     this.submittedAt = Instant.now();
   }
 
@@ -67,7 +73,7 @@ public class IngestionJob {
   public synchronized void transition(JobStep step) {
     if (currentStep.isTerminal()) return; // no transitions out of terminal state
     this.currentStep = step;
-    if (step == JobStep.STORING) {
+    if (step == JobStep.STORING || step == JobStep.LOADING_IMAGE) {
       this.startedAt = Instant.now();
     }
     if (step.isTerminal()) {
@@ -124,6 +130,10 @@ public class IngestionJob {
   }
 
   // --- Getters ---
+
+  public JobType getJobType() {
+    return jobType;
+  }
 
   public UUID getJobId() {
     return jobId;

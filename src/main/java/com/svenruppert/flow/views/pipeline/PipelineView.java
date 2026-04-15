@@ -10,6 +10,7 @@ import com.svenruppert.imagerag.domain.SensitivityAssessment;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.pipeline.IngestionJob;
 import com.svenruppert.imagerag.pipeline.JobStep;
+import com.svenruppert.imagerag.pipeline.JobType;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.button.Button;
@@ -188,6 +189,12 @@ public class PipelineView
         .setWidth("140px")
         .setFlexGrow(0);
 
+    // Job type badge — distinguishes upload jobs from reprocess jobs
+    grid.addComponentColumn(job -> jobTypeBadge(job.getJobType()))
+        .setHeader(getTranslation("pipeline.col.type"))
+        .setWidth("140px")
+        .setFlexGrow(0);
+
     // Current step label
     grid.addColumn(job -> job.getCurrentStep().getLabel())
         .setHeader(getTranslation("pipeline.col.step"))
@@ -325,6 +332,21 @@ public class PipelineView
   // -------------------------------------------------------------------------
   // Badge helper
   // -------------------------------------------------------------------------
+
+  private Span jobTypeBadge(JobType type) {
+    if (type == null) {
+      return new Span();
+    }
+    Span badge = new Span(getTranslation(
+        type == JobType.REPROCESS_EXISTING ? "pipeline.type.reprocess" : "pipeline.type.upload"));
+    badge.getElement().getThemeList().add("badge");
+    if (type == JobType.REPROCESS_EXISTING) {
+      badge.getElement().getThemeList().add("contrast");
+    } else {
+      badge.getElement().getThemeList().add("primary");
+    }
+    return badge;
+  }
 
   private Span stepBadge(JobStep step) {
     Span badge = new Span(step.getLabel());

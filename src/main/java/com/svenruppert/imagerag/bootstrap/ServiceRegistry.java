@@ -109,16 +109,16 @@ public class ServiceRegistry
     // Shared search executor — initial size = configured search parallelism (default 1)
     searchExecutor = buildSearchExecutor(processingSettings.getSearchParallelism());
 
-    // Reprocessing service — allows the user to re-run AI stages on existing assets
-    reprocessingService = new ReprocessingServiceImpl(
-        imageStorageService, visionAnalysisService, semanticDerivationService,
-        sensitivityAssessmentService, embeddingService, vectorIndexService, persistenceService);
-
-    // Async ingestion pipeline — replaces the old ImageIngestionService in the UI
+    // Async ingestion pipeline — handles uploads AND reprocessing jobs.
+    // Must be constructed before reprocessingService so the latter can delegate to it.
     ingestionPipeline = new IngestionPipeline(
         imageStorageService, metadataExtractionService, reverseGeocodingService,
         visionAnalysisService, semanticDerivationService, sensitivityAssessmentService,
         embeddingService, vectorIndexService, persistenceService);
+
+    // Reprocessing service — thin facade that delegates to the pipeline for visibility.
+    // Reprocessing jobs appear in the Pipeline view just like upload jobs.
+    reprocessingService = new ReprocessingServiceImpl(ingestionPipeline, persistenceService);
 
     logger().info("ServiceRegistry initialized. {} images in store.",
                   persistenceService.findAllImages().size());

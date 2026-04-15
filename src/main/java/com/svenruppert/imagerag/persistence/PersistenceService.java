@@ -6,6 +6,7 @@ import org.eclipse.store.storage.embedded.types.EmbeddedStorage;
 import org.eclipse.store.storage.embedded.types.EmbeddedStorageManager;
 
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
+import com.svenruppert.imagerag.domain.enums.SearchMode;
 import com.svenruppert.imagerag.domain.enums.SensitivityFlag;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 
@@ -272,28 +273,47 @@ public class PersistenceService
   private static final int MAX_RECENT_SEARCHES = 20;
 
   /**
-   * Prepends {@code query} to the recent-search list (case-insensitive deduplication),
-   * then trims the list to {@value #MAX_RECENT_SEARCHES} entries and persists.
+   * Prepends the search entry to the recent-search list (case-insensitive deduplication
+   * on the original query), then trims the list to {@value #MAX_RECENT_SEARCHES} entries
+   * and persists.
+   *
+   * @param query      the original user query
+   * @param finalQuery the LLM-transformed embedding text (may be null for transform-only runs)
+   * @param mode       which search mode was used
    */
-  public void addRecentSearch(String query) {
+  public void addRecentSearch(String query, String finalQuery, SearchMode mode) {
     if (query == null || query.isBlank()) {
       return;
     }
     String trimmed = query.trim();
     List<RecentSearchEntry> recent = root.getRecentSearches();
-    // Remove any existing entry with the same query (case-insensitive) so the
+    // Remove any existing entry with the same original query (case-insensitive) so the
     // freshly submitted one bubbles to the top.
     for (int i = recent.size() - 1; i >= 0; i--) {
       if (trimmed.equalsIgnoreCase(recent.get(i).getQuery())) {
         recent.remove(i);
       }
     }
-    recent.add(0, new RecentSearchEntry(trimmed, Instant.now()));
+    recent.add(0, new RecentSearchEntry(trimmed, finalQuery, mode, Instant.now()));
     while (recent.size() > MAX_RECENT_SEARCHES) {
       recent.remove(recent.size() - 1);
     }
     storage.store(recent);
     logger().debug("Recent search history updated: {} entries", recent.size());
+  }
+
+  /**
+   * Removes the specified entries from the recent-search history and persists the change.
+   * Uses object identity ({@link Object#equals}) for matching — callers should pass the
+   * exact instances returned by {@link #getRecentSearches()}.
+   */
+  public void deleteRecentSearches(List<RecentSearchEntry> toDelete) {
+    if (toDelete == null || toDelete.isEmpty()) {
+      return;
+    }
+    root.getRecentSearches().removeAll(toDelete);
+    storage.store(root.getRecentSearches());
+    logger().info("Deleted {} recent search entries", toDelete.size());
   }
 
   /**

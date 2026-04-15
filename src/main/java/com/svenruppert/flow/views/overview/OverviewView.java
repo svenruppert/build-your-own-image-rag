@@ -287,6 +287,8 @@ public class OverviewView
     PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
 
     Div card = new Div();
+    // Fixed height: all cards keep the same size regardless of content length.
+    // The info section scrolls internally if it overflows.
     card.getStyle()
         .set("border", "1px solid var(--lumo-contrast-10pct)")
         .set("border-radius", "var(--lumo-border-radius-l)")
@@ -294,22 +296,30 @@ public class OverviewView
         .set("background", "var(--lumo-base-color)")
         .set("display", "flex")
         .set("flex-direction", "column")
+        .set("height", "360px")
         .set("cursor", "default");
 
     // Double-click → detail dialog
     card.getElement().addEventListener("dblclick", e -> openDetailDialog(asset));
 
-    // Thumbnail
+    // Thumbnail — fixed height, does not shrink
     Div thumbWrapper = new Div(buildThumb(asset, "150px"));
     thumbWrapper.getStyle()
         .set("background", "var(--lumo-contrast-5pct)")
         .set("display", "flex").set("align-items", "center").set("justify-content", "center")
-        .set("min-height", "120px").set("overflow", "hidden");
+        .set("height", "150px").set("flex-shrink", "0").set("overflow", "hidden");
     card.add(thumbWrapper);
 
+    // Info section — takes remaining height, scrolls on overflow
     Div info = new Div();
-    info.getStyle().set("padding", "0.5rem").set("display", "flex")
-        .set("flex-direction", "column").set("gap", "0.25rem");
+    info.getStyle()
+        .set("padding", "0.5rem")
+        .set("display", "flex")
+        .set("flex-direction", "column")
+        .set("gap", "0.25rem")
+        .set("flex", "1")
+        .set("min-height", "0")
+        .set("overflow-y", "auto");
 
     // Filename
     Span name = new Span(asset.getOriginalFilename());

@@ -8,6 +8,7 @@ public enum JobStep {
 
   QUEUED("Queued", false),
   STORING("Storing image file", false),
+  LOADING_IMAGE("Loading image from store", false),
   EXTRACTING_METADATA("Extracting metadata (EXIF)", false),
   GEOCODING("Reverse geocoding", false),
   ANALYZING_VISION("Vision analysis · LLM", false),

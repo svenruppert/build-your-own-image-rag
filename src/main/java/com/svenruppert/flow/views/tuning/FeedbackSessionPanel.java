@@ -56,7 +56,7 @@ public class FeedbackSessionPanel extends VerticalLayout {
     content.removeAll();
 
     if (session == null || session.isEmpty()) {
-      Span empty = new Span("No feedback in this session.");
+      Span empty = new Span(getTranslation("tuning.feedback.empty"));
       empty.getStyle()
           .set("font-size", "var(--lumo-font-size-xs)")
           .set("color", "var(--lumo-disabled-text-color)")

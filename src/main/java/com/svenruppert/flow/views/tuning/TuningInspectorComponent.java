@@ -1,9 +1,10 @@
 package com.svenruppert.flow.views.tuning;
 
+import com.svenruppert.imagerag.domain.SearchTuningConfig;
 import com.svenruppert.imagerag.domain.enums.QueryIntentType;
 import com.svenruppert.imagerag.domain.enums.RetrievalMode;
-import com.svenruppert.imagerag.domain.SearchTuningConfig;
 import com.svenruppert.imagerag.dto.TuningRun;
+import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H4;
 import com.vaadin.flow.component.html.Span;
@@ -15,16 +16,22 @@ import java.util.Map;
 /**
  * Tuning-lab retrieval pipeline inspector.
  *
- * <p>Shows 10 pipeline steps for the last tuning run as a vertical timeline, colour-coded
- * by status (PENDING / ACTIVE / COMPLETED / SKIPPED).  Call {@link #showRun(TuningRun)}
- * after a run completes to update the display.  Call {@link #reset()} before starting
- * a new run.
+ * <p>Shows 10 pipeline steps for the last tuning run as a vertical timeline,
+ * colour-coded by status (PENDING / ACTIVE / COMPLETED / SKIPPED).
+ * Call {@link #showRun(TuningRun)} after a run completes to update the display.
+ * Call {@link #reset()} before starting a new run.
  *
- * <h3>Steps</h3>
+ * <p>All user-visible text is fully internationalised.  Step titles and the
+ * section heading are applied in {@link #onAttach(AttachEvent)} so that the
+ * correct locale is available.  Status summaries written by {@link #markRunning}
+ * and {@link #showRun} use {@code getTranslation()} directly, since those
+ * methods are always called from an attached, session-bound UI thread.
+ *
+ * <h3>Pipeline steps</h3>
  * <ol>
  *   <li>Query Input</li>
  *   <li>Query Intent (skipped when intent detection is off)</li>
- *   <li>Embedding Generation (skipped for BM25-only; uses stored vector in QBE mode)</li>
+ *   <li>Embedding (skipped for BM25-only; uses stored vector in QBE mode)</li>
  *   <li>Vector Retrieval (skipped for BM25-only)</li>
  *   <li>BM25 Retrieval (skipped for semantic-only)</li>
  *   <li>Score Fusion</li>
@@ -36,31 +43,26 @@ import java.util.Map;
  */
 public class TuningInspectorComponent extends VerticalLayout {
 
-  // ── Status colours — mirrors SearchInspectorComponent ────────────────────
+  // ── Status colours ────────────────────────────────────────────────────────
   private static final String COLOR_PENDING   = "var(--lumo-contrast-30pct)";
   private static final String COLOR_ACTIVE    = "var(--lumo-primary-color)";
   private static final String COLOR_COMPLETED = "var(--lumo-success-color)";
   private static final String COLOR_SKIPPED   = "var(--lumo-contrast-15pct)";
 
-  // ── Step constants ────────────────────────────────────────────────────────
-  static final String STEP_QUERY      = "Query Input";
-  static final String STEP_INTENT     = "Query Intent";
-  static final String STEP_EMBED      = "Embedding";
-  static final String STEP_VECTOR     = "Vector Retrieval";
-  static final String STEP_BM25       = "BM25 Retrieval";
-  static final String STEP_FUSION     = "Score Fusion";
-  static final String STEP_CONFIDENCE = "Confidence Boost";
-  static final String STEP_FEEDBACK   = "Relevance Feedback";
-  static final String STEP_FILTER     = "Score Filtering";
-  static final String STEP_RESULT     = "Result Assembly";
+  // ── Pipeline step enum — stable internal keys; i18n key derived from name ─
+  private enum PipelineStep {
+    QUERY, INTENT, EMBED, VECTOR, BM25, FUSION, CONFIDENCE, FEEDBACK, FILTER, RESULT;
 
-  static final String[] ALL_STEPS = {
-      STEP_QUERY, STEP_INTENT, STEP_EMBED, STEP_VECTOR, STEP_BM25,
-      STEP_FUSION, STEP_CONFIDENCE, STEP_FEEDBACK, STEP_FILTER, STEP_RESULT
-  };
+    /** Translation key for the step's user-visible title. */
+    String titleKey() { return "tuning.step." + name().toLowerCase(); }
 
-  // ── Step rows ─────────────────────────────────────────────────────────────
-  private final Map<String, StepRow> rows = new LinkedHashMap<>();
+    /** Translation key for the "running" status summary. */
+    String runningKey() { return "tuning.step." + name().toLowerCase() + ".running"; }
+  }
+
+  // ── Stored UI elements (updated in onAttach) ──────────────────────────────
+  private final H4 headingEl = new H4();
+  private final Map<PipelineStep, StepRow> rows = new LinkedHashMap<>();
 
   public TuningInspectorComponent() {
     setPadding(false);
@@ -72,19 +74,31 @@ public class TuningInspectorComponent extends VerticalLayout {
         .set("background", "var(--lumo-base-color)")
         .set("width", "100%");
 
-    H4 heading = new H4("Retrieval Pipeline");
-    heading.getStyle()
+    headingEl.getStyle()
         .set("margin", "0 0 0.4rem 0")
         .set("font-size", "var(--lumo-font-size-s)")
         .set("color", "var(--lumo-secondary-text-color)")
         .set("text-transform", "uppercase")
         .set("letter-spacing", "0.05em");
-    add(heading);
+    add(headingEl);
 
-    for (int i = 0; i < ALL_STEPS.length; i++) {
-      StepRow row = new StepRow(String.valueOf(i + 1), ALL_STEPS[i], "Waiting\u2026");
-      rows.put(ALL_STEPS[i], row);
+    int i = 1;
+    for (PipelineStep step : PipelineStep.values()) {
+      StepRow row = new StepRow(String.valueOf(i++));
+      rows.put(step, row);
       add(row);
+    }
+    // Titles and waiting text are applied in onAttach() once translations are available.
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+  @Override
+  protected void onAttach(AttachEvent event) {
+    super.onAttach(event);
+    headingEl.setText(getTranslation("tuning.inspector.title"));
+    for (PipelineStep step : PipelineStep.values()) {
+      rows.get(step).setStepTitle(getTranslation(step.titleKey()));
     }
     reset();
   }
@@ -93,157 +107,170 @@ public class TuningInspectorComponent extends VerticalLayout {
 
   /** Resets all steps to PENDING. Call before each new run. */
   public void reset() {
-    rows.values().forEach(r -> r.update(Status.PENDING, "Waiting\u2026"));
+    String waiting = getTranslation("tuning.inspector.waiting");
+    rows.values().forEach(r -> r.update(Status.PENDING, waiting));
   }
 
-  /** Marks all steps ACTIVE immediately (spinner-like state during execution). */
+  /**
+   * Marks all steps ACTIVE with "running" summaries while the search executes.
+   * Requires the component to be attached.
+   */
   public void markRunning(String query) {
-    rows.get(STEP_QUERY).update(Status.ACTIVE, truncate(query, 80));
-    rows.get(STEP_INTENT).update(Status.ACTIVE, "Detecting intent\u2026");
-    rows.get(STEP_EMBED).update(Status.ACTIVE, "Generating embedding\u2026");
-    rows.get(STEP_VECTOR).update(Status.ACTIVE, "Retrieving vector candidates\u2026");
-    rows.get(STEP_BM25).update(Status.ACTIVE, "Running keyword search\u2026");
-    rows.get(STEP_FUSION).update(Status.ACTIVE, "Fusing scores\u2026");
-    rows.get(STEP_CONFIDENCE).update(Status.ACTIVE, "Applying confidence boost\u2026");
-    rows.get(STEP_FEEDBACK).update(Status.ACTIVE, "Applying relevance feedback\u2026");
-    rows.get(STEP_FILTER).update(Status.ACTIVE, "Filtering by cutoff\u2026");
-    rows.get(STEP_RESULT).update(Status.ACTIVE, "Assembling results\u2026");
+    rows.get(PipelineStep.QUERY).update(Status.ACTIVE, truncate(query, 80));
+    for (PipelineStep step : PipelineStep.values()) {
+      if (step != PipelineStep.QUERY) {
+        rows.get(step).update(Status.ACTIVE, getTranslation(step.runningKey()));
+      }
+    }
   }
 
   /**
    * Populates all steps from a completed {@link TuningRun}.
-   * Call inside {@code ui.access()} after the run finishes.
+   * Must be called inside {@code ui.access()} after the run finishes.
    */
   public void showRun(TuningRun run) {
-    SearchTuningConfig cfg = run.getConfig();
+    SearchTuningConfig cfg  = run.getConfig();
     RetrievalMode      mode = cfg.getRetrievalMode();
 
     // Step 1 — Query Input
-    rows.get(STEP_QUERY).update(Status.COMPLETED,
+    rows.get(PipelineStep.QUERY).update(Status.COMPLETED,
         "\u201c" + truncate(run.getQuery(), 80) + "\u201d");
 
     // Step 2 — Query Intent
     QueryIntentType intent = run.getDetectedIntent();
     if (!cfg.isQueryIntentEnabled() || intent == null) {
-      rows.get(STEP_INTENT).update(Status.SKIPPED, "Intent detection disabled");
+      rows.get(PipelineStep.INTENT).update(Status.SKIPPED,
+          getTranslation("tuning.step.intent.disabled"));
     } else {
-      rows.get(STEP_INTENT).update(Status.COMPLETED,
-          intent.getLabel() + " \u2014 " + intent.getHint());
+      rows.get(PipelineStep.INTENT).update(Status.COMPLETED,
+          getTranslation("tuning.step.intent.done", intent.getLabel(), intent.getHint()));
     }
 
     // Step 3 — Embedding
     if (mode == RetrievalMode.BM25_ONLY) {
-      rows.get(STEP_EMBED).update(Status.SKIPPED, "Skipped \u2014 BM25-only mode");
+      rows.get(PipelineStep.EMBED).update(Status.SKIPPED,
+          getTranslation("tuning.step.embed.bm25only"));
     } else if (cfg.getQueryByExampleImageId() != null) {
-      rows.get(STEP_EMBED).update(Status.COMPLETED,
-          "QBE mode \u2014 using stored vector for image " + cfg.getQueryByExampleImageId());
+      rows.get(PipelineStep.EMBED).update(Status.COMPLETED,
+          getTranslation("tuning.step.embed.qbe"));
     } else {
-      rows.get(STEP_EMBED).update(Status.COMPLETED,
-          "Query embedded using " + cfg.getSimilarityFunction().getLabel());
+      rows.get(PipelineStep.EMBED).update(Status.COMPLETED,
+          getTranslation("tuning.step.embed.done", cfg.getSimilarityFunction().getLabel()));
     }
 
     // Step 4 — Vector Retrieval
     if (mode == RetrievalMode.BM25_ONLY) {
-      rows.get(STEP_VECTOR).update(Status.SKIPPED, "Skipped \u2014 BM25-only mode");
+      rows.get(PipelineStep.VECTOR).update(Status.SKIPPED,
+          getTranslation("tuning.step.vector.bm25only"));
     } else {
-      rows.get(STEP_VECTOR).update(Status.COMPLETED,
-          run.getVectorCandidates() + " candidates  |  "
-              + cfg.getSimilarityFunction().getLabel());
+      rows.get(PipelineStep.VECTOR).update(Status.COMPLETED,
+          getTranslation("tuning.step.vector.done",
+              run.getVectorCandidates(), cfg.getSimilarityFunction().getLabel()));
     }
 
     // Step 5 — BM25 Retrieval
     if (mode == RetrievalMode.SEMANTIC_ONLY) {
-      rows.get(STEP_BM25).update(Status.SKIPPED, "Skipped \u2014 semantic-only mode");
+      rows.get(PipelineStep.BM25).update(Status.SKIPPED,
+          getTranslation("tuning.step.bm25.semonly"));
     } else {
-      rows.get(STEP_BM25).update(Status.COMPLETED,
-          run.getKeywordCandidates() + " candidates via keyword search");
+      rows.get(PipelineStep.BM25).update(Status.COMPLETED,
+          getTranslation("tuning.step.bm25.done", run.getKeywordCandidates()));
     }
 
     // Step 6 — Score Fusion
-    int totalCandidates = run.getVectorCandidates() + run.getKeywordCandidates();
-    String fusionSummary = switch (mode) {
-      case HYBRID        -> String.format("Hybrid RRF  |  Sem \u00d7%.2f  BM25 \u00d7%.2f  |  %d unique candidates",
-                               cfg.getSemanticWeight(), cfg.getBm25Weight(), totalCandidates);
-      case SEMANTIC_ONLY -> String.format("Semantic only  |  Sem \u00d7%.2f", cfg.getSemanticWeight());
-      case BM25_ONLY     -> String.format("BM25 only  |  BM25 \u00d7%.2f", cfg.getBm25Weight());
+    int total     = run.getVectorCandidates() + run.getKeywordCandidates();
+    String semFmt = String.format("%.2f", cfg.getSemanticWeight());
+    String bFmt   = String.format("%.2f", cfg.getBm25Weight());
+    String fusionText = switch (mode) {
+      case HYBRID        -> getTranslation("tuning.step.fusion.hybrid",  semFmt, bFmt, total);
+      case SEMANTIC_ONLY -> getTranslation("tuning.step.fusion.semantic", semFmt);
+      case BM25_ONLY     -> getTranslation("tuning.step.fusion.bm25only", bFmt);
     };
-    rows.get(STEP_FUSION).update(Status.COMPLETED, fusionSummary);
+    rows.get(PipelineStep.FUSION).update(Status.COMPLETED, fusionText);
 
     // Step 7 — Confidence Boost
     if (cfg.getConfidenceWeight() <= 0) {
-      rows.get(STEP_CONFIDENCE).update(Status.SKIPPED, "Weight = 0 \u2014 boost disabled");
+      rows.get(PipelineStep.CONFIDENCE).update(Status.SKIPPED,
+          getTranslation("tuning.step.confidence.disabled"));
     } else {
-      rows.get(STEP_CONFIDENCE).update(Status.COMPLETED,
-          String.format("Weight %.2f \u2014 up to +%.0f%% for high-confidence images",
-              cfg.getConfidenceWeight(), cfg.getConfidenceWeight() * 100));
+      String confFmt = String.format("%.2f", cfg.getConfidenceWeight());
+      String pctFmt  = String.format("%.0f", cfg.getConfidenceWeight() * 100);
+      rows.get(PipelineStep.CONFIDENCE).update(Status.COMPLETED,
+          getTranslation("tuning.step.confidence.done", confFmt, pctFmt));
     }
 
     // Step 8 — Relevance Feedback
-    int fbEntries = run.getFeedbackEntriesUsed();
-    if (!cfg.isFeedbackEnabled() || fbEntries == 0) {
-      rows.get(STEP_FEEDBACK).update(Status.SKIPPED,
-          cfg.isFeedbackEnabled() ? "Enabled \u2014 no feedback in session"
-                                  : "Feedback disabled");
+    int fb = run.getFeedbackEntriesUsed();
+    if (!cfg.isFeedbackEnabled() || fb == 0) {
+      rows.get(PipelineStep.FEEDBACK).update(Status.SKIPPED,
+          cfg.isFeedbackEnabled()
+              ? getTranslation("tuning.step.feedback.empty")
+              : getTranslation("tuning.step.feedback.disabled"));
     } else {
-      rows.get(STEP_FEEDBACK).update(Status.COMPLETED,
-          String.format("%d feedback entr%s  |  weight %.2f",
-              fbEntries, fbEntries == 1 ? "y" : "ies", cfg.getFeedbackWeight()));
+      rows.get(PipelineStep.FEEDBACK).update(Status.COMPLETED,
+          getTranslation("tuning.step.feedback.done",
+              fb, String.format("%.2f", cfg.getFeedbackWeight())));
     }
 
     // Step 9 — Score Filtering
-    rows.get(STEP_FILTER).update(Status.COMPLETED,
-        String.format("Cutoff %.2f \u2014 %d result(s) passed", cfg.getScoreCutoff(),
-            run.getResults().size()));
+    rows.get(PipelineStep.FILTER).update(Status.COMPLETED,
+        getTranslation("tuning.step.filter.done",
+            String.format("%.2f", cfg.getScoreCutoff()), run.getResults().size()));
 
     // Step 10 — Result Assembly
-    rows.get(STEP_RESULT).update(Status.COMPLETED,
-        run.getResults().size() + " result(s) \u2014 " + run.getExecutionMs() + " ms");
+    rows.get(PipelineStep.RESULT).update(Status.COMPLETED,
+        getTranslation("tuning.step.result.done",
+            run.getResults().size(), run.getExecutionMs()));
   }
 
-  // ── Inner helpers ─────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
 
   private static String truncate(String s, int max) {
     if (s == null) return "";
     return s.length() > max ? s.substring(0, max - 1) + "\u2026" : s;
   }
 
-  // ── StepRow inner component ───────────────────────────────────────────────
+  // ── Status enum ───────────────────────────────────────────────────────────
 
   enum Status { PENDING, ACTIVE, COMPLETED, SKIPPED }
+
+  // ── StepRow inner component ───────────────────────────────────────────────
 
   private static final class StepRow extends Div {
 
     private final Div  indicator;
+    private final Span titleSpan;
     private final Span summarySpan;
 
-    StepRow(String number, String title, String defaultSummary) {
+    StepRow(String number) {
       getStyle()
           .set("display", "flex")
           .set("gap", "0.75rem")
-          .set("padding", "0.35rem 0.25rem")
+          .set("padding", "0.3rem 0.25rem")
           .set("border-bottom", "1px solid var(--lumo-contrast-5pct)")
           .set("align-items", "flex-start");
 
       indicator = new Div();
       indicator.getStyle()
-          .set("width", "20px").set("height", "20px")
+          .set("width", "18px").set("height", "18px")
           .set("border-radius", "50%")
           .set("background", COLOR_PENDING)
           .set("flex-shrink", "0").set("margin-top", "2px")
           .set("display", "flex").set("align-items", "center")
           .set("justify-content", "center")
-          .set("font-size", "10px").set("color", "white").set("font-weight", "700");
+          .set("font-size", "9px").set("color", "white").set("font-weight", "700");
       indicator.setText(number);
 
       Div right = new Div();
       right.getStyle().set("flex", "1").set("min-width", "0");
 
-      Span titleSpan = new Span(title);
+      titleSpan = new Span();
       titleSpan.getStyle()
-          .set("font-weight", "600").set("font-size", "var(--lumo-font-size-s)")
+          .set("font-weight", "600")
+          .set("font-size", "var(--lumo-font-size-xs)")
           .set("display", "block");
 
-      summarySpan = new Span(defaultSummary);
+      summarySpan = new Span();
       summarySpan.getStyle()
           .set("font-size", "var(--lumo-font-size-xs)")
           .set("color", "var(--lumo-secondary-text-color)")
@@ -251,6 +278,11 @@ public class TuningInspectorComponent extends VerticalLayout {
 
       right.add(titleSpan, summarySpan);
       add(indicator, right);
+    }
+
+    /** Updates the user-visible step title (called from {@code onAttach}). */
+    void setStepTitle(String title) {
+      titleSpan.setText(title != null ? title : "");
     }
 
     void update(Status status, String summary) {

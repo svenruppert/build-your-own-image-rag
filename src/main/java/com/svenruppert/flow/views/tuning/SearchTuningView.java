@@ -40,7 +40,6 @@ import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.progressbar.ProgressBar;
-import com.vaadin.flow.component.radiobutton.RadioButtonGroup;
 import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.component.textfield.NumberField;
 import com.vaadin.flow.component.textfield.TextArea;
@@ -60,26 +59,24 @@ import java.util.UUID;
 /**
  * Search Tuning Lab — interactive retrieval experimentation workbench.
  *
- * <p>Three-section layout:
+ * <p>Three-column layout in the upper workbench area:
  * <pre>
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  Header (title + description)                                           │
- * ├──────────────────────────┬──────────────────────────────────────────────┤
- * │  Controls  (≈300 px)     │  Retrieval Pipeline Inspector                │
- * │  ─ Query + Run button    │  (always visible, updates after each run)    │
- * │  ─ Progress              │  ─ Feedback session panel (collapsible)      │
- * │  ─ Retrieval mode        │                                              │
- * │  ─ Similarity function   │                                              │
- * │  ─ Channel weights       │                                              │
- * │  ─ Relevance feedback    │                                              │
- * │  ─ Query intent          │                                              │
- * │  ─ Score cutoff          │                                              │
- * │  ─ Presets               │                                              │
- * ├──────────────────────────┴──────────────────────────────────────────────┤
- * │  Run summary bar  (full width)                                          │
- * ├─────────────────────────────────────────────────────────────────────────┤
- * │  Result cards  (full width, with per-result feedback + QBE buttons)     │
- * └─────────────────────────────────────────────────────────────────────────┘
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │  Header (title + description)                                            │
+ * ├─────────────────┬──────────────────────┬────────────────────────────────┤
+ * │  Query Panel    │  Tuning Panel         │  Retrieval Pipeline Inspector   │
+ * │  (~240 px)      │  (~280 px)            │  (flex:1)                      │
+ * │  Query textarea │  Mode (Select)        │  10-step pipeline timeline      │
+ * │  Run button     │  Similarity (Select)  │  ─ Feedback session (Details)  │
+ * │  QBE anchor row │  Channel weights      │                                │
+ * │  Presets row    │  Relevance feedback   │                                │
+ * │                 │  Query intent         │                                │
+ * │                 │  Score cutoff         │                                │
+ * ├─────────────────┴──────────────────────┴────────────────────────────────┤
+ * │  Run summary bar  (full width)                                           │
+ * ├──────────────────────────────────────────────────────────────────────────┤
+ * │  Result cards  (full width, with per-result feedback + QBE buttons)      │
+ * └──────────────────────────────────────────────────────────────────────────┘
  * </pre>
  */
 @Route(value = SearchTuningView.PATH, layout = MainLayout.class)
@@ -96,9 +93,9 @@ public class SearchTuningView extends VerticalLayout
   // ── Query input ───────────────────────────────────────────────────────────
   private final TextArea queryField = new TextArea();
 
-  // ── Mode / similarity ─────────────────────────────────────────────────────
-  private final RadioButtonGroup<RetrievalMode>      modeGroup       = new RadioButtonGroup<>();
-  private final RadioButtonGroup<SimilarityFunction> similarityGroup = new RadioButtonGroup<>();
+  // ── Mode / similarity — Select for compact display ────────────────────────
+  private final Select<RetrievalMode>      modeGroup       = new Select<>();
+  private final Select<SimilarityFunction> similarityGroup = new Select<>();
 
   // ── Weight controls ───────────────────────────────────────────────────────
   private final NumberField semanticWeightField   = new NumberField();
@@ -108,39 +105,48 @@ public class SearchTuningView extends VerticalLayout
   private final NumberField maxResultsField       = new NumberField();
 
   // ── Relevance feedback controls ───────────────────────────────────────────
-  private final Checkbox    feedbackToggle      = new Checkbox("Enable relevance feedback");
+  private final Checkbox    feedbackToggle      = new Checkbox();
   private final NumberField feedbackWeightField = new NumberField();
 
   // ── Query-intent toggle ───────────────────────────────────────────────────
-  private final Checkbox intentToggle = new Checkbox("Auto-detect query intent");
+  private final Checkbox intentToggle = new Checkbox();
 
   // ── Query-by-Example: currently selected anchor image ─────────────────────
   private volatile UUID qbeImageId    = null;
-  private          Span qbeStatusSpan = new Span();
+  private final    Span qbeStatusSpan = new Span();
 
   // ── Run button + progress ─────────────────────────────────────────────────
-  private final Button      runBtn      = new Button("Run Tuning");
+  private final Button      runBtn      = new Button();
   private final ProgressBar runProgress = new ProgressBar();
 
-  // ── Summary bar + results area (full-width, below the top workbench) ──────
+  // ── Summary bar + results area ────────────────────────────────────────────
   private final Div            summaryBar  = new Div();
   private final VerticalLayout resultsArea = new VerticalLayout();
 
   // ── Inspector — top-right, always visible ─────────────────────────────────
   private final TuningInspectorComponent inspector = new TuningInspectorComponent();
 
-  // ── Feedback session — lives for the duration of this view instance ───────
-  private final FeedbackSession     feedbackSession = new FeedbackSession();
-  private final FeedbackSessionPanel feedbackPanel  = new FeedbackSessionPanel(this::removeFeedback);
+  // ── Feedback session ──────────────────────────────────────────────────────
+  private final FeedbackSession      feedbackSession = new FeedbackSession();
+  private final FeedbackSessionPanel feedbackPanel   = new FeedbackSessionPanel(this::removeFeedback);
 
   // ── Run state ─────────────────────────────────────────────────────────────
-  private volatile boolean running     = false;
+  private volatile boolean  running     = false;
   private          TuningRun currentRun  = null;
   private          TuningRun previousRun = null;
 
   public SearchTuningView() {
     this.searchService      = ServiceRegistry.getInstance().getSearchService();
     this.persistenceService = ServiceRegistry.getInstance().getPersistenceService();
+
+    // ── Labels that need getTranslation() (not available in field initializers) ──
+    runBtn.setText(getTranslation("tuning.run"));
+    runBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
+    runBtn.setWidthFull();
+    runBtn.addClickListener(e -> runTuning());
+
+    feedbackToggle.setLabel(getTranslation("tuning.feedback.enable"));
+    intentToggle.setLabel(getTranslation("tuning.intent.enable"));
 
     setSpacing(false);
     setPadding(true);
@@ -163,68 +169,42 @@ public class SearchTuningView extends VerticalLayout
     H2 title = new H2(getTranslation("tuning.title"));
     Paragraph desc = new Paragraph(getTranslation("tuning.description"));
     desc.getStyle().set("color", "var(--lumo-secondary-text-color)");
-
     VerticalLayout h = new VerticalLayout(title, desc);
     h.setSpacing(false);
     h.setPadding(false);
-    h.getStyle().set("margin-bottom", "0.5rem");
+    h.getStyle().set("margin-bottom", "0.25rem");
     return h;
   }
 
-  // ── Section 2: top workbench — controls (left) + inspector (right) ────────
+  // ── Section 2: top workbench — three columns ──────────────────────────────
 
   private Component buildTopWorkbench() {
-    VerticalLayout controls  = buildControlPanel();
-    VerticalLayout inspPanel = buildInspectorPanel();
+    VerticalLayout queryPanel  = buildQueryPanel();
+    VerticalLayout tuningPanel = buildTuningPanel();
+    VerticalLayout inspPanel   = buildInspectorPanel();
 
-    HorizontalLayout workbench = new HorizontalLayout(controls, inspPanel);
+    HorizontalLayout workbench = new HorizontalLayout(queryPanel, tuningPanel, inspPanel);
     workbench.setWidthFull();
     workbench.setAlignItems(FlexComponent.Alignment.START);
     workbench.setSpacing(true);
     workbench.setPadding(false);
-    workbench.getStyle().set("margin-bottom", "0.75rem");
+    workbench.getStyle().set("margin-bottom", "0.5rem");
     return workbench;
   }
 
-  // ── Left: tuning controls ─────────────────────────────────────────────────
+  // ── Left column: query + run + QBE + presets ─────────────────────────────
 
-  private VerticalLayout buildControlPanel() {
-    VerticalLayout panel = new VerticalLayout();
-    panel.setWidth("300px");
-    panel.setMinWidth("260px");
-    panel.getStyle()
-        .set("flex-shrink", "0")
-        .set("border", "1px solid var(--lumo-contrast-10pct)")
-        .set("border-radius", "var(--lumo-border-radius-l)")
-        .set("padding", "0.75rem")
-        .set("background", "var(--lumo-base-color)");
-    panel.setSpacing(false);
-    panel.setPadding(false);
+  private VerticalLayout buildQueryPanel() {
+    VerticalLayout panel = styledPanel("240px");
 
-    panel.add(
-        buildQuerySection(),
-        buildModeSection(),
-        buildSimilaritySection(),
-        buildWeightsSection(),
-        buildFeedbackSection(),
-        buildIntentSection(),
-        buildCutoffSection(),
-        buildPresetsSection()
-    );
-    return panel;
-  }
-
-  private Component buildQuerySection() {
+    // Query field
     queryField.setLabel(getTranslation("tuning.query"));
     queryField.setPlaceholder(getTranslation("tuning.query.placeholder"));
     queryField.setWidthFull();
-    queryField.setMinHeight("80px");
-    queryField.setMaxHeight("160px");
+    queryField.setMinHeight("70px");
+    queryField.setMaxHeight("120px");
 
-    runBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-    runBtn.setWidthFull();
-    runBtn.addClickListener(e -> runTuning());
-
+    // Progress bar (hidden by default)
     runProgress.setIndeterminate(true);
     runProgress.setVisible(false);
     runProgress.setWidthFull();
@@ -232,104 +212,22 @@ public class SearchTuningView extends VerticalLayout
     // QBE status row
     qbeStatusSpan.getStyle()
         .set("font-size", "var(--lumo-font-size-xs)")
-        .set("color", "var(--lumo-secondary-text-color)");
+        .set("color", "var(--lumo-secondary-text-color)")
+        .set("flex", "1");
     updateQbeStatus();
 
     Button clearQbeBtn = new Button(getTranslation("tuning.qbe.clear"));
     clearQbeBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
-    clearQbeBtn.addClickListener(e -> {
-      qbeImageId = null;
-      updateQbeStatus();
-    });
+    clearQbeBtn.getStyle().set("flex-shrink", "0");
+    clearQbeBtn.addClickListener(e -> { qbeImageId = null; updateQbeStatus(); });
 
     HorizontalLayout qbeRow = new HorizontalLayout(qbeStatusSpan, clearQbeBtn);
     qbeRow.setAlignItems(FlexComponent.Alignment.CENTER);
     qbeRow.setWidthFull();
     qbeRow.setSpacing(false);
-    qbeRow.getStyle().set("gap", "0.35rem");
+    qbeRow.getStyle().set("gap", "0.3rem");
 
-    return controlSection(getTranslation("tuning.query"),
-        queryField, runBtn, runProgress, qbeRow);
-  }
-
-  private void updateQbeStatus() {
-    if (qbeImageId == null) {
-      qbeStatusSpan.setText(getTranslation("tuning.qbe.none"));
-    } else {
-      String label = persistenceService.findImage(qbeImageId)
-          .map(ImageAsset::getOriginalFilename).orElse(qbeImageId.toString());
-      if (label.length() > 28) label = label.substring(0, 25) + "\u2026";
-      qbeStatusSpan.setText(getTranslation("tuning.qbe.active", label));
-      qbeStatusSpan.getStyle().set("color", "var(--lumo-primary-color)");
-    }
-  }
-
-  private Component buildModeSection() {
-    modeGroup.setItems(RetrievalMode.values());
-    modeGroup.setItemLabelGenerator(RetrievalMode::getLabel);
-    modeGroup.setValue(RetrievalMode.HYBRID);
-    modeGroup.addValueChangeListener(e -> updateControlVisibility());
-    return controlSection(getTranslation("tuning.mode"), modeGroup);
-  }
-
-  private Component buildSimilaritySection() {
-    similarityGroup.setItems(SimilarityFunction.values());
-    similarityGroup.setItemLabelGenerator(SimilarityFunction::getLabel);
-    similarityGroup.setValue(SimilarityFunction.COSINE);
-    return controlSection(getTranslation("tuning.similarity"), similarityGroup);
-  }
-
-  private Component buildWeightsSection() {
-    configureWeightField(semanticWeightField,   getTranslation("tuning.weight.semantic"),
-        SearchTuningConfig.DEFAULT_SEMANTIC_WEIGHT,   0.0, 5.0, 0.1);
-    configureWeightField(bm25WeightField,       getTranslation("tuning.weight.bm25"),
-        SearchTuningConfig.DEFAULT_BM25_WEIGHT,       0.0, 5.0, 0.1);
-    configureWeightField(confidenceWeightField, getTranslation("tuning.weight.confidence"),
-        SearchTuningConfig.DEFAULT_CONFIDENCE_WEIGHT, 0.0, 1.0, 0.05);
-    return controlSection(getTranslation("tuning.weights"),
-        semanticWeightField, bm25WeightField, confidenceWeightField);
-  }
-
-  private Component buildFeedbackSection() {
-    feedbackToggle.setValue(false);
-
-    configureWeightField(feedbackWeightField, getTranslation("tuning.feedback.weight"),
-        SearchTuningConfig.DEFAULT_FEEDBACK_WEIGHT, 0.0, 2.0, 0.1);
-    feedbackWeightField.setEnabled(false);
-
-    feedbackToggle.addValueChangeListener(e ->
-        feedbackWeightField.setEnabled(Boolean.TRUE.equals(e.getValue())));
-
-    return controlSection(getTranslation("tuning.feedback"),
-        feedbackToggle, feedbackWeightField);
-  }
-
-  private Component buildIntentSection() {
-    intentToggle.setValue(false);
-    Span hint = new Span(getTranslation("tuning.intent.hint"));
-    hint.getStyle()
-        .set("font-size", "var(--lumo-font-size-xs)")
-        .set("color", "var(--lumo-secondary-text-color)");
-    return controlSection(getTranslation("tuning.intent"), intentToggle, hint);
-  }
-
-  private Component buildCutoffSection() {
-    configureWeightField(scoreCutoffField, getTranslation("tuning.cutoff"),
-        SearchTuningConfig.DEFAULT_SCORE_CUTOFF, 0.0, 1.0, 0.05);
-
-    maxResultsField.setLabel(getTranslation("tuning.max.results"));
-    maxResultsField.setValue((double) SearchTuningConfig.DEFAULT_MAX_RESULTS);
-    maxResultsField.setMin(1);
-    maxResultsField.setMax(100);
-    maxResultsField.setStep(5);
-    maxResultsField.setStepButtonsVisible(true);
-    maxResultsField.setWidthFull();
-
-    return controlSection(getTranslation("tuning.cutoff.section"),
-        scoreCutoffField, maxResultsField);
-  }
-
-  private Component buildPresetsSection() {
+    // Presets row (save + load side by side)
     Button saveBtn = new Button(getTranslation("tuning.preset.save"));
     saveBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
     saveBtn.setWidthFull();
@@ -340,12 +238,99 @@ public class SearchTuningView extends VerticalLayout
     loadBtn.setWidthFull();
     loadBtn.addClickListener(e -> openLoadPresetDialog());
 
-    HorizontalLayout row = new HorizontalLayout(saveBtn, loadBtn);
-    row.setWidthFull();
-    row.setSpacing(false);
-    row.getStyle().set("gap", "0.35rem");
+    HorizontalLayout presetsRow = new HorizontalLayout(saveBtn, loadBtn);
+    presetsRow.setWidthFull();
+    presetsRow.setSpacing(false);
+    presetsRow.getStyle().set("gap", "0.3rem");
 
-    return controlSection(getTranslation("tuning.presets"), row);
+    panel.add(
+        queryField,
+        runBtn,
+        runProgress,
+        separator(),
+        labelSpan("tuning.qbe.label"), qbeRow,
+        separator(),
+        labelSpan("tuning.presets"), presetsRow
+    );
+    return panel;
+  }
+
+  // ── Middle column: retrieval parameters ───────────────────────────────────
+
+  private VerticalLayout buildTuningPanel() {
+    VerticalLayout panel = styledPanel("280px");
+
+    // Retrieval mode — compact Select
+    modeGroup.setItems(RetrievalMode.values());
+    modeGroup.setItemLabelGenerator(RetrievalMode::getLabel);
+    modeGroup.setValue(RetrievalMode.HYBRID);
+    modeGroup.setWidthFull();
+    modeGroup.addValueChangeListener(e -> updateControlVisibility());
+    panel.add(controlSection(getTranslation("tuning.mode"), modeGroup));
+
+    // Similarity function — compact Select
+    similarityGroup.setItems(SimilarityFunction.values());
+    similarityGroup.setItemLabelGenerator(SimilarityFunction::getLabel);
+    similarityGroup.setValue(SimilarityFunction.COSINE);
+    similarityGroup.setWidthFull();
+    panel.add(controlSection(getTranslation("tuning.similarity"), similarityGroup));
+
+    // Channel weights: semantic + BM25 side by side, confidence on own row
+    configureWeightField(semanticWeightField,   getTranslation("tuning.weight.semantic"),
+        SearchTuningConfig.DEFAULT_SEMANTIC_WEIGHT,   0.0, 5.0, 0.1);
+    configureWeightField(bm25WeightField,       getTranslation("tuning.weight.bm25"),
+        SearchTuningConfig.DEFAULT_BM25_WEIGHT,       0.0, 5.0, 0.1);
+    configureWeightField(confidenceWeightField, getTranslation("tuning.weight.confidence"),
+        SearchTuningConfig.DEFAULT_CONFIDENCE_WEIGHT, 0.0, 1.0, 0.05);
+
+    HorizontalLayout semBm25Row = new HorizontalLayout(semanticWeightField, bm25WeightField);
+    semBm25Row.setWidthFull();
+    semBm25Row.setSpacing(false);
+    semBm25Row.getStyle().set("gap", "0.35rem");
+
+    panel.add(controlSection(getTranslation("tuning.weights"), semBm25Row, confidenceWeightField));
+
+    // Relevance feedback: toggle + weight field side by side
+    configureWeightField(feedbackWeightField, getTranslation("tuning.feedback.weight"),
+        SearchTuningConfig.DEFAULT_FEEDBACK_WEIGHT, 0.0, 2.0, 0.1);
+    feedbackWeightField.setEnabled(false);
+    feedbackToggle.setValue(false);
+    feedbackToggle.addValueChangeListener(e ->
+        feedbackWeightField.setEnabled(Boolean.TRUE.equals(e.getValue())));
+
+    HorizontalLayout fbRow = new HorizontalLayout(feedbackToggle, feedbackWeightField);
+    fbRow.setAlignItems(FlexComponent.Alignment.BASELINE);
+    fbRow.setWidthFull();
+    fbRow.setSpacing(false);
+    fbRow.getStyle().set("gap", "0.5rem");
+    panel.add(controlSection(getTranslation("tuning.feedback"), fbRow));
+
+    // Query intent: toggle + compact hint
+    intentToggle.setValue(false);
+    Span intentHint = new Span(getTranslation("tuning.intent.hint.short"));
+    intentHint.getStyle()
+        .set("font-size", "var(--lumo-font-size-xs)")
+        .set("color", "var(--lumo-secondary-text-color)");
+    panel.add(controlSection(getTranslation("tuning.intent"), intentToggle, intentHint));
+
+    // Score cutoff + max results side by side
+    configureWeightField(scoreCutoffField, getTranslation("tuning.cutoff"),
+        SearchTuningConfig.DEFAULT_SCORE_CUTOFF, 0.0, 1.0, 0.05);
+    maxResultsField.setLabel(getTranslation("tuning.max.results"));
+    maxResultsField.setValue((double) SearchTuningConfig.DEFAULT_MAX_RESULTS);
+    maxResultsField.setMin(1);
+    maxResultsField.setMax(100);
+    maxResultsField.setStep(5);
+    maxResultsField.setStepButtonsVisible(true);
+    maxResultsField.setWidthFull();
+
+    HorizontalLayout cutoffRow = new HorizontalLayout(scoreCutoffField, maxResultsField);
+    cutoffRow.setWidthFull();
+    cutoffRow.setSpacing(false);
+    cutoffRow.getStyle().set("gap", "0.35rem");
+    panel.add(controlSection(getTranslation("tuning.cutoff.section"), cutoffRow));
+
+    return panel;
   }
 
   private void configureWeightField(NumberField f, String label, double def,
@@ -362,8 +347,8 @@ public class SearchTuningView extends VerticalLayout
   private VerticalLayout controlSection(String heading, Component... components) {
     H4 h = new H4(heading);
     h.getStyle()
-        .set("margin", "0.75rem 0 0.25rem 0")
-        .set("font-size", "var(--lumo-font-size-s)")
+        .set("margin", "0.5rem 0 0.2rem 0")
+        .set("font-size", "var(--lumo-font-size-xs)")
         .set("color", "var(--lumo-secondary-text-color)")
         .set("text-transform", "uppercase")
         .set("letter-spacing", "0.04em");
@@ -373,8 +358,47 @@ public class SearchTuningView extends VerticalLayout
     sec.setPadding(false);
     sec.getStyle()
         .set("border-bottom", "1px solid var(--lumo-contrast-5pct)")
-        .set("padding-bottom", "0.5rem");
+        .set("padding-bottom", "0.4rem");
     return sec;
+  }
+
+  /** Styled panel card (border + background). */
+  private static VerticalLayout styledPanel(String width) {
+    VerticalLayout panel = new VerticalLayout();
+    panel.setWidth(width);
+    panel.setMinWidth(width);
+    panel.getStyle()
+        .set("flex-shrink", "0")
+        .set("border", "1px solid var(--lumo-contrast-10pct)")
+        .set("border-radius", "var(--lumo-border-radius-l)")
+        .set("padding", "0.6rem 0.75rem")
+        .set("background", "var(--lumo-base-color)");
+    panel.setSpacing(false);
+    panel.setPadding(false);
+    return panel;
+  }
+
+  /** Thin horizontal separator line. */
+  private static Div separator() {
+    Div d = new Div();
+    d.getStyle()
+        .set("border-top", "1px solid var(--lumo-contrast-5pct)")
+        .set("margin", "0.35rem 0")
+        .set("width", "100%");
+    return d;
+  }
+
+  /** Small uppercase section label for the query panel (no H4 overhead). */
+  private Span labelSpan(String i18nKey) {
+    Span s = new Span(getTranslation(i18nKey));
+    s.getStyle()
+        .set("font-size", "var(--lumo-font-size-xs)")
+        .set("color", "var(--lumo-secondary-text-color)")
+        .set("text-transform", "uppercase")
+        .set("letter-spacing", "0.04em")
+        .set("font-weight", "600")
+        .set("margin-top", "0.1rem");
+    return s;
   }
 
   private void updateControlVisibility() {
@@ -386,10 +410,22 @@ public class SearchTuningView extends VerticalLayout
     bm25WeightField.setEnabled(hasBm25);
   }
 
-  // ── Right: retrieval pipeline inspector + feedback session panel ──────────
+  private void updateQbeStatus() {
+    if (qbeImageId == null) {
+      qbeStatusSpan.setText(getTranslation("tuning.qbe.none"));
+      qbeStatusSpan.getStyle().remove("color");
+    } else {
+      String label = persistenceService.findImage(qbeImageId)
+          .map(ImageAsset::getOriginalFilename).orElse(qbeImageId.toString());
+      if (label.length() > 26) label = label.substring(0, 23) + "\u2026";
+      qbeStatusSpan.setText(getTranslation("tuning.qbe.active", label));
+      qbeStatusSpan.getStyle().set("color", "var(--lumo-primary-color)");
+    }
+  }
+
+  // ── Right column: inspector + feedback session ────────────────────────────
 
   private VerticalLayout buildInspectorPanel() {
-    // Collapsible feedback session panel below the inspector
     Details feedbackDetails = new Details(
         getTranslation("tuning.feedback.session"), feedbackPanel);
     feedbackDetails.setOpened(false);
@@ -397,7 +433,7 @@ public class SearchTuningView extends VerticalLayout
 
     VerticalLayout panel = new VerticalLayout(inspector, feedbackDetails);
     panel.setWidthFull();
-    panel.getStyle().set("flex", "1").set("min-width", "280px");
+    panel.getStyle().set("flex", "1").set("min-width", "260px");
     panel.setSpacing(true);
     panel.setPadding(false);
     return panel;
@@ -410,10 +446,10 @@ public class SearchTuningView extends VerticalLayout
     summaryBar.getStyle()
         .set("background", "var(--lumo-contrast-5pct)")
         .set("border-radius", "var(--lumo-border-radius-m)")
-        .set("padding", "0.5rem 0.75rem")
+        .set("padding", "0.4rem 0.75rem")
         .set("font-size", "var(--lumo-font-size-s)")
         .set("color", "var(--lumo-secondary-text-color)")
-        .set("min-height", "36px");
+        .set("min-height", "32px");
     summaryBar.setText(getTranslation("tuning.no.run.yet"));
     return summaryBar;
   }
@@ -436,7 +472,6 @@ public class SearchTuningView extends VerticalLayout
       n.addThemeVariants(NotificationVariant.LUMO_CONTRAST);
       return;
     }
-
     String query = queryField.getValue();
     if (query == null || query.isBlank()) {
       Notification n = Notification.show(getTranslation("tuning.query.empty"),
@@ -445,10 +480,8 @@ public class SearchTuningView extends VerticalLayout
       return;
     }
 
-    // Snapshot feedback session before handing to the background thread
-    FeedbackSession snap = feedbackSession.snapshot();
-
-    SearchTuningConfig config = buildConfig(snap);
+    FeedbackSession snap   = feedbackSession.snapshot();
+    SearchTuningConfig cfg = buildConfig(snap);
     running = true;
     runBtn.setEnabled(false);
     runProgress.setVisible(true);
@@ -462,25 +495,25 @@ public class SearchTuningView extends VerticalLayout
 
     Thread.ofVirtual().name("tuning-search").start(() -> {
       try {
-        TuningSearchResponse response = searchService.searchWithTuning(query, config);
-        long elapsedMs = System.currentTimeMillis() - startMs;
+        TuningSearchResponse response = searchService.searchWithTuning(query, cfg);
+        long elapsed = System.currentTimeMillis() - startMs;
 
         TuningRun run = new TuningRun(
-            query, config, response.results(),
+            query, cfg, response.results(),
             response.vectorCandidates(),
             response.keywordCandidates(),
             response.detectedIntent(),
             response.feedbackEntriesUsed(),
-            elapsedMs);
+            elapsed);
 
-        final TuningRun finalRun     = run;
-        final TuningRun finalPrevRun = currentRun;  // current becomes previous
+        final TuningRun finalRun  = run;
+        final TuningRun prevRun   = currentRun;
 
         ui.access(() -> {
           inspector.showRun(finalRun);
-          renderResults(finalRun, finalPrevRun);
+          renderResults(finalRun, prevRun);
           renderSummaryBar(finalRun);
-          previousRun = finalPrevRun;
+          previousRun = prevRun;
           currentRun  = finalRun;
           runBtn.setEnabled(true);
           runProgress.setVisible(false);
@@ -488,13 +521,12 @@ public class SearchTuningView extends VerticalLayout
         });
       } catch (Exception ex) {
         ui.access(() -> {
-          summaryBar.setText(getTranslation("tuning.error", ex.getMessage()));
+          String msg = getTranslation("tuning.error", ex.getMessage());
+          summaryBar.setText(msg);
           runBtn.setEnabled(true);
           runProgress.setVisible(false);
           running = false;
-          Notification n = Notification.show(
-              getTranslation("tuning.error", ex.getMessage()),
-              5000, Notification.Position.BOTTOM_START);
+          Notification n = Notification.show(msg, 5000, Notification.Position.BOTTOM_START);
           n.addThemeVariants(NotificationVariant.LUMO_ERROR);
         });
       }
@@ -536,40 +568,40 @@ public class SearchTuningView extends VerticalLayout
     SearchTuningConfig cfg = run.getConfig();
     summaryBar.removeAll();
 
-    StringBuilder sb = new StringBuilder();
-    sb.append(cfg.getRetrievalMode().getLabel())
-      .append("  \u2502  ")
-      .append(cfg.getSimilarityFunction().getLabel())
-      .append(String.format("  \u2502  Sem \u00d7%.2f  BM25 \u00d7%.2f  Conf \u00d7%.2f",
-          cfg.getSemanticWeight(), cfg.getBm25Weight(), cfg.getConfidenceWeight()))
-      .append(String.format("  \u2502  Cutoff %.2f", cfg.getScoreCutoff()))
-      .append(String.format("  \u2502  %d result(s)", run.getResults().size()))
-      .append(String.format("  \u2502  %d ms", run.getExecutionMs()));
+    String semFmt  = String.format("%.2f", cfg.getSemanticWeight());
+    String bFmt    = String.format("%.2f", cfg.getBm25Weight());
+    String confFmt = String.format("%.2f", cfg.getConfidenceWeight());
+    String cutFmt  = String.format("%.2f", cfg.getScoreCutoff());
 
-    // Intent annotation
+    StringBuilder sb = new StringBuilder();
+    sb.append(getTranslation("tuning.summary.config",
+        cfg.getRetrievalMode().getLabel(),
+        cfg.getSimilarityFunction().getLabel(),
+        semFmt, bFmt, confFmt, cutFmt,
+        run.getResults().size(),
+        run.getExecutionMs()));
+
     QueryIntentType intent = run.getDetectedIntent();
     if (intent != null) {
-      sb.append("  \u2502  Intent: ").append(intent.getLabel());
+      sb.append("  \u2502  ").append(
+          getTranslation("tuning.summary.intent", intent.getLabel()));
     }
-    // Feedback annotation
-    if (run.getFeedbackEntriesUsed() > 0) {
-      sb.append(String.format("  \u2502  Feedback: %d entr%s",
-          run.getFeedbackEntriesUsed(),
-          run.getFeedbackEntriesUsed() == 1 ? "y" : "ies"));
+    int fb = run.getFeedbackEntriesUsed();
+    if (fb > 0) {
+      sb.append("  \u2502  ").append(
+          getTranslation("tuning.summary.feedback", fb));
     }
     summaryBar.setText(sb.toString());
   }
 
   private void renderResults(TuningRun current, TuningRun previous) {
     resultsArea.removeAll();
-
     if (current.getResults().isEmpty()) {
       Paragraph empty = new Paragraph(getTranslation("tuning.no.results"));
       empty.getStyle().set("color", "var(--lumo-secondary-text-color)");
       resultsArea.add(empty);
       return;
     }
-
     for (int i = 0; i < current.getResults().size(); i++) {
       TuningSearchResult tsr = current.getResults().get(i);
       int delta = TuningRun.rankDelta(tsr.item().getImageId(), current, previous);
@@ -583,47 +615,31 @@ public class SearchTuningView extends VerticalLayout
     SearchResultItem item = tsr.item();
     ScoreBreakdown   bd   = tsr.breakdown();
 
-    // ── Thumbnail (left, fixed 160×120) ─────────────────────────────────────
-    Component thumbContent = buildThumbnail(item);
-    Div thumbWrap = new Div(thumbContent);
+    // Thumbnail
+    Div thumbWrap = new Div(buildThumbnail(item));
     thumbWrap.getStyle()
-        .set("width", "160px")
-        .set("min-width", "160px")
-        .set("height", "120px")
-        .set("flex-shrink", "0")
-        .set("overflow", "hidden")
+        .set("width", "160px").set("min-width", "160px").set("height", "120px")
+        .set("flex-shrink", "0").set("overflow", "hidden")
         .set("background", "var(--lumo-contrast-5pct)")
-        .set("display", "flex")
-        .set("align-items", "center")
-        .set("justify-content", "center");
+        .set("display", "flex").set("align-items", "center").set("justify-content", "center");
 
-    // ── Info panel (right, flex 1) ───────────────────────────────────────────
+    // Info panel
     Div info = new Div();
     info.getStyle()
-        .set("flex", "1")
-        .set("padding", "0.6rem 0.75rem")
-        .set("min-width", "0")
-        .set("overflow", "hidden")
-        .set("display", "flex")
-        .set("flex-direction", "column")
-        .set("gap", "0.3rem");
+        .set("flex", "1").set("padding", "0.6rem 0.75rem")
+        .set("min-width", "0").set("overflow", "hidden")
+        .set("display", "flex").set("flex-direction", "column").set("gap", "0.3rem");
 
-    // Header row: rank + filename + delta badge
+    // Header row
     Span rankBadge = new Span("#" + rank);
-    rankBadge.getStyle()
-        .set("font-weight", "700")
-        .set("color", "var(--lumo-primary-color)")
-        .set("flex-shrink", "0");
+    rankBadge.getStyle().set("font-weight", "700")
+        .set("color", "var(--lumo-primary-color)").set("flex-shrink", "0");
 
-    Span filename = new Span(item.getTitle() != null
-        ? item.getTitle() : item.getImageId().toString());
+    Span filename = new Span(item.getTitle() != null ? item.getTitle() : item.getImageId().toString());
     filename.getStyle()
-        .set("font-weight", "600")
-        .set("font-size", "var(--lumo-font-size-s)")
-        .set("flex", "1")
-        .set("overflow", "hidden")
-        .set("text-overflow", "ellipsis")
-        .set("white-space", "nowrap");
+        .set("font-weight", "600").set("font-size", "var(--lumo-font-size-s)")
+        .set("flex", "1").set("overflow", "hidden")
+        .set("text-overflow", "ellipsis").set("white-space", "nowrap");
 
     HorizontalLayout header = new HorizontalLayout(rankBadge, filename, buildDeltaBadge(delta));
     header.setWidthFull();
@@ -646,28 +662,27 @@ public class SearchTuningView extends VerticalLayout
           "var(--lumo-contrast-5pct)", "var(--lumo-contrast-60pct)"));
     }
     if (Boolean.TRUE.equals(item.getContainsPerson())) {
-      tags.add(buildTag("Person", "var(--lumo-contrast-5pct)", "var(--lumo-contrast-60pct)"));
+      tags.add(buildTag(getTranslation("tuning.tag.person"),
+          "var(--lumo-contrast-5pct)", "var(--lumo-contrast-60pct)"));
     }
     if (tsr.isInBothChannels()) {
-      tags.add(buildTag("Hybrid",
+      tags.add(buildTag(getTranslation("tuning.tag.hybrid"),
           "var(--lumo-success-color-10pct)", "var(--lumo-success-color)"));
     } else if (tsr.isInVectorResults()) {
-      tags.add(buildTag("Semantic",
+      tags.add(buildTag(getTranslation("tuning.tag.semantic"),
           "var(--lumo-primary-color-10pct)", "var(--lumo-primary-color)"));
     } else if (tsr.isInBm25Results()) {
-      tags.add(buildTag("BM25",
+      tags.add(buildTag(getTranslation("tuning.tag.bm25"),
           "var(--lumo-contrast-5pct)", "var(--lumo-contrast-70pct)"));
     }
-
-    // Feedback badge (if this image has an active mark)
     feedbackSession.getType(item.getImageId()).ifPresent(ft ->
-        tags.add(buildTag(ft.getIcon() + " " + ft.getLabel(),
+        tags.add(buildTag(ft.getIcon() + "\u202f" + getTranslation(
+                "tuning.feedback.type." + ft.name().toLowerCase()),
             ft.getBackground(), ft.getColor()))
     );
 
     info.add(header, tags, buildScoreBreakdown(bd, tsr));
 
-    // Optional summary text
     if (item.getSummary() != null && !item.getSummary().isBlank()) {
       String txt = item.getSummary();
       if (txt.length() > 140) txt = txt.substring(0, 137) + "\u2026";
@@ -679,94 +694,79 @@ public class SearchTuningView extends VerticalLayout
       info.add(summary);
     }
 
-    // ── Action buttons: feedback + QBE ──────────────────────────────────────
     info.add(buildActionRow(item));
 
-    // ── Outer card: horizontal flex row ─────────────────────────────────────
     Div card = new Div();
     card.getStyle()
-        .set("display", "flex")
-        .set("align-items", "stretch")
+        .set("display", "flex").set("align-items", "stretch")
         .set("border", "1px solid var(--lumo-contrast-10pct)")
         .set("border-radius", "var(--lumo-border-radius-m)")
         .set("margin-bottom", "0.5rem")
         .set("background", "var(--lumo-base-color)")
-        .set("width", "100%")
-        .set("overflow", "hidden");
+        .set("width", "100%").set("overflow", "hidden");
     card.add(thumbWrap, info);
     return card;
   }
 
-  /** Action row with per-result feedback buttons and QBE anchor button. */
+  /** Per-result action row: feedback buttons + QBE anchor button. */
   private Component buildActionRow(SearchResultItem item) {
     HorizontalLayout row = new HorizontalLayout();
     row.setSpacing(false);
     row.getStyle().set("gap", "0.3rem").set("flex-wrap", "wrap").set("margin-top", "0.1rem");
 
-    // Feedback buttons
     for (FeedbackType ft : FeedbackType.values()) {
-      Button btn = new Button(ft.getIcon() + " " + ft.getLabel());
+      String label = ft.getIcon() + "\u202f"
+          + getTranslation("tuning.feedback.type." + ft.name().toLowerCase());
+      Button btn = new Button(label);
       btn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
       btn.getStyle().set("font-size", "var(--lumo-font-size-xs)");
       btn.addClickListener(e -> markFeedback(item, ft));
       row.add(btn);
     }
 
-    // Divider span
-    Span div = new Span("|");
-    div.getStyle().set("color", "var(--lumo-contrast-30pct)").set("padding", "0 0.2rem");
-    row.add(div);
+    Span divider = new Span("|");
+    divider.getStyle().set("color", "var(--lumo-contrast-30pct)").set("padding", "0 0.2rem");
+    row.add(divider);
 
-    // QBE anchor button
     Button qbeBtn = new Button(getTranslation("tuning.qbe.use"));
     qbeBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
     qbeBtn.getStyle().set("font-size", "var(--lumo-font-size-xs)");
     qbeBtn.addClickListener(e -> {
       qbeImageId = item.getImageId();
       updateQbeStatus();
-      Notification.show(getTranslation("tuning.qbe.set",
-          item.getTitle() != null ? item.getTitle() : item.getImageId().toString()),
+      Notification.show(
+          getTranslation("tuning.qbe.set",
+              item.getTitle() != null ? item.getTitle() : item.getImageId().toString()),
           2500, Notification.Position.BOTTOM_START);
     });
     row.add(qbeBtn);
-
     return row;
   }
 
   // ── Feedback management ───────────────────────────────────────────────────
 
   private void markFeedback(SearchResultItem item, FeedbackType type) {
-    // Load vector from persistence (may be empty for in-memory backend)
     float[] vector = persistenceService.findRawVector(item.getImageId())
         .orElse(new float[0]);
-
     feedbackSession.mark(item.getImageId(),
         item.getTitle() != null ? item.getTitle() : item.getImageId().toString(),
         type, vector);
-
     feedbackPanel.refresh(feedbackSession);
-
     Notification.show(
         getTranslation("tuning.feedback.marked",
-            type.getLabel(),
+            getTranslation("tuning.feedback.type." + type.name().toLowerCase()),
             item.getTitle() != null ? item.getTitle() : item.getImageId().toString()),
         2000, Notification.Position.BOTTOM_START);
-
-    // Re-render results to update the feedback tag
-    if (currentRun != null) {
-      renderResults(currentRun, previousRun);
-    }
+    if (currentRun != null) renderResults(currentRun, previousRun);
   }
 
   private void removeFeedback(UUID imageId) {
     feedbackSession.remove(imageId);
     feedbackPanel.refresh(feedbackSession);
-    if (currentRun != null) {
-      renderResults(currentRun, previousRun);
-    }
+    if (currentRun != null) renderResults(currentRun, previousRun);
   }
 
-  // ── Preset save / load dialogs ────────────────────────────────────────────
+  // ── Preset dialogs ────────────────────────────────────────────────────────
 
   private void openSavePresetDialog() {
     Dialog dlg = new Dialog();
@@ -783,10 +783,9 @@ public class SearchTuningView extends VerticalLayout
         nameField.setErrorMessage(getTranslation("tuning.preset.name.required"));
         return;
       }
-      String query = queryField.getValue() != null ? queryField.getValue() : "";
-      SearchTuningConfig cfg = buildConfig(null);
-      SearchTuningPreset preset = SearchTuningPreset.from(name.trim(), query, cfg);
-      persistenceService.saveTuningPreset(preset);
+      String q = queryField.getValue() != null ? queryField.getValue() : "";
+      persistenceService.saveTuningPreset(
+          SearchTuningPreset.from(name.trim(), q, buildConfig(null)));
       dlg.close();
       Notification.show(getTranslation("tuning.preset.saved", name.trim()),
           2500, Notification.Position.BOTTOM_START);
@@ -794,7 +793,6 @@ public class SearchTuningView extends VerticalLayout
     saveBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
 
     Button cancelBtn = new Button(getTranslation("tuning.preset.cancel"), e -> dlg.close());
-
     dlg.add(nameField);
     dlg.getFooter().add(cancelBtn, saveBtn);
     dlg.open();
@@ -820,27 +818,26 @@ public class SearchTuningView extends VerticalLayout
     if (!presets.isEmpty()) selector.setValue(presets.get(presets.size() - 1));
 
     Button loadBtn = new Button(getTranslation("tuning.preset.load"), e -> {
-      SearchTuningPreset preset = selector.getValue();
-      if (preset == null) return;
-      applyPreset(preset);
+      SearchTuningPreset p = selector.getValue();
+      if (p == null) return;
+      applyPreset(p);
       dlg.close();
-      Notification.show(getTranslation("tuning.preset.loaded", preset.getName()),
+      Notification.show(getTranslation("tuning.preset.loaded", p.getName()),
           2500, Notification.Position.BOTTOM_START);
     });
     loadBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
 
     Button deleteBtn = new Button(getTranslation("tuning.preset.delete"), e -> {
-      SearchTuningPreset preset = selector.getValue();
-      if (preset == null) return;
-      persistenceService.deleteTuningPreset(preset.getId());
+      SearchTuningPreset p = selector.getValue();
+      if (p == null) return;
+      persistenceService.deleteTuningPreset(p.getId());
       dlg.close();
-      Notification.show(getTranslation("tuning.preset.deleted", preset.getName()),
+      Notification.show(getTranslation("tuning.preset.deleted", p.getName()),
           2500, Notification.Position.BOTTOM_START);
     });
     deleteBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_ERROR);
 
     Button cancelBtn = new Button(getTranslation("tuning.preset.cancel"), e -> dlg.close());
-
     dlg.add(selector);
     dlg.getFooter().add(deleteBtn, cancelBtn, loadBtn);
     dlg.open();
@@ -864,14 +861,13 @@ public class SearchTuningView extends VerticalLayout
     updateControlVisibility();
   }
 
-  // ── Thumbnail loader ──────────────────────────────────────────────────────
+  // ── Thumbnail ─────────────────────────────────────────────────────────────
 
   private Component buildThumbnail(SearchResultItem item) {
     try {
       ImageStorageService storage  = ServiceRegistry.getInstance().getImageStorageService();
       PreviewService      previews = ServiceRegistry.getInstance().getPreviewService();
-
-      ImageAsset asset = persistenceService.findImage(item.getImageId()).orElse(null);
+      ImageAsset          asset    = persistenceService.findImage(item.getImageId()).orElse(null);
       if (asset == null) return thumbPlaceholder();
 
       Path originalPath = storage.resolvePath(asset.getId());
@@ -881,20 +877,16 @@ public class SearchTuningView extends VerticalLayout
           asset.getId(), originalPath, asset.getStoredFilename());
       if (res == null) {
         res = new StreamResource(asset.getStoredFilename(), () -> {
-          try {
-            return Files.newInputStream(originalPath);
-          } catch (Exception ex) {
-            return InputStream.nullInputStream();
-          }
+          try { return Files.newInputStream(originalPath); }
+          catch (Exception ex) { return InputStream.nullInputStream(); }
         });
       }
-
-      Image img = new Image(res, item.getTitle() != null ? item.getTitle() : "image");
+      Image img = new Image(res,
+          item.getTitle() != null ? item.getTitle() : getTranslation("tuning.image.alt"));
       img.setWidth("100%");
       img.setHeight("100%");
       img.getStyle().set("object-fit", "cover").set("display", "block");
       return img;
-
     } catch (Exception e) {
       logger().debug("Could not load thumbnail for tuning result {}", item.getImageId(), e);
     }
@@ -903,9 +895,7 @@ public class SearchTuningView extends VerticalLayout
 
   private static Span thumbPlaceholder() {
     Span ph = new Span("\u2014");
-    ph.getStyle()
-        .set("font-size", "1.4rem")
-        .set("color", "var(--lumo-contrast-30pct)");
+    ph.getStyle().set("font-size", "1.4rem").set("color", "var(--lumo-contrast-30pct)");
     return ph;
   }
 
@@ -918,10 +908,8 @@ public class SearchTuningView extends VerticalLayout
         .set("border-radius", "var(--lumo-border-radius-s)")
         .set("padding", "0.35rem 0.5rem");
 
-    // Mini stacked bar: blue = semantic, green = BM25, amber = feedback
-    double totalVisual = Math.max(bd.scoreBeforeBoost(), 0.001);
-    double semWidth    = Math.round(bd.semanticFraction() * 80);
-    double bm25Width   = Math.round(bd.bm25Fraction()    * 80);
+    double semWidth  = Math.round(bd.semanticFraction() * 80);
+    double bm25Width = Math.round(bd.bm25Fraction()    * 80);
 
     Div barWrap = new Div();
     barWrap.getStyle()
@@ -932,55 +920,38 @@ public class SearchTuningView extends VerticalLayout
 
     if (semWidth > 0) {
       Div seg = new Div();
-      seg.getStyle()
-          .set("width", semWidth + "%")
-          .set("background", "var(--lumo-primary-color)")
-          .set("flex-shrink", "0");
+      seg.getStyle().set("width", semWidth + "%")
+          .set("background", "var(--lumo-primary-color)").set("flex-shrink", "0");
       barWrap.add(seg);
     }
     if (bm25Width > 0) {
       Div seg = new Div();
-      seg.getStyle()
-          .set("width", bm25Width + "%")
-          .set("background", "var(--lumo-success-color)")
-          .set("flex-shrink", "0");
+      seg.getStyle().set("width", bm25Width + "%")
+          .set("background", "var(--lumo-success-color)").set("flex-shrink", "0");
       barWrap.add(seg);
     }
-    // Feedback contribution — amber stripe
     if (bd.hasFeedback()) {
-      double fbAbs = Math.abs(bd.feedbackContrib());
-      double fbWidth = Math.round(Math.min(fbAbs / totalVisual, 0.15) * 80);
+      double base   = Math.max(bd.scoreBeforeBoost(), 0.001);
+      double fbWidth = Math.round(Math.min(Math.abs(bd.feedbackContrib()) / base, 0.15) * 80);
       if (fbWidth > 0) {
         Div seg = new Div();
-        seg.getStyle()
-            .set("width", fbWidth + "%")
-            .set("background", bd.feedbackContrib() > 0 ? "#f59e0b" : "var(--lumo-error-color)")
+        seg.getStyle().set("width", fbWidth + "%")
+            .set("background", bd.feedbackContrib() > 0
+                ? "#f59e0b" : "var(--lumo-error-color)")
             .set("flex-shrink", "0");
         barWrap.add(seg);
       }
     }
 
-    // Numeric breakdown line
+    // Numeric breakdown — intentionally kept as compact technical notation
     StringBuilder nums = new StringBuilder();
-    nums.append(String.format("Score: %.3f", bd.finalScore()));
-    if (bd.semanticContrib() > 0) {
-      nums.append(String.format("  \u2502  Sem: %.3f", bd.semanticContrib()));
-    }
-    if (bd.bm25Contrib() > 0) {
-      nums.append(String.format("  \u2502  BM25: %.3f", bd.bm25Contrib()));
-    }
-    if (bd.confidenceBoost() > 0.001) {
-      nums.append(String.format("  \u2502  +Conf: +%.0f%%", bd.confidenceBoost() * 100));
-    }
-    if (bd.hasFeedback()) {
-      nums.append(String.format("  \u2502  Fb: %+.3f", bd.feedbackContrib()));
-    }
-    if (tsr.vectorRank() >= 0) {
-      nums.append(String.format("  \u2502  vRank: %d", tsr.vectorRank() + 1));
-    }
-    if (tsr.bm25Rank() >= 0) {
-      nums.append(String.format("  \u2502  kRank: %d", tsr.bm25Rank() + 1));
-    }
+    nums.append(String.format("Score\u202f%.3f", bd.finalScore()));
+    if (bd.semanticContrib()  > 0)     nums.append(String.format("  \u2502  Sem\u202f%.3f", bd.semanticContrib()));
+    if (bd.bm25Contrib()      > 0)     nums.append(String.format("  \u2502  BM25\u202f%.3f", bd.bm25Contrib()));
+    if (bd.confidenceBoost()  > 0.001) nums.append(String.format("  \u2502  Conf\u202f+%.0f%%", bd.confidenceBoost() * 100));
+    if (bd.hasFeedback())              nums.append(String.format("  \u2502  Fb\u202f%+.3f", bd.feedbackContrib()));
+    if (tsr.vectorRank() >= 0)         nums.append(String.format("  \u2502  vRk\u202f%d", tsr.vectorRank() + 1));
+    if (tsr.bm25Rank()   >= 0)         nums.append(String.format("  \u2502  kRk\u202f%d", tsr.bm25Rank()   + 1));
 
     Span numsSpan = new Span(nums.toString());
     numsSpan.getStyle()
@@ -997,36 +968,25 @@ public class SearchTuningView extends VerticalLayout
   private Span buildDeltaBadge(int delta) {
     Span badge = new Span();
     badge.getStyle()
-        .set("font-size", "var(--lumo-font-size-xs)")
-        .set("font-weight", "700")
+        .set("font-size", "var(--lumo-font-size-xs)").set("font-weight", "700")
         .set("padding", "1px 5px")
-        .set("border-radius", "var(--lumo-border-radius-s)")
-        .set("flex-shrink", "0");
+        .set("border-radius", "var(--lumo-border-radius-s)").set("flex-shrink", "0");
 
     if (delta == Integer.MAX_VALUE) {
-      badge.setText("NEW");
-      badge.getStyle()
-          .set("background", "var(--lumo-primary-color-10pct)")
+      badge.setText(getTranslation("tuning.rank.new"));
+      badge.getStyle().set("background", "var(--lumo-primary-color-10pct)")
           .set("color", "var(--lumo-primary-color)");
-    } else if (delta == Integer.MIN_VALUE) {
-      badge.setText("\u2014");
-      badge.getStyle()
-          .set("background", "var(--lumo-contrast-5pct)")
-          .set("color", "var(--lumo-contrast-60pct)");
-    } else if (delta == 0) {
-      badge.setText("=");
-      badge.getStyle()
-          .set("background", "var(--lumo-contrast-5pct)")
+    } else if (delta == Integer.MIN_VALUE || delta == 0) {
+      badge.setText(delta == 0 ? "=" : "\u2014");
+      badge.getStyle().set("background", "var(--lumo-contrast-5pct)")
           .set("color", "var(--lumo-contrast-60pct)");
     } else if (delta > 0) {
       badge.setText("\u25b2" + delta);
-      badge.getStyle()
-          .set("background", "var(--lumo-success-color-10pct)")
+      badge.getStyle().set("background", "var(--lumo-success-color-10pct)")
           .set("color", "var(--lumo-success-color)");
     } else {
       badge.setText("\u25bc" + Math.abs(delta));
-      badge.getStyle()
-          .set("background", "var(--lumo-error-color-10pct)")
+      badge.getStyle().set("background", "var(--lumo-error-color-10pct)")
           .set("color", "var(--lumo-error-color)");
     }
     return badge;
@@ -1037,8 +997,7 @@ public class SearchTuningView extends VerticalLayout
   private static Span buildTag(String text, String bg, String color) {
     Span tag = new Span(text);
     tag.getStyle()
-        .set("background", bg)
-        .set("color", color)
+        .set("background", bg).set("color", color)
         .set("font-size", "var(--lumo-font-size-xxs)")
         .set("padding", "1px 5px")
         .set("border-radius", "var(--lumo-border-radius-s)")

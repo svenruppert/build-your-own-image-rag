@@ -43,6 +43,7 @@ public class PersistenceService
       existingRoot.getRawVectorStore();      // lazy init if null (added for GIGAMAP_JVECTOR backend)
       existingRoot.getTaxonomySuggestions(); // lazy init if null (added for taxonomy maintenance)
       existingRoot.getCategoryMetadata();    // lazy init if null (added for taxonomy maintenance)
+      existingRoot.getTuningPresets();       // lazy init if null (added for Search Tuning Lab)
       storage.store(existingRoot);           // persist updated field references
       migrateEnumSets();                  // fix any EnumSet fields broken by Unsafe reconstruction
       logger().info("EclipseStore loaded existing data: {} images, {} approved, {} recent searches",
@@ -398,6 +399,16 @@ public class PersistenceService
     return root.getRawVectorStore().size();
   }
 
+  /**
+   * Looks up a single raw embedding vector by imageId without copying the entire map.
+   * Used by the tuning-lab feedback scorer to fetch candidate vectors on demand.
+   *
+   * @return the stored embedding, or {@link Optional#empty()} if not persisted
+   */
+  public Optional<float[]> findRawVector(UUID imageId) {
+    return Optional.ofNullable(root.getRawVectorStore().get(imageId));
+  }
+
   // -------------------------------------------------------------------------
   // OcrResult
   // -------------------------------------------------------------------------
@@ -567,6 +578,50 @@ public class PersistenceService
    */
   public List<CategoryMetadata> findAllCategoryMetadata() {
     return Collections.unmodifiableList(new ArrayList<>(root.getCategoryMetadata().values()));
+  }
+
+  // ── Search Tuning Lab presets ─────────────────────────────────────────────
+
+  /**
+   * Persists a new or updated tuning preset.
+   * Any existing preset with the same {@link com.svenruppert.imagerag.domain.SearchTuningPreset#getId()}
+   * is replaced; a fresh preset (never saved before) is appended.
+   */
+  public void saveTuningPreset(com.svenruppert.imagerag.domain.SearchTuningPreset preset) {
+    List<com.svenruppert.imagerag.domain.SearchTuningPreset> list = root.getTuningPresets();
+    // Replace existing entry with matching id, or append
+    boolean replaced = false;
+    for (int i = 0; i < list.size(); i++) {
+      if (preset.getId().equals(list.get(i).getId())) {
+        list.set(i, preset);
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      list.add(preset);
+    }
+    storage.store(list);
+    logger().info("Saved tuning preset '{}' (id={})", preset.getName(), preset.getId());
+  }
+
+  /**
+   * Returns an unmodifiable snapshot of all saved tuning presets,
+   * ordered by insertion (oldest first).
+   */
+  public List<com.svenruppert.imagerag.domain.SearchTuningPreset> findAllTuningPresets() {
+    return Collections.unmodifiableList(new ArrayList<>(root.getTuningPresets()));
+  }
+
+  /**
+   * Removes the tuning preset with the given id.  No-op if not found.
+   */
+  public void deleteTuningPreset(java.util.UUID presetId) {
+    boolean removed = root.getTuningPresets().removeIf(p -> presetId.equals(p.getId()));
+    if (removed) {
+      storage.store(root.getTuningPresets());
+      logger().info("Deleted tuning preset id={}", presetId);
+    }
   }
 
   public void shutdown() {

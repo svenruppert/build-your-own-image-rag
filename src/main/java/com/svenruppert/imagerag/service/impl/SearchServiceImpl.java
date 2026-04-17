@@ -2,11 +2,11 @@ package com.svenruppert.imagerag.service.impl;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.*;
+import com.svenruppert.imagerag.domain.enums.QueryIntentType;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
+import com.svenruppert.imagerag.domain.enums.RetrievalMode;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
-import com.svenruppert.imagerag.dto.KeywordSearchHit;
-import com.svenruppert.imagerag.dto.SearchResult;
-import com.svenruppert.imagerag.dto.VectorSearchHit;
+import com.svenruppert.imagerag.dto.*;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.*;
 
@@ -75,7 +75,7 @@ public class SearchServiceImpl
     double effectiveMin = (plan.getMinScore() != null) ? Math.clamp(plan.getMinScore(), 0.0, 1.0) : MIN_SCORE;
 
     // Sort candidates by descending RRF score
-    List<UUID> sortedIds = rrfScores.entrySet().stream().sorted(Map.Entry.<UUID, Double> comparingByValue().reversed()).map(Map.Entry::getKey).toList();
+    List<UUID> sortedIds = rrfScores.entrySet().stream().sorted(Map.Entry.<UUID, Double>comparingByValue().reversed()).map(Map.Entry::getKey).toList();
 
     List<SearchResultItem> results = new ArrayList<>();
 
@@ -145,6 +145,175 @@ public class SearchServiceImpl
       scores.merge(id, 1.0 / (RRF_K + i + 1), Double::sum);
     }
     return scores;
+  }
+
+  // ── Search Tuning Lab ─────────────────────────────────────────────────────
+
+  private static final QueryIntentResolver INTENT_RESOLVER = new QueryIntentResolver();
+
+  @Override
+  public TuningSearchResponse searchWithTuning(String query, SearchTuningConfig config) {
+    if (query == null || query.isBlank())
+      return new TuningSearchResponse(List.of(), 0, 0, null, 0);
+    if (config == null) config = new SearchTuningConfig();
+
+    logger().info("Tuning search: query='{}' config={}", query, config);
+
+    // ── Step 1a: Query-intent detection ──────────────────────────────────
+    QueryIntentType detectedIntent = null;
+    double effectiveSemanticWeight = config.getSemanticWeight();
+    double effectiveBm25Weight     = config.getBm25Weight();
+    if (config.isQueryIntentEnabled()) {
+      detectedIntent = INTENT_RESOLVER.resolve(query);
+      double[] adjusted = INTENT_RESOLVER.adjustedWeights(
+          detectedIntent, effectiveSemanticWeight, effectiveBm25Weight);
+      effectiveSemanticWeight = adjusted[0];
+      effectiveBm25Weight     = adjusted[1];
+      logger().debug("Intent detected: {} → sem={} bm25={}", detectedIntent,
+          effectiveSemanticWeight, effectiveBm25Weight);
+    }
+
+    // ── Step 1b: resolve query vector (QBE takes priority over text embed) ─
+    float[] queryVector = null;
+    if (config.getRetrievalMode() != RetrievalMode.BM25_ONLY) {
+      UUID qbeId = config.getQueryByExampleImageId();
+      if (qbeId != null) {
+        queryVector = persistenceService.findRawVector(qbeId).orElse(null);
+        if (queryVector != null) {
+          logger().debug("QBE mode — using stored vector for imageId={}", qbeId);
+        } else {
+          logger().warn("QBE imageId={} has no stored vector — falling back to text embed", qbeId);
+        }
+      }
+      if (queryVector == null) {
+        queryVector = embeddingService.embed(query);
+      }
+    }
+
+    // ── Step 2: retrieve vector candidates (skip for BM25_ONLY) ──────────
+    List<VectorSearchHit> vectorHits = List.of();
+    if (config.getRetrievalMode() != RetrievalMode.BM25_ONLY
+        && queryVector != null && queryVector.length > 0) {
+      vectorHits = vectorIndexService.search(queryVector, VECTOR_CANDIDATES,
+                                             config.getSimilarityFunction());
+    }
+
+    // ── Step 3: retrieve BM25 candidates (skip for SEMANTIC_ONLY) ────────
+    List<KeywordSearchHit> keywordHits = List.of();
+    if (config.getRetrievalMode() != RetrievalMode.SEMANTIC_ONLY) {
+      keywordHits = keywordIndexService.search(query, VECTOR_CANDIDATES * 2);
+    }
+
+    // ── Step 4: build rank maps and collect unique candidate IDs ──────────
+    Map<UUID, Integer> vectorRankMap = new LinkedHashMap<>();
+    for (int i = 0; i < vectorHits.size(); i++) vectorRankMap.put(vectorHits.get(i).imageId(), i);
+
+    Map<UUID, Integer> bm25RankMap = new LinkedHashMap<>();
+    for (int i = 0; i < keywordHits.size(); i++) bm25RankMap.put(keywordHits.get(i).imageId(), i);
+
+    Set<UUID> allIds = new LinkedHashSet<>();
+    allIds.addAll(vectorRankMap.keySet());
+    allIds.addAll(bm25RankMap.keySet());
+
+    // ── Step 5: weighted RRF fusion + track per-channel contributions ─────
+    record RawFusion(UUID id, double semRaw, double bm25Raw, int vRank, int kRank) {
+      double total() {
+        return semRaw + bm25Raw;
+      }
+    }
+    final double semW  = effectiveSemanticWeight;
+    final double bm25W = effectiveBm25Weight;
+    List<RawFusion> fused = new ArrayList<>(allIds.size());
+    for (UUID id : allIds) {
+      int vRank = vectorRankMap.getOrDefault(id, -1);
+      int kRank = bm25RankMap.getOrDefault(id, -1);
+      double semRaw  = vRank >= 0 ? semW  / (RRF_K + vRank + 1) : 0.0;
+      double bm25Raw = kRank >= 0 ? bm25W / (RRF_K + kRank + 1) : 0.0;
+      fused.add(new RawFusion(id, semRaw, bm25Raw, vRank, kRank));
+    }
+
+    // ── Step 6: normalise to [0,1] relative to max weighted-RRF score ─────
+    double maxRrf = fused.stream().mapToDouble(RawFusion::total).max().orElse(1.0);
+    if (maxRrf <= 0) maxRrf = 1.0;
+    final double norm = maxRrf;
+
+    // Sort descending by total score before iterating
+    fused.sort(Comparator.comparingDouble(RawFusion::total).reversed());
+
+    // ── Step 7: prepare relevance-feedback session snapshot ───────────────
+    final FeedbackSession feedbackSnap =
+        (config.isFeedbackEnabled() && config.getFeedbackSession() != null
+            && !config.getFeedbackSession().isEmpty())
+        ? config.getFeedbackSession()   // already a snapshot from the view
+        : null;
+    final double maxFbScore  = feedbackSnap != null ? feedbackSnap.maxPositiveScore() : 0.0;
+    final double fbWeight    = config.getFeedbackWeight();
+    final int    fbUsedCount = feedbackSnap != null ? feedbackSnap.size() : 0;
+
+    // ── Step 8: apply confidence boost, feedback, cutoff, privacy gate ────
+    List<TuningSearchResult> results = new ArrayList<>();
+    for (RawFusion rf : fused) {
+      if (!persistenceService.isApproved(rf.id())) continue;
+
+      double normSem  = rf.semRaw()  / norm;
+      double normBm25 = rf.bm25Raw() / norm;
+      double baseScore = normSem + normBm25;
+
+      // Category confidence boost
+      double boostFraction = 0.0;
+      Optional<SemanticAnalysis> analysisOpt = persistenceService.findAnalysis(rf.id());
+      if (analysisOpt.isPresent() && config.getConfidenceWeight() > 0) {
+        CategoryConfidence cc = analysisOpt.get().getCategoryConfidence();
+        if (cc != null) {
+          boostFraction = config.getConfidenceWeight() * cc.getPrimaryScore();
+        }
+      }
+      double afterBoost = Math.min(1.0, baseScore * (1.0 + boostFraction));
+
+      // Relevance feedback contribution
+      double feedbackContrib = 0.0;
+      if (feedbackSnap != null && maxFbScore > 0) {
+        float[] candidateVec = persistenceService.findRawVector(rf.id()).orElse(null);
+        if (candidateVec != null && candidateVec.length > 0) {
+          double rawFb = feedbackSnap.computeRawScore(candidateVec);
+          feedbackContrib = fbWeight * (rawFb / maxFbScore);  // normalised, weighted
+        }
+      }
+      double finalScore = Math.min(1.0, Math.max(0.0, afterBoost + feedbackContrib));
+
+      // Score cutoff (applied after feedback adjustment)
+      if (finalScore < config.getScoreCutoff()) continue;
+
+      // Build SearchResultItem
+      if (analysisOpt.isEmpty()) continue;
+      SemanticAnalysis analysis = analysisOpt.get();
+      String title = persistenceService.findImage(rf.id())
+          .map(ImageAsset::getOriginalFilename).orElse(rf.id().toString());
+      RiskLevel riskLevel = persistenceService.findAssessment(rf.id())
+          .map(a -> a.getRiskLevel()).orElse(RiskLevel.SAFE);
+
+      SearchResultItem item = new SearchResultItem(
+          rf.id(), title, analysis.getShortSummary(), finalScore,
+          analysis.getSourceCategory(), analysis.getSeasonHint(),
+          analysis.getContainsPerson(), riskLevel);
+
+      results.add(new TuningSearchResult(
+          item,
+          new ScoreBreakdown(normSem, normBm25, boostFraction, feedbackContrib, finalScore),
+          rf.vRank(),
+          rf.kRank()));
+
+      if (results.size() >= config.getMaxResults()) break;
+    }
+
+    logger().info("Tuning search returned {} results (vectorCands={}, bm25Cands={}, intent={}, fbEntries={})",
+                  results.size(), vectorHits.size(), keywordHits.size(), detectedIntent, fbUsedCount);
+    return new TuningSearchResponse(
+        Collections.unmodifiableList(results),
+        vectorHits.size(),
+        keywordHits.size(),
+        detectedIntent,
+        fbUsedCount);
   }
 
   private boolean passesFilters(SearchPlan plan, SemanticAnalysis analysis, SensitivityAssessment assessment) {

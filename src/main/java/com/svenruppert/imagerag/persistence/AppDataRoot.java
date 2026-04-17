@@ -1,6 +1,7 @@
 package com.svenruppert.imagerag.persistence;
 
 import com.svenruppert.imagerag.domain.*;
+import com.svenruppert.imagerag.domain.SearchTuningPreset;
 
 import java.util.*;
 
@@ -82,6 +83,13 @@ public class AppDataRoot {
    * Not declared final for EclipseStore Unsafe reconstruction compatibility.
    */
   private Map<String, com.svenruppert.imagerag.domain.CategoryMetadata> categoryMetadata;
+
+  /**
+   * User-saved Search Tuning Lab presets.
+   * Each preset stores the full algorithmic configuration under a user-chosen name.
+   * Not declared final for EclipseStore Unsafe reconstruction compatibility.
+   */
+  private List<SearchTuningPreset> tuningPresets;
 
   public Map<UUID, ImageAsset> getImages() {
     return images;
@@ -202,5 +210,15 @@ public class AppDataRoot {
       categoryMetadata = new HashMap<>();
     }
     return categoryMetadata;
+  }
+
+  /**
+   * Returns the tuning-presets list, lazily initialising it if null.
+   */
+  public List<SearchTuningPreset> getTuningPresets() {
+    if (tuningPresets == null) {
+      tuningPresets = new ArrayList<>();
+    }
+    return tuningPresets;
   }
 }

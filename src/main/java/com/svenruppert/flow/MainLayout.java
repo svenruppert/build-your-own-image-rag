@@ -8,6 +8,7 @@ import com.svenruppert.flow.views.overview.OverviewView;
 import com.svenruppert.flow.views.pipeline.PipelineView;
 import com.svenruppert.flow.views.search.SearchView;
 import com.svenruppert.flow.views.taxonomy.TaxonomyMaintenanceView;
+import com.svenruppert.flow.views.tuning.SearchTuningView;
 import com.svenruppert.flow.views.upload.UploadView;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.applayout.AppLayout;
@@ -99,6 +100,7 @@ public class MainLayout
         new SideNavItem(getTranslation("nav.archive"), "/" + ArchiveView.PATH, ARCHIVE.create()),
         new SideNavItem(getTranslation("nav.search"), "/" + SearchView.PATH, SEARCH.create()),
         new SideNavItem(getTranslation("nav.taxonomy"), "/" + TaxonomyMaintenanceView.PATH, TAG.create()),
+        new SideNavItem(getTranslation("nav.tuning"), "/" + SearchTuningView.PATH, CHART_LINE.create()),
         new SideNavItem(getTranslation("nav.dashboard"), "/" + MainView.PATH, DASHBOARD.create()),
         new SideNavItem(getTranslation("nav.youtube"), "/" + YoutubeView.PATH, CART.create()),
         new SideNavItem(getTranslation("nav.about"), "/" + AboutView.PATH, USER_HEART.create())

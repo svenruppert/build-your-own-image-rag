@@ -1,6 +1,7 @@
 package com.svenruppert.imagerag.service.impl;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.imagerag.domain.enums.SimilarityFunction;
 import com.svenruppert.imagerag.dto.VectorSearchHit;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.VectorIndexService;
@@ -142,6 +143,54 @@ public class EclipseStoreGigaMapJVectorBackend
       return List.of();
     }
     return idx.search(queryVector, limit);
+  }
+
+  /**
+   * Search with an explicit similarity function.
+   *
+   * <p>COSINE delegates to the fast JVector HNSW graph index.  DOT_PRODUCT and
+   * EUCLIDEAN perform a brute-force scan over the raw vectors stored in EclipseStore
+   * via {@link PersistenceService#findAllRawVectors()}.  The brute-force path is
+   * accurate but slower — it is intended only for the Search Tuning Lab.
+   */
+  @Override
+  public List<VectorSearchHit> search(float[] queryVector, int limit, SimilarityFunction fn) {
+    if (queryVector == null || queryVector.length == 0) return List.of();
+    if (fn == SimilarityFunction.COSINE) {
+      return search(queryVector, limit); // fast HNSW path
+    }
+    // Brute-force for non-cosine functions (tuning lab use only)
+    Map<UUID, float[]> all = persistenceService.findAllRawVectors();
+    if (all.isEmpty()) return List.of();
+
+    List<VectorSearchHit> results = new ArrayList<>(all.size());
+    for (Map.Entry<UUID, float[]> entry : all.entrySet()) {
+      double score = switch (fn) {
+        case DOT_PRODUCT -> dotProduct(queryVector, entry.getValue());
+        case EUCLIDEAN   -> euclideanSimilarity(queryVector, entry.getValue());
+        default          -> 0.0;
+      };
+      results.add(new VectorSearchHit(entry.getKey(), score));
+    }
+    results.sort(Comparator.naturalOrder()); // VectorSearchHit.compareTo() = descending
+    return new ArrayList<>(results.subList(0, Math.min(limit, results.size())));
+  }
+
+  private double dotProduct(float[] a, float[] b) {
+    int len = Math.min(a.length, b.length);
+    double dot = 0.0;
+    for (int i = 0; i < len; i++) dot += (double) a[i] * b[i];
+    return dot;
+  }
+
+  private double euclideanSimilarity(float[] a, float[] b) {
+    int len = Math.min(a.length, b.length);
+    double sumSq = 0.0;
+    for (int i = 0; i < len; i++) {
+      double d = (double) a[i] - b[i];
+      sumSq += d * d;
+    }
+    return 1.0 / (1.0 + Math.sqrt(sumSq));
   }
 
   // ── Startup initialisation ────────────────────────────────────────────────

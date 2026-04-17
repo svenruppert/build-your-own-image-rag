@@ -43,9 +43,9 @@ public class VectorIndexServiceImpl
 
     for (Map.Entry<UUID, float[]> entry : store.entrySet()) {
       double score = switch (fn) {
-        case COSINE      -> cosineSimilarity(queryVector, entry.getValue());
+        case COSINE -> cosineSimilarity(queryVector, entry.getValue());
         case DOT_PRODUCT -> dotProduct(queryVector, entry.getValue());
-        case EUCLIDEAN   -> euclideanSimilarity(queryVector, entry.getValue());
+        case EUCLIDEAN -> euclideanSimilarity(queryVector, entry.getValue());
       };
       results.add(new VectorSearchHit(entry.getKey(), score));
     }
@@ -65,7 +65,7 @@ public class VectorIndexServiceImpl
     int len = Math.min(a.length, b.length);
     double dot = 0.0, normA = 0.0, normB = 0.0;
     for (int i = 0; i < len; i++) {
-      dot   += (double) a[i] * b[i];
+      dot += (double) a[i] * b[i];
       normA += (double) a[i] * a[i];
       normB += (double) b[i] * b[i];
     }
@@ -73,7 +73,9 @@ public class VectorIndexServiceImpl
     return denom < 1e-10 ? 0.0 : dot / denom;
   }
 
-  /** Raw inner product — scale-sensitive; equivalent to cosine for unit-norm vectors. */
+  /**
+   * Raw inner product — scale-sensitive; equivalent to cosine for unit-norm vectors.
+   */
   private double dotProduct(float[] a, float[] b) {
     int len = Math.min(a.length, b.length);
     double dot = 0.0;

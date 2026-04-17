@@ -2,7 +2,6 @@ package com.svenruppert.imagerag.domain.enums;
 
 /**
  * Lifecycle state for a taxonomy category.
- *
  * <ul>
  *   <li>{@code ACTIVE}     — in normal use; images may be assigned to this category.</li>
  *   <li>{@code CANDIDATE}  — proposed addition, not yet promoted to the live taxonomy.</li>

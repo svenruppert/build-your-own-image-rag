@@ -2,13 +2,11 @@ package com.svenruppert.imagerag.domain.enums;
 
 /**
  * Selects which vector-search backend is active at startup.
- *
  * <p>The active backend is resolved from the application configuration file
  * {@code imagerag.properties} (classpath resource) via the key
  * {@code vector.backend}.  A JVM system property with the same key overrides
  * the file value — useful for CI / Docker environments.
  * If the key is absent everywhere the default is {@link #IN_MEMORY}.
- *
  * <ul>
  *   <li>{@link #IN_MEMORY} – existing in-memory cosine-similarity implementation.
  *       Fast for small collections; vectors are lost on restart and must be
@@ -51,7 +49,6 @@ public enum VectorBackendType {
   /**
    * Resolves the backend type using the full configuration precedence:
    * JVM system property &gt; {@code imagerag.properties} &gt; default ({@link #IN_MEMORY}).
-   *
    * <p>This is the preferred factory method.  It delegates to
    * {@link com.svenruppert.imagerag.bootstrap.AppConfig#getVectorBackend()},
    * which applies the same override rules.

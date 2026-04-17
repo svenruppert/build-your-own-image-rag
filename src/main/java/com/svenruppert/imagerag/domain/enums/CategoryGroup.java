@@ -2,7 +2,6 @@ package com.svenruppert.imagerag.domain.enums;
 
 /**
  * Coarse, user-visible category groupings for the image archive.
- *
  * <p>Each {@link SourceCategory} fine-grained value maps to exactly one
  * {@code CategoryGroup} via {@code CategoryRegistry}.  The UI exposes only
  * these nine groups for filtering and search; fine-grained classification is

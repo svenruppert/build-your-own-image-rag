@@ -5,12 +5,10 @@ import java.util.Map;
 
 /**
  * Live progress state for a running taxonomy-analysis pass.
- *
  * <p>Instances are created by the UI before starting analysis, then mutated by
  * {@link com.svenruppert.imagerag.service.impl.TaxonomyAnalysisServiceImpl} through a
  * {@link java.util.function.Consumer} callback.  The UI reads the state inside
  * {@code ui.access()} blocks that are triggered by that callback.
- *
  * <p>This object is not thread-safe in itself; the caller is responsible for
  * ensuring that writes happen on the analysis thread and reads happen inside
  * {@code ui.access()} (which serialises them correctly).
@@ -41,6 +39,7 @@ public class TaxonomyAnalysisProgress {
   private boolean completed = false;
   private boolean failed = false;
   private String errorMessage = null;
+
   public TaxonomyAnalysisProgress(boolean isDryRun) {
     this.isDryRun = isDryRun;
     for (String step : ALL_STEPS) {

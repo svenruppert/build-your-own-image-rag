@@ -2,11 +2,9 @@ package com.svenruppert.imagerag.domain.enums;
 
 /**
  * Fine-grained internal image category used by the AI classification pipeline.
- *
  * <p>Each value maps to a coarse {@link CategoryGroup} via {@code CategoryRegistry}.
  * The four legacy values ({@code FLOWER}, {@code CITY}, {@code MIXED}, {@code UNKNOWN})
  * are retained for backward compatibility with images already stored in the archive.
- *
  * <p>New images are classified into the extended set of ~52 values; the LLM prompt
  * in {@code SemanticDerivationServiceImpl} lists all values grouped by theme.
  */

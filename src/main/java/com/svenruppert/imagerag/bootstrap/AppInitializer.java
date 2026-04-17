@@ -10,7 +10,6 @@ import java.util.Locale;
 /**
  * Vaadin hook that initializes the ServiceRegistry when the application starts.
  * Registered via META-INF/services/com.vaadin.flow.server.VaadinServiceInitListener.
- *
  * <p>Also registers a {@code UIInitListener} that restores the user's preferred locale
  * from the {@link VaadinSession} on every page (re-)load.  The locale is stored under
  * the key {@code "app.locale"} by the language-toggle buttons in {@code MainLayout}.

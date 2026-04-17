@@ -62,12 +62,30 @@ public class ImageStorageServiceImpl
 
   @Override
   public Path resolvePath(UUID imageId) {
-    // Try common extensions
+    // Try common extensions. All candidates are canonicalised against the storage
+    // root to ensure no resolved path escapes the configured directory. Since the
+    // id is a UUID this is already structurally safe, but the guard is kept as
+    // defence-in-depth in case resolvePath is ever called with a tampered value
+    // via reflection or refactoring.
     for (String ext : new String[]{".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tiff"}) {
       Path candidate = storageRoot.resolve(imageId + ext);
-      if (Files.exists(candidate)) return candidate;
+      if (isWithinRoot(candidate) && Files.exists(candidate)) return candidate;
     }
-    return storageRoot.resolve(imageId.toString()); // fallback
+    Path fallback = storageRoot.resolve(imageId.toString());
+    if (!isWithinRoot(fallback)) {
+      throw new IllegalStateException("Resolved path escapes storage root: " + fallback);
+    }
+    return fallback;
+  }
+
+  private boolean isWithinRoot(Path candidate) {
+    try {
+      Path normalizedRoot = storageRoot.toAbsolutePath().normalize();
+      Path normalizedCandidate = candidate.toAbsolutePath().normalize();
+      return normalizedCandidate.startsWith(normalizedRoot);
+    } catch (Exception e) {
+      return false;
+    }
   }
 
   @Override

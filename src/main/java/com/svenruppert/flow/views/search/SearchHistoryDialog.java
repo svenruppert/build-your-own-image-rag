@@ -19,15 +19,12 @@ import java.util.function.Consumer;
 
 /**
  * Full search-history browser dialog.
- *
  * <p>Shows all stored {@link RecentSearchEntry} records in a grid with columns for
  * timestamp, original query, LLM-transformed query, and mode.  Supports multi-select
  * deletion and a clear-all action.
- *
  * <p>Clicking a row invokes the {@code onSelect} callback with the chosen entry and
  * closes the dialog — the caller is expected to copy the original query back into the
  * search field.
- *
  * <p>Any structural change to the history (delete or clear) invokes the {@code onChanged}
  * callback so the caller can refresh the compact chip bar.
  */

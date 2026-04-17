@@ -19,7 +19,6 @@ import java.util.stream.Collectors;
 
 /**
  * Heuristic + optional-LLM taxonomy analysis.
- *
  * <h3>Analysis strategy</h3>
  * <ol>
  *   <li>Resolve the scope to the matching image set.</li>

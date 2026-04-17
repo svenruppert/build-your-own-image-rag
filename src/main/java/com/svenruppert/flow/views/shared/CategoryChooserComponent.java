@@ -10,13 +10,11 @@ import java.util.List;
 
 /**
  * A two-level cascading category selector for the image-archive filter bar.
- *
  * <p>The first dropdown lists coarse {@link CategoryGroup} buckets ("Nature",
  * "Animals", …).  When a group is chosen the second dropdown is populated with
  * the fine-grained {@link SourceCategory} values that belong to that group
  * (e.g. "Landscape", "Mountain", "Forest", …) and made visible.  Clearing the
  * group dropdown hides and clears the second one as well.
- *
  * <p>Register a unified change callback via {@link #addChangeListener(Runnable)};
  * it fires whenever either select changes.  Read the current selection through
  * {@link #getSelectedGroup()} and {@link #getSelectedCategory()}.

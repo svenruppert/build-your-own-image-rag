@@ -6,11 +6,9 @@ import java.time.Instant;
 
 /**
  * A single entry in the recent-search history.
- *
  * <p>Stores both the user's original query and the LLM-derived transformed query,
  * allowing the search history to serve as a learning aid — the user can compare
  * what they typed against what the system actually searched for.
- *
  * <p>Stored inside {@link com.svenruppert.imagerag.persistence.AppDataRoot} via
  * EclipseStore.  All fields are non-final so that EclipseStore's Unsafe-based
  * reconstruction works correctly after schema changes.  New fields added after the

@@ -2,7 +2,6 @@ package com.svenruppert.imagerag.domain.enums;
 
 /**
  * Review lifecycle for a {@link com.svenruppert.imagerag.domain.TaxonomySuggestion}.
- *
  * <ul>
  *   <li>{@code OPEN} — newly generated, awaiting user review.</li>
  *   <li>{@code ACCEPTED} — user has approved this suggestion but has not yet

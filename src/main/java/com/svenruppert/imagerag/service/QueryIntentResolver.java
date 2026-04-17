@@ -9,7 +9,6 @@ import java.util.regex.Pattern;
 /**
  * Lightweight heuristic classifier that detects the dominant intent of a
  * Search Tuning Lab query without making any LLM call.
- *
  * <h3>Detection rules (applied in priority order)</h3>
  * <ol>
  *   <li>Query contains quoted substrings → {@link QueryIntentType#EXACT_TERM}</li>
@@ -20,7 +19,6 @@ import java.util.regex.Pattern;
  *   <li>Query is a long natural-language phrase (≥ 5 words) → {@link QueryIntentType#DESCRIPTIVE}</li>
  *   <li>Otherwise → {@link QueryIntentType#UNKNOWN}</li>
  * </ol>
- *
  * <h3>Weight adjustment</h3>
  * <p>Call {@link #adjustedWeights(QueryIntentType, double, double)} to obtain
  * intent-tuned [semanticWeight, bm25Weight] pairs.  The caller may still override
@@ -28,15 +26,19 @@ import java.util.regex.Pattern;
  */
 public class QueryIntentResolver {
 
-  /** Alphanumeric OCR pattern: 3–9 uppercase letters/digits as an isolated word. */
+  /**
+   * Alphanumeric OCR pattern: 3–9 uppercase letters/digits as an isolated word.
+   */
   private static final Pattern OCR_PATTERN =
       Pattern.compile("\\b[A-Z0-9]{3,9}\\b");
 
-  /** Category display strings derived from {@link SourceCategory} names, lower-cased. */
+  /**
+   * Category display strings derived from {@link SourceCategory} names, lower-cased.
+   */
   private static final String[] CATEGORY_KEYWORDS =
       Arrays.stream(SourceCategory.values())
-            .map(sc -> sc.name().toLowerCase().replace("_", " "))
-            .toArray(String[]::new);
+          .map(sc -> sc.name().toLowerCase().replace("_", " "))
+          .toArray(String[]::new);
 
   // ── Public API ────────────────────────────────────────────────────────────
 
@@ -50,7 +52,7 @@ public class QueryIntentResolver {
     if (query == null || query.isBlank()) return QueryIntentType.UNKNOWN;
 
     String trimmed = query.trim();
-    String lower   = trimmed.toLowerCase();
+    String lower = trimmed.toLowerCase();
 
     // 1. Quoted substring → user wants exact keyword match
     if (lower.contains("\"") || lower.contains("'")) {
@@ -80,7 +82,6 @@ public class QueryIntentResolver {
 
   /**
    * Returns adjusted [semanticWeight, bm25Weight] based on the detected intent.
-   *
    * <p>The original weights are scaled by intent-specific factors so that the
    * relative balance between the channels is preserved while the emphasis shifts.
    *
@@ -90,14 +91,14 @@ public class QueryIntentResolver {
    * @return two-element array {@code [adjustedSemantic, adjustedBm25]}; never null
    */
   public double[] adjustedWeights(QueryIntentType intent,
-                                   double semanticWeight,
-                                   double bm25Weight) {
+                                  double semanticWeight,
+                                  double bm25Weight) {
     return switch (intent) {
-      case DESCRIPTIVE     -> new double[]{ semanticWeight * 1.3, bm25Weight * 0.8 };
-      case EXACT_TERM      -> new double[]{ semanticWeight * 0.6, bm25Weight * 1.8 };
-      case OCR_HEAVY       -> new double[]{ semanticWeight * 0.4, bm25Weight * 2.5 };
-      case CATEGORY_DRIVEN -> new double[]{ semanticWeight * 1.2, bm25Weight * 0.9 };
-      case UNKNOWN         -> new double[]{ semanticWeight, bm25Weight };
+      case DESCRIPTIVE -> new double[]{semanticWeight * 1.3, bm25Weight * 0.8};
+      case EXACT_TERM -> new double[]{semanticWeight * 0.6, bm25Weight * 1.8};
+      case OCR_HEAVY -> new double[]{semanticWeight * 0.4, bm25Weight * 2.5};
+      case CATEGORY_DRIVEN -> new double[]{semanticWeight * 1.2, bm25Weight * 0.9};
+      case UNKNOWN -> new double[]{semanticWeight, bm25Weight};
     };
   }
 }

@@ -57,7 +57,6 @@ public class SemanticAnalysis {
   /**
    * Category confidence data produced during semantic derivation (prompt v3+) or
    * during a taxonomy-maintenance analysis pass.
-   *
    * <p>Null for images analysed before confidence tracking was introduced.
    * Not declared final — EclipseStore Unsafe reconstruction compatibility.
    */

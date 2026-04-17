@@ -10,12 +10,13 @@ public interface VectorIndexService {
 
   void index(UUID imageId, float[] vector);
 
-  /** Standard search using the backend's native similarity function (COSINE). */
+  /**
+   * Standard search using the backend's native similarity function (COSINE).
+   */
   List<VectorSearchHit> search(float[] queryVector, int limit);
 
   /**
    * Searches using the specified similarity function.
-   *
    * <p>For backends that cannot switch similarity functions dynamically (e.g., a
    * pre-built HNSW graph), COSINE falls through to the fast native index while
    * DOT_PRODUCT and EUCLIDEAN perform a brute-force scan over the stored vectors —

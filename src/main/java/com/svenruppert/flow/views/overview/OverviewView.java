@@ -43,7 +43,6 @@ import static com.vaadin.flow.component.icon.VaadinIcon.*;
 
 /**
  * Image archive overview — table and tile views.
- *
  * <p>Features in this view:
  * <ul>
  *   <li>Filter bar: category, risk level, visibility (any / approved / locked).</li>

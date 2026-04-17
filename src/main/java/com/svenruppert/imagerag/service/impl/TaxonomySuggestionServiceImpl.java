@@ -19,7 +19,6 @@ import java.util.UUID;
 
 /**
  * Manages the review and application lifecycle for {@link TaxonomySuggestion} objects.
- *
  * <p>Each {@link com.svenruppert.imagerag.domain.enums.TaxonomySuggestionType} is applied
  * by a distinct strategy that mutates the relevant persisted domain objects.
  */

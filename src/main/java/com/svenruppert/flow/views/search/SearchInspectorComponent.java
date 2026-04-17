@@ -9,12 +9,10 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 
 /**
  * Interactive, step-by-step inspector for the Search Workbench.
- *
  * <p>Visualises the search pipeline as a vertical timeline of eight explicit steps, each with
  * a colour-coded status indicator, a title, a one-line summary, and optional collapsible
  * details.  This makes the search process transparent and didactically understandable —
  * the user can see what happened at each stage, not just the final result.
- *
  * <h3>Steps</h3>
  * <ol>
  *   <li>User Query — the raw text the user typed</li>
@@ -26,7 +24,6 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
  *   <li>Filtering — score threshold cutoff and structural filter application</li>
  *   <li>Result Generation — final ranked result assembly</li>
  * </ol>
- *
  * <h3>Step states</h3>
  * <ul>
  *   <li>PENDING — grey circle — not yet started</li>
@@ -35,7 +32,6 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
  *   <li>SKIPPED — very-light circle — intentionally not executed (Transform Only mode)</li>
  *   <li>FAILED — red circle — ended in error</li>
  * </ul>
- *
  * <p>UI update methods are designed to be called repeatedly from the polling handler —
  * they are idempotent and simply overwrite the previous state.
  */
@@ -143,7 +139,6 @@ public class SearchInspectorComponent
 
   /**
    * Marks steps 5-8 as COMPLETED once the search has returned results.
-   *
    * <p>Step 6 (Candidate Retrieval) shows both vector and BM25 candidate counts,
    * making the hybrid fusion step transparent.
    * <p>Step 7 (Filtering) shows the effective score threshold so the user can
@@ -286,7 +281,6 @@ public class SearchInspectorComponent
   /**
    * A single row in the inspector timeline.  Contains a round status indicator,
    * a title, a one-line summary, and an optional collapsible details panel.
-   *
    * <p>All content is updated via {@link #update(StepStatus, String, String)}, which
    * replaces the existing summary and detail content in one call.
    */

@@ -7,14 +7,11 @@ import java.time.Instant;
 
 /**
  * Administrative metadata for a single {@link SourceCategory}.
- *
  * <p>Tracks the lifecycle state of categories, enabling safe deprecation and
  * migration workflows without hard-deleting taxonomy nodes that are still
  * referenced by existing image analyses.
- *
  * <p>Persisted in {@code AppDataRoot.categoryMetadata} keyed by
  * {@link SourceCategory#name()} for EclipseStore compatibility.
- *
  * <p>Not declared final — EclipseStore Unsafe reconstruction compatibility.
  */
 public class CategoryMetadata {

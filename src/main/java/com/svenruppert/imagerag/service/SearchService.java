@@ -3,6 +3,8 @@ package com.svenruppert.imagerag.service;
 import com.svenruppert.imagerag.domain.SearchPlan;
 import com.svenruppert.imagerag.domain.SearchResultItem;
 import com.svenruppert.imagerag.domain.SearchTuningConfig;
+import com.svenruppert.imagerag.dto.MultimodalSearchConfig;
+import com.svenruppert.imagerag.dto.MultimodalSearchResult;
 import com.svenruppert.imagerag.dto.SearchResult;
 import com.svenruppert.imagerag.dto.TuningSearchResponse;
 
@@ -19,7 +21,6 @@ public interface SearchService {
 
   /**
    * Executes a tuning-lab search using the supplied configuration.
-   *
    * <p>Unlike the regular {@link #search} methods, this path:
    * <ul>
    *   <li>Skips LLM query understanding — the raw {@code query} string is used
@@ -32,7 +33,6 @@ public interface SearchService {
    *       the tuning lab focuses on raw retrieval ranking, not filter behavior.</li>
    *   <li>The privacy gate ({@code isApproved}) is still enforced.</li>
    * </ul>
-   *
    * <p>The returned {@link TuningSearchResponse} includes the pre-fusion candidate
    * counts from each channel so the retrieval inspector can show accurate pipeline
    * stats (e.g. "50 vector candidates", "100 keyword candidates").
@@ -42,4 +42,22 @@ public interface SearchService {
    * @return response containing ranked results with score breakdowns and raw candidate counts
    */
   TuningSearchResponse searchWithTuning(String query, SearchTuningConfig config);
+
+  /**
+   * Executes a multimodal search combining multiple input signals (text, image example,
+   * OCR terms, category constraints) in a single coherent retrieval pass.
+   * <p>Signal combination:
+   * <ul>
+   *   <li>TEXT signals are embedded and their vectors averaged (weighted sum, normalised).</li>
+   *   <li>IMAGE_EXAMPLE signals contribute their stored raw vectors (weighted).</li>
+   *   <li>OCR_TERMS signals boost the BM25 retrieval query.</li>
+   *   <li>CATEGORY_FILTER signals restrict results post-fusion.</li>
+   * </ul>
+   * <p>Returns {@link MultimodalSearchResult} which extends the standard result with
+   * a per-signal attribution map for the explainability panel.
+   *
+   * @param config multimodal configuration containing signals and retrieval parameters
+   * @return ranked results with per-signal score attribution
+   */
+  List<MultimodalSearchResult> multimodalSearch(MultimodalSearchConfig config);
 }

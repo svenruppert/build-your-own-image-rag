@@ -43,12 +43,10 @@ import java.util.UUID;
 
 /**
  * Live pipeline monitor.
- *
  * <p>Uses Vaadin client-side polling ({@link com.vaadin.flow.component.UI#setPollInterval})
  * to refresh the grid every 2 seconds — no {@code @Push} required.
  * Each queued or running job shows an "Abbrechen" button that calls
  * {@link com.svenruppert.imagerag.pipeline.IngestionPipeline#cancel} on the server.
- *
  * <p>Also exposes a bounded {@link Select} for the maximum number of parallel ingestion
  * jobs.  Changes take effect immediately for newly submitted jobs; in-flight jobs
  * on the old executor finish normally.

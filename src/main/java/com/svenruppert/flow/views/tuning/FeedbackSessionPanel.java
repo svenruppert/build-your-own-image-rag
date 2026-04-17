@@ -18,14 +18,13 @@ import java.util.function.Consumer;
 /**
  * Compact panel that displays the active feedback entries in the current
  * Search Tuning Lab session, grouped by feedback type.
- *
  * <p>Instances live inside {@link SearchTuningView} and are refreshed via
  * {@link #refresh(FeedbackSession)} after every feedback mark/remove action.
- *
  * <p>The panel is intended to be placed inside a collapsible {@code Details}
  * component in the right workbench panel.
  */
-public class FeedbackSessionPanel extends VerticalLayout {
+public class FeedbackSessionPanel
+    extends VerticalLayout {
 
   private final Consumer<UUID> onRemove;
 

@@ -54,6 +54,10 @@ public class ServiceRegistry
   private final AuditService auditService;
   private final com.svenruppert.imagerag.service.TaxonomySuggestionService taxonomySuggestionService;
   private final com.svenruppert.imagerag.service.TaxonomyAnalysisService taxonomyAnalysisService;
+  private final com.svenruppert.imagerag.service.PromptTemplateService promptTemplateService;
+  private final com.svenruppert.imagerag.service.WhyNotFoundService whyNotFoundService;
+  private final com.svenruppert.imagerag.service.ClusterDiscoveryService clusterDiscoveryService;
+  private final com.svenruppert.imagerag.service.SearchStrategyAutopilot searchStrategyAutopilot;
 
   /**
    * Shared executor for background search tasks across all UI sessions.
@@ -179,6 +183,37 @@ public class ServiceRegistry
         new com.svenruppert.imagerag.service.impl.TaxonomyAnalysisServiceImpl(
             persistenceService, ollamaClient, ollamaConfig);
 
+    // Prompt template service — manages versioned prompt overrides
+    promptTemplateService =
+        new com.svenruppert.imagerag.service.impl.PromptTemplateServiceImpl(persistenceService);
+
+    // Import built-in prompts on first startup (idempotent)
+    promptTemplateService.importBuiltInIfAbsent(
+        com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl.PROMPT_KEY,
+        com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl.PROMPT_VERSION,
+        com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl.VISION_PROMPT);
+    promptTemplateService.importBuiltInIfAbsent(
+        com.svenruppert.imagerag.service.impl.SemanticDerivationServiceImpl.PROMPT_KEY,
+        com.svenruppert.imagerag.service.impl.SemanticDerivationServiceImpl.DERIVATION_PROMPT_VERSION,
+        com.svenruppert.imagerag.service.impl.SemanticDerivationServiceImpl.DERIVATION_PROMPT_TEMPLATE);
+
+    // Wire PromptTemplateService into analysis services
+    ((com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl) visionAnalysisService)
+        .setPromptTemplateService(promptTemplateService);
+    ((com.svenruppert.imagerag.service.impl.SemanticDerivationServiceImpl) semanticDerivationService)
+        .setPromptTemplateService(promptTemplateService);
+
+    // Why-not-found diagnostic service
+    whyNotFoundService = new com.svenruppert.imagerag.service.impl.WhyNotFoundServiceImpl(
+        persistenceService, embeddingService, vectorIndexService, keywordIndexService);
+
+    // Cluster discovery service — k-means on raw vectors
+    clusterDiscoveryService = new com.svenruppert.imagerag.service.impl.ClusterDiscoveryServiceImpl(
+        persistenceService);
+
+    // Search-strategy autopilot — heuristic advisor (stateless, no constructor args)
+    searchStrategyAutopilot = new com.svenruppert.imagerag.service.SearchStrategyAutopilot();
+
     logger().info("ServiceRegistry initialized. {} images in store.",
                   persistenceService.findAllImages().size());
   }
@@ -210,7 +245,6 @@ public class ServiceRegistry
    *   <li>Closes the Lucene {@code IndexWriter} (releases the on-disk file lock).</li>
    *   <li>Shuts down EclipseStore (flushes and closes storage channels).</li>
    * </ul>
-   *
    * <p>Must be called when the servlet context is destroyed (e.g. hot-reload or
    * server stop) to prevent {@link java.nio.channels.OverlappingFileLockException}
    * when a new instance is created in the same JVM process.  After this call the
@@ -296,7 +330,6 @@ public class ServiceRegistry
    * raw vectors to the EclipseStore {@code rawVectorStore} (AppDataRoot) so the
    * {@link VectorBackendType#GIGAMAP_JVECTOR} backend can rebuild its JVector index
    * at subsequent restarts <em>without</em> calling Ollama.
-   *
    * <p>This runs only once — when switching from the in-memory backend to the
    * GigaMap/JVector backend for the first time.  Subsequent restarts skip this
    * step because {@link EclipseStoreGigaMapJVectorBackend#isEmpty()} returns
@@ -340,13 +373,11 @@ public class ServiceRegistry
    * Detects persisted {@link com.svenruppert.imagerag.domain.VectorEntry} objects whose
    * {@code embeddingModel} field differs from the currently configured model
    * ({@link com.svenruppert.imagerag.ollama.OllamaConfig#getEmbeddingModel()}).
-   *
    * <p>If any mismatch is found, <em>all</em> images are re-embedded and their raw vectors
    * and {@code VectorEntry} metadata are updated in EclipseStore before the caller builds
    * the JVector HNSW index.  This prevents a scenario where stored vectors were produced
    * by (e.g.) {@code nomic-embed-text} but queries are embedded with {@code bge-m3},
    * which would yield garbage search results.
-   *
    * <p>Called only for the {@link com.svenruppert.imagerag.domain.enums.VectorBackendType#GIGAMAP_JVECTOR}
    * backend at startup, after the backend object is created but before
    * {@link EclipseStoreGigaMapJVectorBackend#initialize()} is called.
@@ -427,7 +458,6 @@ public class ServiceRegistry
    * One-time migration: approve all existing images that are SAFE according to their
    * stored sensitivity assessment. Images without an assessment (or REVIEW/SENSITIVE)
    * are left locked and must be manually approved in the Overview view.
-   *
    * <p>This is idempotent — already-approved images are simply added again (no-op).
    */
   private void migrateApprovals() {
@@ -478,7 +508,6 @@ public class ServiceRegistry
   /**
    * Completely removes an image from every data store:
    * in-memory vector index, keyword index, image file, preview cache, and EclipseStore.
-   *
    * <p>This is a permanent, irreversible operation.  The caller (UI) is responsible
    * for confirming with the user before invoking this method.
    */
@@ -494,7 +523,6 @@ public class ServiceRegistry
 
   /**
    * Restores a previously archived (soft-deleted) image to the active dataset.
-   *
    * <ol>
    *   <li>Clears the {@code deleted} flag and the {@code deletedAt}/{@code deletedReason}
    *       fields in EclipseStore.</li>
@@ -503,7 +531,6 @@ public class ServiceRegistry
    *   <li>Re-adds the image to the keyword (BM25) index, which may have been missing
    *       if the application was restarted while the image was archived.</li>
    * </ol>
-   *
    * <p>The in-memory vector index entry is preserved across archive/restore cycles because
    * soft-delete does not call {@link VectorIndexService#remove}.
    *
@@ -661,13 +688,28 @@ public class ServiceRegistry
     return taxonomyAnalysisService;
   }
 
+  public com.svenruppert.imagerag.service.PromptTemplateService getPromptTemplateService() {
+    return promptTemplateService;
+  }
+
+  public com.svenruppert.imagerag.service.WhyNotFoundService getWhyNotFoundService() {
+    return whyNotFoundService;
+  }
+
+  public com.svenruppert.imagerag.service.ClusterDiscoveryService getClusterDiscoveryService() {
+    return clusterDiscoveryService;
+  }
+
+  public com.svenruppert.imagerag.service.SearchStrategyAutopilot getSearchStrategyAutopilot() {
+    return searchStrategyAutopilot;
+  }
+
   // -------------------------------------------------------------------------
   // Vector index rebuild — explicit maintenance action triggered from the UI
   // -------------------------------------------------------------------------
 
   /**
    * Rebuilds the active vector index from currently persisted data.
-   *
    * <ul>
    *   <li>For the {@link VectorBackendType#GIGAMAP_JVECTOR} backend: re-embeds all
    *       analysed images, persists the raw vectors to EclipseStore (replacing any
@@ -676,7 +718,6 @@ public class ServiceRegistry
    *   <li>For the {@link VectorBackendType#IN_MEMORY} backend: clears the in-memory
    *       store and re-embeds all analysed images from Ollama.</li>
    * </ul>
-   *
    * <p>This method blocks until the rebuild is complete.  Call it on a background
    * thread (the Pipeline view does this via {@link Thread#ofVirtual()}).
    */
@@ -736,5 +777,22 @@ public class ServiceRegistry
 
     logger().info("Vector index rebuild complete — {} / {} images indexed",
                   rebuilt, imageIds.size());
+  }
+
+  /**
+   * Rebuilds the Lucene keyword (BM25) index from currently persisted analyses.
+   * Equivalent to what happens at startup in {@link #restoreKeywordIndex()} but
+   * callable at runtime from the Migration Center.
+   * <p>This method blocks until the rebuild is complete.  Call it on a background
+   * thread.
+   */
+  public void rebuildKeywordIndex() {
+    logger().info("Keyword index rebuild started");
+    keywordIndexService.rebuildAll(
+        persistenceService::findAllImages,
+        persistenceService::findAnalysis,
+        persistenceService::findLocation,
+        persistenceService::findOcrResult);
+    logger().info("Keyword index rebuild complete");
   }
 }

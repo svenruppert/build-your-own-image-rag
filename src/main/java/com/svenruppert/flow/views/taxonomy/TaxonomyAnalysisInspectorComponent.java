@@ -14,12 +14,10 @@ import java.util.Map;
 
 /**
  * Left-side taxonomy-analysis step inspector.
- *
  * <p>Visualises the seven stages of a taxonomy-analysis run as a vertical timeline of
  * numbered step rows, each with a colour-coded status indicator, a title, and a
  * one-line summary.  Mirrors the pattern established by
  * {@link com.svenruppert.flow.views.search.SearchInspectorComponent}.
- *
  * <h3>Steps</h3>
  * <ol>
  *   <li>Scope Definition — scope mode and image set are resolved</li>
@@ -30,7 +28,6 @@ import java.util.Map;
  *   <li>Dry-Run Preview — (skipped for live runs)</li>
  *   <li>Completed — final state</li>
  * </ol>
- *
  * <h3>Step states</h3>
  * <ul>
  *   <li>PENDING — grey — not yet started</li>
@@ -39,7 +36,6 @@ import java.util.Map;
  *   <li>SKIPPED — very-light — intentionally not executed</li>
  *   <li>FAILED — red — ended in error</li>
  * </ul>
- *
  * <p>Call {@link #update(TaxonomyAnalysisProgress)} from inside a {@code ui.access()} block
  * whenever the progress state changes.  Call {@link #reset()} before each new analysis run.
  */
@@ -47,11 +43,11 @@ public class TaxonomyAnalysisInspectorComponent
     extends VerticalLayout {
 
   // ── Status colours ────────────────────────────────────────────────────────
-  private static final String COLOR_PENDING   = "var(--lumo-contrast-30pct)";
-  private static final String COLOR_ACTIVE    = "var(--lumo-primary-color)";
+  private static final String COLOR_PENDING = "var(--lumo-contrast-30pct)";
+  private static final String COLOR_ACTIVE = "var(--lumo-primary-color)";
   private static final String COLOR_COMPLETED = "var(--lumo-success-color)";
-  private static final String COLOR_SKIPPED   = "var(--lumo-contrast-15pct)";
-  private static final String COLOR_FAILED    = "var(--lumo-error-color)";
+  private static final String COLOR_SKIPPED = "var(--lumo-contrast-15pct)";
+  private static final String COLOR_FAILED = "var(--lumo-error-color)";
 
   // ── Step rows ─────────────────────────────────────────────────────────────
   private final Map<String, StepRow> rows = new LinkedHashMap<>();
@@ -99,22 +95,22 @@ public class TaxonomyAnalysisInspectorComponent
    * Must be called inside a {@code ui.access()} block.
    */
   public void update(TaxonomyAnalysisProgress progress) {
-    Map<String, StepStatus> statuses  = progress.getStepStatuses();
-    Map<String, String>     summaries = progress.getStepSummaries();
+    Map<String, StepStatus> statuses = progress.getStepStatuses();
+    Map<String, String> summaries = progress.getStepSummaries();
 
     for (String stepLabel : TaxonomyAnalysisProgress.ALL_STEPS) {
-      StepRow row     = rows.get(stepLabel);
+      StepRow row = rows.get(stepLabel);
       StepStatus status = statuses.getOrDefault(stepLabel, StepStatus.PENDING);
-      String summary    = summaries.getOrDefault(stepLabel, "Waiting\u2026");
+      String summary = summaries.getOrDefault(stepLabel, "Waiting\u2026");
 
       // For the analysis step, append the numeric counter if active
       if (TaxonomyAnalysisProgress.STEP_ANALYSIS.equals(stepLabel)
           && status == StepStatus.ACTIVE
           && progress.getTotalImages() > 0) {
         summary = String.format("Analysing %d / %d images \u2014 %s elapsed",
-            progress.getAnalyzedImages(),
-            progress.getTotalImages(),
-            progress.getElapsedFormatted());
+                                progress.getAnalyzedImages(),
+                                progress.getTotalImages(),
+                                progress.getElapsedFormatted());
       }
 
       row.update(status, summary, null);
@@ -123,12 +119,13 @@ public class TaxonomyAnalysisInspectorComponent
 
   // ── StepRow inner component ───────────────────────────────────────────────
 
-  private static final class StepRow extends Div {
+  private static final class StepRow
+      extends Div {
 
-    private final Div  indicator;
+    private final Div indicator;
     private final Span titleSpan;
     private final Span summarySpan;
-    private final Div  right;
+    private final Div right;
     private Details detailsPanel = null;
 
     StepRow(String number, String title, String defaultSummary) {
@@ -199,19 +196,19 @@ public class TaxonomyAnalysisInspectorComponent
 
     private void applyStatusStyle(StepStatus status) {
       String color = switch (status) {
-        case PENDING   -> COLOR_PENDING;
-        case ACTIVE    -> COLOR_ACTIVE;
+        case PENDING -> COLOR_PENDING;
+        case ACTIVE -> COLOR_ACTIVE;
         case COMPLETED -> COLOR_COMPLETED;
-        case SKIPPED   -> COLOR_SKIPPED;
-        case FAILED    -> COLOR_FAILED;
+        case SKIPPED -> COLOR_SKIPPED;
+        case FAILED -> COLOR_FAILED;
       };
       indicator.getStyle().set("background", color);
 
       boolean dimmed = status == StepStatus.PENDING || status == StepStatus.SKIPPED;
       titleSpan.getStyle().set("color",
-          dimmed ? "var(--lumo-disabled-text-color)" : "");
+                               dimmed ? "var(--lumo-disabled-text-color)" : "");
       summarySpan.getStyle().set("color",
-          dimmed ? "var(--lumo-disabled-text-color)" : "var(--lumo-secondary-text-color)");
+                                 dimmed ? "var(--lumo-disabled-text-color)" : "var(--lumo-secondary-text-color)");
     }
   }
 }

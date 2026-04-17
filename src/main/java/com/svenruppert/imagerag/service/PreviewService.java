@@ -7,14 +7,12 @@ import java.util.UUID;
 
 /**
  * Generates and caches scaled image previews for multiple UI contexts.
- *
  * <p>Three sizes are supported:
  * <ul>
  *   <li><b>TABLE</b> ({@code 80×60 px}) — compact thumbnails in the table/list view.</li>
  *   <li><b>TILE</b> ({@code 400×300 px}) — tile-view cards (existing default).</li>
  *   <li><b>DETAIL</b> ({@code 800×600 px}) — full-size preview in dialogs.</li>
  * </ul>
- *
  * <p>Previews are stored on disk as JPEG files in {@code _data_images_previews} using
  * the naming scheme {@code <uuid>_<size>.jpg}.  They are generated lazily on first demand
  * and reused on subsequent calls.  Original images are never modified.
@@ -36,7 +34,6 @@ public interface PreviewService {
 
   /**
    * Returns a Vaadin {@link StreamResource} for a preview of the requested size.
-   *
    * <p>If no cached file exists, the preview is generated from {@code originalPath} and
    * written to disk before the resource is opened.  Returns {@code null} on error so
    * callers can fall back to streaming the original.
@@ -72,7 +69,6 @@ public interface PreviewService {
 
   /**
    * Deletes all cached preview files for the given image from disk.
-   *
    * <p>Called as part of permanent image deletion to reclaim disk space.
    * Safe to call even if no cached previews exist — missing files are silently ignored.
    *

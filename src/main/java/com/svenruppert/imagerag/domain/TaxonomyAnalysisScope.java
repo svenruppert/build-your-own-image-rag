@@ -8,7 +8,6 @@ import java.util.UUID;
 
 /**
  * Defines the scope (set of images) subject to a taxonomy-maintenance analysis pass.
- *
  * <p>The user selects a scope in the Taxonomy Maintenance view before triggering
  * analysis.  The {@link com.svenruppert.imagerag.service.TaxonomyAnalysisService} uses
  * this object to determine which images to include.

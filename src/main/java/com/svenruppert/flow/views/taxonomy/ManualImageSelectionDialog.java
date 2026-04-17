@@ -23,11 +23,9 @@ import java.util.stream.Collectors;
 
 /**
  * Image-picker dialog for the MANUAL_SELECTION analysis scope.
- *
  * <p>Displays a filterable grid of all non-archived images.  The user selects
  * any subset and confirms; the confirmed list of image UUIDs is returned via the
  * supplied callback.  Cancelling the dialog leaves the previous selection unchanged.
- *
  * <p>Previously selected image IDs (passed as {@code preselected}) are highlighted
  * automatically when the dialog opens.
  */

@@ -4,12 +4,10 @@ import com.svenruppert.imagerag.domain.enums.SourceCategory;
 
 /**
  * A single alternative category candidate produced during classification.
- *
  * <p>Stored as part of {@link CategoryConfidence} to preserve the top-N alternatives
  * from an image classification pass.  This information is used by the taxonomy
  * maintenance workflow and can improve search ranking when a query matches
  * alternative categories.
- *
  * <p>Scores are model-produced confidence values in [0.0, 1.0].  They reflect the
  * model's relative preference rather than a statistically calibrated probability.
  */

@@ -9,7 +9,6 @@ import java.util.function.Consumer;
 /**
  * Analyses a set of images (defined by a {@link TaxonomyAnalysisScope}) and produces
  * a list of reviewable {@link TaxonomySuggestion} objects.
- *
  * <p>Two operating modes:
  * <ul>
  *   <li><b>Live run</b> ({@link #analyze}): persists generated suggestions so they appear
@@ -17,10 +16,8 @@ import java.util.function.Consumer;
  *   <li><b>Dry run</b> ({@link #analyzeDryRun}): returns suggestions without persisting
  *       them — useful for previewing the analysis impact before committing.</li>
  * </ul>
- *
  * <p>Suggestions are never applied automatically.  The user must review and accept /
  * apply them via {@link TaxonomySuggestionService}.
- *
  * <p>Both modes optionally accept a {@link Consumer}&lt;{@link TaxonomyAnalysisProgress}&gt;
  * progress callback.  The callback is invoked after each state transition so the UI can
  * refresh its step inspector and progress bar without polling.
@@ -30,7 +27,6 @@ public interface TaxonomyAnalysisService {
   /**
    * Runs a full analysis pass for the given scope, persists the results, and returns
    * the generated suggestions.
-   *
    * <p>Any existing OPEN suggestions are cleared before the new batch is written, so
    * successive analysis runs on the same scope do not accumulate stale proposals.
    *
@@ -52,12 +48,16 @@ public interface TaxonomyAnalysisService {
   List<TaxonomySuggestion> analyzeDryRun(TaxonomyAnalysisScope scope,
                                          Consumer<TaxonomyAnalysisProgress> progressCallback);
 
-  /** Convenience overload — no progress reporting. */
+  /**
+   * Convenience overload — no progress reporting.
+   */
   default List<TaxonomySuggestion> analyze(TaxonomyAnalysisScope scope) {
     return analyze(scope, null);
   }
 
-  /** Convenience overload — no progress reporting. */
+  /**
+   * Convenience overload — no progress reporting.
+   */
   default List<TaxonomySuggestion> analyzeDryRun(TaxonomyAnalysisScope scope) {
     return analyzeDryRun(scope, null);
   }

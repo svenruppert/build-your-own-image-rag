@@ -9,14 +9,12 @@ import java.util.Properties;
 /**
  * Thin configuration reader that loads {@code imagerag.properties} from the
  * classpath root and exposes typed accessors for every recognised key.
- *
  * <h3>Override precedence (highest → lowest)</h3>
  * <ol>
  *   <li>JVM system property ({@code -Dkey=value}) — useful for CI / Docker environments.</li>
  *   <li>Value in {@code imagerag.properties} on the classpath.</li>
  *   <li>Hard-coded default built into each accessor.</li>
  * </ol>
- *
  * <p>The singleton is initialised once at startup by {@link ServiceRegistry} and
  * is thereafter read-only.
  */
@@ -111,7 +109,6 @@ public final class AppConfig
   /**
    * Returns the Ollama embedding model to use for semantic-search vectors.
    * Defaults to {@code "bge-m3"} when the property {@code embedding.model} is absent.
-   *
    * <p>Changing this value after vectors have been stored requires a full vector-index
    * rebuild so that all persisted embeddings are produced by the same model.
    *

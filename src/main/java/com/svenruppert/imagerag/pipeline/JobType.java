@@ -2,7 +2,6 @@ package com.svenruppert.imagerag.pipeline;
 
 /**
  * Distinguishes how an {@link IngestionJob} entered the pipeline.
- *
  * <ul>
  *   <li>{@link #INGEST_UPLOAD} — the job was triggered by a fresh image upload from the user.
  *       All pipeline stages run, including file storage and SHA-256 duplicate detection.</li>

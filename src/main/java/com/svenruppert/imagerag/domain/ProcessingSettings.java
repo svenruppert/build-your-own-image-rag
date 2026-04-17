@@ -2,17 +2,14 @@ package com.svenruppert.imagerag.domain;
 
 /**
  * User-configurable runtime settings for the ingestion pipeline and search.
- *
  * <p>Held as a singleton in {@link com.svenruppert.imagerag.bootstrap.ServiceRegistry}.
  * Changes via {@link #setIngestionParallelism} are picked up by
  * {@link com.svenruppert.imagerag.pipeline.IngestionPipeline#updateParallelism}
  * and take effect immediately for newly submitted jobs.
- *
  * <p>{@link #searchParallelism} is stored here for future use: currently each
  * UI session runs searches on a single virtual thread (the polling architecture
  * makes that correct and safe); this setting reserves the concept for when
  * {@code SearchService} may dispatch parallel sub-queries internally.
- *
  * <p>Allowed parallelism values: 1, 2, 4.  Any other value is silently clamped.
  */
 public class ProcessingSettings {

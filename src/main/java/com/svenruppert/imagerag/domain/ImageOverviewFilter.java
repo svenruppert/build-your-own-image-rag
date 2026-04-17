@@ -10,11 +10,9 @@ import java.util.Objects;
 
 /**
  * Reusable filter model for the image overview and tile view.
- *
  * <p>All filter fields are optional (null = "show all").  Multiple non-null filters
  * are ANDed together.  Use {@link #matches} to test a single {@link ImageAsset} or
  * {@link #apply} to filter a full list.
- *
  * <p>Category filtering uses coarse {@link CategoryGroup} buckets so that, for
  * example, filtering by "Nature" returns images classified as LANDSCAPE, MOUNTAIN,
  * FOREST, FLOWER, etc.  The mapping is provided by {@link CategoryRegistry}.

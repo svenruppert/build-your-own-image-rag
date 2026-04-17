@@ -45,7 +45,6 @@ import java.util.stream.Collectors;
 
 /**
  * Search Workbench — semantic image search with step-by-step transparency.
- *
  * <h3>Two explicit modes</h3>
  * <ul>
  *   <li><b>Transform Only</b> — runs LLM query understanding and stops.  The user can
@@ -53,7 +52,6 @@ import java.util.stream.Collectors;
  *       optionally adjust the derived parameters in the Advanced panel before executing.</li>
  *   <li><b>Search</b> — full pipeline: LLM understanding → vector search → results.</li>
  * </ul>
- *
  * <h3>Iterative workflow</h3>
  * The intended use pattern is:
  * <ol>
@@ -63,17 +61,14 @@ import java.util.stream.Collectors;
  *   <li>Click <em>Search</em> (or <em>Refine Search</em> if parameters were edited)
  *       to run the actual search.</li>
  * </ol>
- *
  * <h3>History</h3>
  * Up to {@value #MAX_VISIBLE_CHIPS} recent searches are shown as chips below the search
  * bar.  Clicking a chip copies the original query back into the search field without
  * re-executing — the user can then edit it or choose a mode.  A "More history" button
  * opens {@link SearchHistoryDialog} for full history management including multi-select
  * deletion.
- *
  * <p>History is persisted <em>after</em> each run completes so that the entry always
  * captures the original query together with the LLM-transformed final query.
- *
  * <p>Background searches use client-side polling (no {@code @Push} required).
  */
 @PageTitle("Search Images")
@@ -84,10 +79,10 @@ public class SearchView
 
   public static final String PATH = "search";
 
-  private static final int    POLL_INTERVAL_MS      = 800;
-  private static final int    MAX_VISIBLE_CHIPS     = 3;
-  private static final int    PAGE_SIZE             = 30;
-  private static final double DEFAULT_MIN_SCORE     =
+  private static final int POLL_INTERVAL_MS = 800;
+  private static final int MAX_VISIBLE_CHIPS = 3;
+  private static final int PAGE_SIZE = 30;
+  private static final double DEFAULT_MIN_SCORE =
       com.svenruppert.imagerag.bootstrap.AppConfig.getInstance().getSearchMinScore();
   // ── Boolean select values ─────────────────────────────────────────────────
   private static final String BOOL_ANY = "any";
@@ -1303,7 +1298,6 @@ public class SearchView
 
   /**
    * Volatile holder for the in-progress background search.
-   *
    * <p>Written by the background executor thread; read by the Vaadin UI polling handler.
    * All fields are {@code volatile} to ensure visibility across threads without locking.
    * {@link #stepProgress} drives real-time inspector updates during polling.

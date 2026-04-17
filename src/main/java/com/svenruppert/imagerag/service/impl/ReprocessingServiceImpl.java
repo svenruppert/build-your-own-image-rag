@@ -10,11 +10,9 @@ import java.util.UUID;
 
 /**
  * Delegates reprocessing to the shared {@link IngestionPipeline}.
- *
  * <p>This makes reprocessing a first-class visible pipeline job: the job appears in the
  * Pipeline view with type {@link com.svenruppert.imagerag.pipeline.JobType#REPROCESS_EXISTING},
  * shows live step progress, can be cancelled, and contributes to the pipeline statistics.
- *
  * <p>Previously this class maintained its own hidden executor.  The pipeline executor is now
  * the single source of truth for all background processing, whether triggered by a fresh
  * upload or by a "Reprocess" action in the Overview or Detail views.

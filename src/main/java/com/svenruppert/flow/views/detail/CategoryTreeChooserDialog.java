@@ -19,11 +19,9 @@ import java.util.function.Consumer;
 
 /**
  * Tree-structured category chooser dialog.
- *
  * <p>Categories are grouped by their {@link CategoryGroup}.  Each group is shown as an
  * expandable {@link Details} section; clicking any category button calls the provided
  * {@code onSelect} callback and closes the dialog.
- *
  * <p>Typical usage:
  * <pre>{@code
  * Button openBtn = new Button("Choose category…");

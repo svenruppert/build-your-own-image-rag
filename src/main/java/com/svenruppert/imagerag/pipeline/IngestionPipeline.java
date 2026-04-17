@@ -22,11 +22,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Sequential async ingestion pipeline.
- *
  * <p>Images are submitted via {@link #submit} and processed <em>one at a time</em>
  * on a single virtual-thread-backed executor, ensuring the LLM is never overwhelmed
  * by concurrent requests. Each job can be cancelled via {@link #cancel}.
- *
  * <p>All submitted jobs are kept in a {@link CopyOnWriteArrayList} so the
  * {@link com.svenruppert.flow.views.pipeline.PipelineView} can read them
  * safely without locks at any time.
@@ -181,7 +179,6 @@ public class IngestionPipeline
 
   /**
    * Submits an image for processing from a temp file written by the upload component.
-   *
    * <p>Unlike {@link #submit}, no bytes are read here — the temp file path is simply
    * captured in the job closure.  The pipeline reads the file from disk only when the
    * job actually starts (i.e. a worker slot is free), keeping peak memory consumption
@@ -210,12 +207,10 @@ public class IngestionPipeline
 
   /**
    * Submits a reprocessing job for an already-stored image asset.
-   *
    * <p>Unlike {@link #submit}, no bytes are read from a stream — the image file already
    * exists on disk.  The job skips file storage and duplicate detection and re-runs only
    * the AI-heavy stages: vision analysis, semantic derivation, sensitivity assessment,
    * embedding, and vector index update.
-   *
    * <p>The job is visible in the pipeline UI just like a regular upload job but carries
    * {@link JobType#REPROCESS_EXISTING} to distinguish it from uploads.
    *
@@ -282,7 +277,6 @@ public class IngestionPipeline
 
   /**
    * Dynamically changes the number of concurrent ingestion workers.
-   *
    * <p>The current executor is shut down gracefully (already-running and queued
    * jobs will still complete on it).  A new executor with the requested thread
    * count is installed for future submissions.  The value is clamped to [1, 6].
@@ -308,7 +302,6 @@ public class IngestionPipeline
 
   /**
    * Promotes a QUEUED job to the front of the work queue so it executes next.
-   *
    * <p>Implementation: the job's {@link FutureTask} is looked up in the task map, removed
    * from wherever it sits in the {@link LinkedBlockingDeque}, and re-inserted at the head.
    * If the task has already been picked up by a worker thread (i.e. is already running),

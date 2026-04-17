@@ -16,7 +16,6 @@ import java.util.*;
 
 /**
  * Vector-search backend that combines two responsibilities:
- *
  * <ol>
  *   <li><b>Durable persistence (GigaMap role)</b> via EclipseStore — raw
  *       {@code float[]} embeddings are stored in {@code AppDataRoot.rawVectorStore},
@@ -28,7 +27,6 @@ import java.util.*;
  *       startup.  The index is kept in sync with the EclipseStore data through the
  *       {@link #index} and {@link #remove} operations.</li>
  * </ol>
- *
  * <h3>JVector 4.x notes</h3>
  * <ul>
  *   <li>{@code OnHeapGraphIndex} implements {@code MutableGraphIndex} which extends
@@ -41,7 +39,6 @@ import java.util.*;
  *       deprecated {@code addGraphNode(int, RandomAccessVectorValues)} overload is
  *       not used.</li>
  * </ul>
- *
  * <h3>Lifecycle</h3>
  * <ul>
  *   <li>Construction: call {@link #initialize()} to load vectors from EclipseStore
@@ -50,7 +47,6 @@ import java.util.*;
  *   <li>{@link #remove}: removes from EclipseStore and rebuilds the index.</li>
  *   <li>{@link #search}: queries the in-memory JVector HNSW index.</li>
  * </ul>
- *
  * <h3>Thread safety</h3>
  * The JVector index snapshot is replaced atomically via a volatile reference.
  * Rebuilds are synchronised to prevent overlapping rebuilds while reads against a
@@ -147,7 +143,6 @@ public class EclipseStoreGigaMapJVectorBackend
 
   /**
    * Search with an explicit similarity function.
-   *
    * <p>COSINE delegates to the fast JVector HNSW graph index.  DOT_PRODUCT and
    * EUCLIDEAN perform a brute-force scan over the raw vectors stored in EclipseStore
    * via {@link PersistenceService#findAllRawVectors()}.  The brute-force path is
@@ -167,8 +162,8 @@ public class EclipseStoreGigaMapJVectorBackend
     for (Map.Entry<UUID, float[]> entry : all.entrySet()) {
       double score = switch (fn) {
         case DOT_PRODUCT -> dotProduct(queryVector, entry.getValue());
-        case EUCLIDEAN   -> euclideanSimilarity(queryVector, entry.getValue());
-        default          -> 0.0;
+        case EUCLIDEAN -> euclideanSimilarity(queryVector, entry.getValue());
+        default -> 0.0;
       };
       results.add(new VectorSearchHit(entry.getKey(), score));
     }
@@ -246,11 +241,9 @@ public class EclipseStoreGigaMapJVectorBackend
   /**
    * Immutable snapshot of the JVector HNSW graph together with the data structures
    * needed to map integer JVector node-IDs back to application UUIDs.
-   *
    * <p>JVector identifies nodes by sequential {@code int} IDs.  This class maintains
    * the mapping: {@code nodeId → UUID} as a {@code List<UUID>} where the list index
    * equals the JVector node ID assigned during construction.
-   *
    * <p>In JVector 4.x, {@code GraphIndexBuilder.getGraph()} returns an
    * {@code ImmutableGraphIndex} (the declared return type); {@code OnHeapGraphIndex}
    * implements {@code MutableGraphIndex} which extends {@code ImmutableGraphIndex},
@@ -281,7 +274,6 @@ public class EclipseStoreGigaMapJVectorBackend
 
     /**
      * Builds a JVector 4.x HNSW index from the supplied {@code UUID → float[]} map.
-     *
      * <p>Node IDs are assigned by insertion order of the map's entry set.
      * Each {@code float[]} is wrapped in a JVector {@link VectorFloat} via
      * {@link VectorizationProvider} so JVector can apply SIMD optimisations.
@@ -323,7 +315,6 @@ public class EclipseStoreGigaMapJVectorBackend
     /**
      * Queries the JVector HNSW index for the {@code limit} nearest neighbours of
      * {@code rawQuery}.
-     *
      * <p>In JVector 4.x the static {@code GraphSearcher.search()} convenience method
      * accepts an {@code ImmutableGraphIndex}. Because {@code OnHeapGraphIndex} implements
      * {@code MutableGraphIndex} which extends {@code ImmutableGraphIndex}, the in-memory
@@ -363,7 +354,6 @@ public class EclipseStoreGigaMapJVectorBackend
    * Wraps a {@code List<VectorFloat<?>>} as JVector's {@link RandomAccessVectorValues}
    * interface, required by both {@link GraphIndexBuilder} (for build-time scoring) and
    * {@link GraphSearcher} (for search-time reranking).
-   *
    * <p>In JVector 4.x, {@code RandomAccessVectorValues} is not generic; {@link #getVector}
    * returns {@code VectorFloat<?>} directly.  Each element is an independent
    * {@link VectorFloat} object created via {@link VectorizationProvider}, so

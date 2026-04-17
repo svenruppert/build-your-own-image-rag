@@ -11,6 +11,7 @@ import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.dto.VisionAnalysisResponse;
 import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
+import com.svenruppert.imagerag.service.PromptTemplateService;
 import com.svenruppert.imagerag.service.SemanticDerivationService;
 
 import java.time.Instant;
@@ -34,7 +35,7 @@ public class SemanticDerivationServiceImpl
    */
   public static final String VISION_PROMPT_VERSION = "v1";
 
-  private static final String DERIVATION_PROMPT_TEMPLATE = """
+  public static final String DERIVATION_PROMPT_TEMPLATE = """
       You are a structured data extractor. Given the following image description, extract structured fields as JSON.
       Image description:
       "%s"
@@ -73,13 +74,29 @@ public class SemanticDerivationServiceImpl
       Other:      MIXED, UNKNOWN
       """;
 
+  /**
+   * The prompt key used for {@link PromptTemplateService} lookups.
+   */
+  public static final String PROMPT_KEY = "semantic";
+
   private final OllamaClient ollamaClient;
   private final OllamaConfig config;
   private final ObjectMapper objectMapper = new ObjectMapper();
+  /**
+   * Optional — null before the migration centre is wired in older service graphs.
+   */
+  private PromptTemplateService promptTemplateService;
 
   public SemanticDerivationServiceImpl(OllamaClient ollamaClient, OllamaConfig config) {
     this.ollamaClient = ollamaClient;
     this.config = config;
+  }
+
+  /**
+   * Called by {@link com.svenruppert.imagerag.bootstrap.ServiceRegistry} after construction.
+   */
+  public void setPromptTemplateService(PromptTemplateService promptTemplateService) {
+    this.promptTemplateService = promptTemplateService;
   }
 
   @Override
@@ -88,7 +105,12 @@ public class SemanticDerivationServiceImpl
     analysis.setImageId(imageId);
     analysis.setSummary(response.rawDescription());
 
-    String prompt = DERIVATION_PROMPT_TEMPLATE.formatted(
+    // Resolve active prompt — managed override takes precedence over built-in
+    String promptTemplate = (promptTemplateService != null)
+        ? promptTemplateService.getActiveContent(PROMPT_KEY).orElse(DERIVATION_PROMPT_TEMPLATE)
+        : DERIVATION_PROMPT_TEMPLATE;
+
+    String prompt = promptTemplate.formatted(
         response.rawDescription().replace("\"", "'"));
 
     Optional<String> jsonResponse = ollamaClient.generateJson(prompt);

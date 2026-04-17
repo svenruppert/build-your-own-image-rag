@@ -9,11 +9,9 @@ import java.util.Objects;
 /**
  * Immutable diff between the derived state of an image <em>before</em> and <em>after</em>
  * a reprocessing run.
- *
  * <p>Created by {@link com.svenruppert.imagerag.pipeline.IngestionPipeline} at the end of
  * each successful {@code reprocess()} run and stored on the corresponding
  * {@link com.svenruppert.imagerag.pipeline.IngestionJob} so the UI can display it.
- *
  * <p>All fields may be {@code null} when the value was not available before or after
  * processing (e.g. no prior analysis existed, or the new run produced no output).
  */

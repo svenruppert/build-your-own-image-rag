@@ -18,7 +18,6 @@ import java.util.Objects;
 /**
  * Dialog that shows a user-readable diff between the before and after state of an
  * image that has been reprocessed.
- *
  * <p>Each tracked field is shown as an "old → new" row.  Unchanged fields are
  * displayed in a muted style; changed fields are highlighted so they stand out.
  */

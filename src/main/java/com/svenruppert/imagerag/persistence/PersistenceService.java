@@ -11,7 +11,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
-import static java.util.List.*;
+import static java.util.List.of;
 
 public class PersistenceService
     implements HasLogger {
@@ -44,6 +44,8 @@ public class PersistenceService
       existingRoot.getTaxonomySuggestions(); // lazy init if null (added for taxonomy maintenance)
       existingRoot.getCategoryMetadata();    // lazy init if null (added for taxonomy maintenance)
       existingRoot.getTuningPresets();       // lazy init if null (added for Search Tuning Lab)
+      existingRoot.getClusterSuggestions();  // lazy init if null (added for cluster discovery)
+      existingRoot.getPromptVersions();      // lazy init if null (added for migration center)
       storage.store(existingRoot);           // persist updated field references
       migrateEnumSets();                  // fix any EnumSet fields broken by Unsafe reconstruction
       logger().info("EclipseStore loaded existing data: {} images, {} approved, {} recent searches",
@@ -165,7 +167,6 @@ public class PersistenceService
 
   /**
    * Update the secondary (additional) categories of an existing analysis and persist.
-   *
    * <p>The list replaces any previously stored secondary categories. Pass an empty list
    * to clear all secondary categories.
    */
@@ -624,6 +625,68 @@ public class PersistenceService
     }
   }
 
+  // ── Cluster suggestions ──────────────────────────────────────────────────
+
+  public void saveClusterSuggestion(com.svenruppert.imagerag.domain.CategoryClusterSuggestion s) {
+    List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> list = root.getClusterSuggestions();
+    list.removeIf(x -> s.getId().equals(x.getId()));
+    list.add(s);
+    storage.store(list);
+    logger().debug("Saved cluster suggestion id={}", s.getId());
+  }
+
+  public List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> findAllClusterSuggestions() {
+    return Collections.unmodifiableList(new ArrayList<>(root.getClusterSuggestions()));
+  }
+
+  /**
+   * Replaces all cluster suggestions with the given list (used after a discovery run).
+   */
+  public void replaceAllClusterSuggestions(
+      List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> suggestions) {
+    root.getClusterSuggestions().clear();
+    root.getClusterSuggestions().addAll(suggestions);
+    storage.store(root.getClusterSuggestions());
+    logger().info("Replaced cluster suggestions: {} entries", suggestions.size());
+  }
+
+  public void deleteClusterSuggestion(java.util.UUID id) {
+    boolean removed = root.getClusterSuggestions().removeIf(s -> id.equals(s.getId()));
+    if (removed) storage.store(root.getClusterSuggestions());
+  }
+
+  // ── Prompt template versions ─────────────────────────────────────────────
+
+  public void savePromptVersion(com.svenruppert.imagerag.domain.PromptTemplateVersion v) {
+    List<com.svenruppert.imagerag.domain.PromptTemplateVersion> list = root.getPromptVersions();
+    list.removeIf(x -> v.getId().equals(x.getId()));
+    list.add(v);
+    storage.store(list);
+    logger().info("Saved prompt version: key={} version={} active={}",
+                  v.getPromptKey(), v.getVersion(), v.isActive());
+  }
+
+  public List<com.svenruppert.imagerag.domain.PromptTemplateVersion> findPromptVersions(String promptKey) {
+    return root.getPromptVersions().stream()
+        .filter(v -> promptKey.equals(v.getPromptKey()))
+        .collect(Collectors.toList());
+  }
+
+  public List<com.svenruppert.imagerag.domain.PromptTemplateVersion> findAllPromptVersions() {
+    return Collections.unmodifiableList(new ArrayList<>(root.getPromptVersions()));
+  }
+
+  public Optional<com.svenruppert.imagerag.domain.PromptTemplateVersion> findActivePromptVersion(String promptKey) {
+    return root.getPromptVersions().stream()
+        .filter(v -> promptKey.equals(v.getPromptKey()) && v.isActive())
+        .findFirst();
+  }
+
+  public void deletePromptVersion(java.util.UUID id) {
+    boolean removed = root.getPromptVersions().removeIf(v -> id.equals(v.getId()));
+    if (removed) storage.store(root.getPromptVersions());
+  }
+
   public void shutdown() {
     storage.shutdown();
     logger().info("EclipseStore shut down");
@@ -638,7 +701,6 @@ public class PersistenceService
    * constructors. {@code EnumSet} has {@code final} internal fields ({@code elementType},
    * {@code universe}) that are set in the constructor — after Unsafe reconstruction they
    * are {@code null}, causing {@link NullPointerException} on iteration.
-   *
    * <p>This method replaces any broken {@code EnumSet}-backed flags field with a safe
    * {@link HashSet} copy and re-persists the affected assessments.
    */

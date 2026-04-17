@@ -8,14 +8,11 @@ import java.util.*;
 /**
  * Static mapping from fine-grained {@link SourceCategory} values to coarse
  * {@link CategoryGroup} buckets and user-friendly display labels.
- *
  * <p>The registry covers all 52 {@code SourceCategory} values (48 extended + 4 legacy).
  * Any value not explicitly registered falls back to
  * {@link CategoryGroup#UNCATEGORIZED} with the enum name as label.
- *
  * <p>All methods are {@code null}-safe: passing {@code null} returns
  * {@link CategoryGroup#UNCATEGORIZED} or {@code "—"} as appropriate.
- *
  * <p>This class is intentionally non-instantiable — use only the static helpers.
  */
 public final class CategoryRegistry {
@@ -26,7 +23,6 @@ public final class CategoryRegistry {
   /**
    * Alias → canonical {@link SourceCategory} mapping.
    * Keys are lower-cased and trimmed for case-insensitive lookup.
-   *
    * <p>Aliases cover common German and English synonyms and abbreviations that users or
    * the LLM might use in free-text queries or category assignments.
    */
@@ -253,7 +249,6 @@ public final class CategoryRegistry {
 
   /**
    * Looks up a {@link SourceCategory} by an alias or synonym (case-insensitive).
-   *
    * <p>Examples: {@code "auto"} → {@code CAR}, {@code "wald"} → {@code FOREST}.
    * Returns {@link Optional#empty()} when the alias is not registered.
    *

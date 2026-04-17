@@ -22,7 +22,6 @@ import java.util.List;
 
 /**
  * Side-by-side comparison of two {@link ImageAsset} instances.
- *
  * <p>Each column shows: a DETAIL-sized preview, primary category, risk level, summary,
  * tags, and the model / prompt version used to produce the analysis.  Differences
  * between the two assets are not highlighted — this is purely an informational

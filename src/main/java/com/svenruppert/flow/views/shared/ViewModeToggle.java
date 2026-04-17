@@ -12,7 +12,6 @@ import java.util.function.Consumer;
 
 /**
  * A prominent segmented-control toggle for switching between table view and tile/card view.
- *
  * <p>Each button shows both an icon <em>and</em> a text label so the user immediately
  * understands the two presentation modes:
  * <ul>
@@ -21,7 +20,6 @@ import java.util.function.Consumer;
  * </ul>
  * The active button carries the {@code LUMO_PRIMARY} theme variant; the inactive button
  * uses {@code LUMO_CONTRAST} so the choice is always visually obvious.
- *
  * <p>The component emits a change event only when the mode actually flips — clicking
  * the already-active button is a no-op.
  */

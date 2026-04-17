@@ -15,11 +15,9 @@ import java.util.UUID;
 
 /**
  * Disk-caching implementation of {@link PreviewService}.
- *
  * <p>Previews are generated as JPEG files in {@code _data_images_previews} following the
  * naming pattern {@code <uuid>_<size>.jpg} where {@code <size>} is the
  * {@link PreviewService.PreviewSize} suffix ({@code table}, {@code tile}, {@code detail}).
- *
  * <p>The first call for a given image+size combination generates the file; subsequent
  * calls reuse the cached file.  PNG images with an alpha channel are composited onto a
  * white background before JPEG encoding.  Original images are never modified.

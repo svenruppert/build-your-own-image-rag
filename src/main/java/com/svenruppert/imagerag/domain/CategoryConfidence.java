@@ -8,7 +8,6 @@ import java.util.List;
 
 /**
  * Category confidence record for a single image.
- *
  * <p>Stores the model's confidence for the primary assigned category as well as
  * a ranked list of alternative candidates.  This data is produced during semantic
  * derivation (ingestion / reprocessing) or during a taxonomy-maintenance analysis
@@ -19,10 +18,8 @@ import java.util.List;
  *   <li>Drive taxonomy-maintenance proposals (reclassify if top alternative has
  *       higher confidence than current primary).</li>
  * </ul>
- *
  * <p>Scores are model-produced values in [0.0, 1.0].  They reflect relative model
  * preference rather than statistically calibrated probabilities.
- *
  * <p>Not declared final — EclipseStore Unsafe reconstruction compatibility.
  */
 public class CategoryConfidence {

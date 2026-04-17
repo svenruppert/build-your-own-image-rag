@@ -37,17 +37,13 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Set;
 
-import static com.vaadin.flow.component.icon.VaadinIcon.REFRESH;
-import static com.vaadin.flow.component.icon.VaadinIcon.TRASH;
-import static com.vaadin.flow.component.icon.VaadinIcon.REPLY;
+import static com.vaadin.flow.component.icon.VaadinIcon.*;
 
 /**
  * Dedicated view for browsing and managing archived (soft-deleted) images.
- *
  * <p>Archived images are those where {@link ImageAsset#isDeleted()} is {@code true}.
  * They are hidden from the normal Overview and Search flows but remain in persistent
  * storage until explicitly deleted permanently.
- *
  * <p>Actions available per row and in batch:
  * <ul>
  *   <li><b>Restore</b> — clears the deleted flag and re-approves/re-indexes the image

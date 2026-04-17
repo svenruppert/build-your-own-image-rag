@@ -7,12 +7,10 @@ import org.commonmark.renderer.html.HtmlRenderer;
 
 /**
  * Converts CommonMark Markdown text to safe HTML for display inside Vaadin components.
- *
  * <p>Raw HTML blocks inside the Markdown source are escaped (not passed through),
  * preventing XSS if the LLM-generated description contains HTML fragments.
  * Standard Markdown elements — headings, bold, italic, lists, code blocks,
  * blockquotes, paragraphs — are rendered normally.
- *
  * <p>This class is intentionally non-instantiable; use the static factory methods.
  */
 public final class MarkdownRenderer {
@@ -44,7 +42,6 @@ public final class MarkdownRenderer {
 
   /**
    * Converts Markdown text and wraps the result in a styled {@link Div} component.
-   *
    * <p>The HTML is injected via {@code innerHTML}, so standard Markdown structure
    * (paragraphs, headings, bullet lists, bold/italic) renders correctly inside
    * the Vaadin component tree.

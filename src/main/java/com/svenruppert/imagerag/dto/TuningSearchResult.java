@@ -4,7 +4,6 @@ import com.svenruppert.imagerag.domain.SearchResultItem;
 
 /**
  * A single result entry from a Search Tuning Lab run.
- *
  * <p>Extends the standard {@link SearchResultItem} with tuning-specific data:
  * per-channel rank information and a full {@link ScoreBreakdown} that explains
  * exactly how the final score was derived.

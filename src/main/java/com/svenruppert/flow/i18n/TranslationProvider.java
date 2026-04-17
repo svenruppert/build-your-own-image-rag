@@ -12,13 +12,11 @@ import java.util.ResourceBundle;
 /**
  * Vaadin {@link I18NProvider} backed by {@code translations.properties} files
  * on the classpath. English is the default/fallback locale.
- *
  * <p>Files:
  * <ul>
  *   <li>{@code translations.properties} — English (default)</li>
  *   <li>{@code translations_de.properties} — German</li>
  * </ul>
- *
  * <p>Registered via
  * {@code META-INF/services/com.vaadin.flow.i18n.I18NProvider}.
  */

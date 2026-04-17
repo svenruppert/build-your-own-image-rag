@@ -25,7 +25,7 @@ import java.util.ResourceBundle;
 public class TranslationProvider
     implements I18NProvider, HasLogger {
 
-  private static final String BUNDLE = "translations";
+  private static final String BUNDLE = "vaadin-i18n/translations";
 
   @Override
   public List<Locale> getProvidedLocales() {
@@ -42,8 +42,25 @@ public class TranslationProvider
       return (params != null && params.length > 0)
           ? MessageFormat.format(value, params)
           : value;
-    } catch (MissingResourceException e) {
-      logger().warn("Missing i18n key '{}' for locale {}", key, effective);
+    } catch (MissingResourceException primary) {
+      // If the key is missing for a non-English locale, fall back to English.
+      // This prevents !key! strings from leaking into the UI when a new translation
+      // key exists in English but has not yet been added to the DE bundle.
+      if (!Locale.ENGLISH.getLanguage().equals(effective.getLanguage())) {
+        try {
+          ResourceBundle englishBundle = ResourceBundle.getBundle(BUNDLE, Locale.ENGLISH);
+          String value = englishBundle.getString(key);
+          logger().debug("Missing i18n key '{}' for locale {} — using English fallback",
+                         key, effective);
+          return (params != null && params.length > 0)
+              ? MessageFormat.format(value, params)
+              : value;
+        } catch (MissingResourceException ignored) {
+          // Not found in English either — fall through to the warning below.
+        }
+      }
+      logger().warn("Missing i18n key '{}' for locale {} (no English fallback found)",
+                    key, effective);
       return "!" + key + "!";
     }
   }

@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.ollama;
 
+import com.svenruppert.imagerag.bootstrap.AppConfig;
+
 public class OllamaConfig {
 
   private String host;
@@ -10,12 +12,14 @@ public class OllamaConfig {
   private int timeoutSeconds;
 
   public OllamaConfig() {
-    this.host = "localhost";
-    this.port = 11434;
-    this.visionModel = "gemma4:31b";
-    this.textModel = "gemma4:31b";
-    this.embeddingModel = "nomic-embed-text-v2-moe";
-    this.timeoutSeconds = 300; // gemma4:31b is large — needs more time
+    AppConfig cfg = AppConfig.getInstance();
+    this.host = cfg.get("ollama.host", "localhost");
+    this.port = Integer.parseInt(cfg.get("ollama.port", "11434"));
+    this.visionModel = cfg.get("ollama.vision.model", "gemma4:31b");
+    this.textModel = cfg.get("ollama.text.model", "gemma4:31b");
+    // embedding.model: read via AppConfig so -Dembedding.model=... or imagerag.properties override works.
+    this.embeddingModel = cfg.getEmbeddingModel();
+    this.timeoutSeconds = 300; // large models need more time; override with ollama.timeout.seconds
   }
 
   public String baseUrl() {

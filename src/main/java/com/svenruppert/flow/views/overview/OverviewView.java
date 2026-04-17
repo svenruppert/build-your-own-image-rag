@@ -2,6 +2,8 @@ package com.svenruppert.flow.views.overview;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
+import com.svenruppert.flow.views.detail.CategoryTreeChooserDialog;
+import com.svenruppert.flow.views.detail.ComparisonDialog;
 import com.svenruppert.flow.views.detail.DetailDialog;
 import com.svenruppert.flow.views.shared.CategoryChooserComponent;
 import com.svenruppert.flow.views.shared.ViewModeToggle;
@@ -68,6 +70,7 @@ public class OverviewView
   private final Div tileContainer = new Div();
   private final Button loadMoreTilesBtn = new Button();
   private final Span selectedCountLabel = new Span();
+  private final Button compareBtn = new Button();
   private final HorizontalLayout batchToolbar = new HorizontalLayout();
   // ── Filter state ──────────────────────────────────────────────────────────
   private final ImageOverviewFilter filter = new ImageOverviewFilter();
@@ -76,7 +79,12 @@ public class OverviewView
   private boolean tileMode = false;
   private ViewModeToggle viewToggle;
   private List<ImageAsset> currentFilteredImages = List.of();
-  private int currentPage = 1;
+  /**
+   * Number of tile cards currently rendered in {@link #tileContainer}.
+   * Incremented by {@link #appendTiles} so "Load more" only renders NEW tiles
+   * instead of destroying and recreating all existing ones.
+   */
+  private int renderedTileCount = 0;
   // Initialized lazily in buildFilterBar() because getTranslation() requires attachment.
   private CategoryChooserComponent filterCategory;
   private List<ImageAsset> allImages = List.of();
@@ -121,13 +129,11 @@ public class OverviewView
     add(tileContainer);
 
     // ── Load more button (tile view only) ──────────────────────────────────
-    loadMoreTilesBtn.setText("Load more");
+    loadMoreTilesBtn.setText(getTranslation("overview.loadmore"));
     loadMoreTilesBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
     loadMoreTilesBtn.setVisible(false);
-    loadMoreTilesBtn.addClickListener(e -> {
-      currentPage++;
-      renderTiles(currentFilteredImages);
-    });
+    // Append the next page of tiles WITHOUT destroying already-rendered cards.
+    loadMoreTilesBtn.addClickListener(e -> appendTiles(currentFilteredImages, PAGE_SIZE));
     add(loadMoreTilesBtn);
   }
 
@@ -207,7 +213,14 @@ public class OverviewView
     Button reprocessAllBtn = new Button(getTranslation("overview.batch.reprocess"), e -> batchReprocess());
     reprocessAllBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
 
-    batchToolbar.add(selectedCountLabel, approveAllBtn, lockAllBtn, archiveAllBtn, reprocessAllBtn);
+    // Compare button — only enabled when exactly 2 images are selected
+    compareBtn.setText(getTranslation("overview.compare"));
+    compareBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+    compareBtn.setVisible(false); // shown only with exactly-2 selection
+    compareBtn.addClickListener(e -> openComparisonDialog());
+
+    batchToolbar.add(selectedCountLabel, approveAllBtn, lockAllBtn, archiveAllBtn,
+                     reprocessAllBtn, compareBtn);
     batchToolbar.setAlignItems(Alignment.CENTER);
     batchToolbar.setSpacing(true);
     batchToolbar.setVisible(false);
@@ -233,8 +246,12 @@ public class OverviewView
   private void batchArchive() {
     PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
     Set<ImageAsset> selected = grid.getSelectedItems();
-    selected.forEach(a -> ps.softDeleteImage(a.getId(), "Batch archive from overview"));
-    showNotification(selected.size() + " images archived", false);
+    selected.forEach(a -> {
+      ps.softDeleteImage(a.getId(), getTranslation("overview.archive.reason.batch"));
+      ServiceRegistry.getInstance().getAuditService()
+          .log("SOFT_DELETE", a.getId(), a.getOriginalFilename(), "Batch archive from overview");
+    });
+    showNotification(getTranslation("overview.batch.archived", selected.size()), false);
     loadData();
   }
 
@@ -265,8 +282,7 @@ public class OverviewView
     currentFilteredImages = filter.apply(allImages, ps);
     grid.setItems(currentFilteredImages);
     if (tileMode) {
-      currentPage = 1;
-      renderTiles(currentFilteredImages);
+      renderTiles(currentFilteredImages);  // full reset + first page
     }
   }
 
@@ -282,7 +298,6 @@ public class OverviewView
     if (tileMode) {
       PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
       currentFilteredImages = filter.apply(allImages, ps);
-      currentPage = 1;
       renderTiles(currentFilteredImages);
     }
   }
@@ -302,6 +317,8 @@ public class OverviewView
       boolean hasSelection = count > 0;
       batchToolbar.setVisible(hasSelection);
       selectedCountLabel.setText(getTranslation("overview.selected.count", count));
+      // Compare button is only useful when exactly 2 images are selected
+      compareBtn.setVisible(count == 2);
     });
 
     // Thumbnail
@@ -312,25 +329,23 @@ public class OverviewView
     grid.addColumn(ImageAsset::getOriginalFilename)
         .setHeader(getTranslation("overview.col.filename")).setFlexGrow(2).setSortable(true);
 
-    // Category (editable — fine-grained SourceCategory with user-friendly labels)
+    // Category (editable — tree-structured chooser dialog)
     grid.addComponentColumn(asset -> {
       PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
       SourceCategory cur = ps.findAnalysis(asset.getId()).map(SemanticAnalysis::getSourceCategory).orElse(null);
-      if (cur == null) return new Span("\u2014");
-      Select<SourceCategory> sel = new Select<>();
-      sel.setItems(SourceCategory.values());
-      sel.setValue(cur);
-      sel.setItemLabelGenerator(CategoryRegistry::getUserLabel);
-      sel.getStyle().set("font-size", "var(--lumo-font-size-s)");
-      sel.addValueChangeListener(e -> {
-        if (e.getValue() != null && e.getValue() != e.getOldValue()) {
-          ps.updateSourceCategory(asset.getId(), e.getValue());
-          showNotification(
-              getTranslation("overview.category.updated",
-                             CategoryRegistry.getUserLabel(e.getValue())), true);
-        }
-      });
-      return sel;
+      String label = cur != null ? CategoryRegistry.getUserLabel(cur) : "\u2014";
+      Button chooseBtn = new Button(label);
+      chooseBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+      chooseBtn.getStyle().set("font-size", "var(--lumo-font-size-s)");
+      chooseBtn.addClickListener(e ->
+                                     new CategoryTreeChooserDialog(selected -> {
+                                       ps.updateSourceCategory(asset.getId(), selected);
+                                       showNotification(
+                                           getTranslation("overview.category.updated",
+                                                          CategoryRegistry.getUserLabel(selected)), true);
+                                       loadData();
+                                     }).open());
+      return chooseBtn;
     }).setHeader(getTranslation("overview.col.category")).setFlexGrow(1);
 
     // Description
@@ -382,15 +397,29 @@ public class OverviewView
   // Tile rendering
   // -------------------------------------------------------------------------
 
+  /**
+   * Full reset: clears all tile cards and renders the first {@link #PAGE_SIZE} items.
+   * Call this whenever the displayed list changes (filter change, mode toggle, data reload).
+   * For "Load more" use {@link #appendTiles} instead.
+   */
   private void renderTiles(List<ImageAsset> images) {
     tileContainer.removeAll();
-    int limit = currentPage * PAGE_SIZE;
-    int total = images.size();
-    List<ImageAsset> visible = images.subList(0, Math.min(limit, total));
-    for (ImageAsset asset : visible) {
-      tileContainer.add(buildTileCard(asset));
+    renderedTileCount = 0;
+    appendTiles(images, PAGE_SIZE);
+  }
+
+  /**
+   * Appends up to {@code count} new tile cards starting at {@link #renderedTileCount}.
+   * Does NOT clear previously rendered cards — call {@link #renderTiles} for that.
+   */
+  private void appendTiles(List<ImageAsset> images, int count) {
+    int from = renderedTileCount;
+    int to = Math.min(from + count, images.size());
+    for (int i = from; i < to; i++) {
+      tileContainer.add(buildTileCard(images.get(i)));
     }
-    loadMoreTilesBtn.setVisible(total > limit);
+    renderedTileCount = to;
+    loadMoreTilesBtn.setVisible(renderedTileCount < images.size());
   }
 
   private Div buildTileCard(ImageAsset asset) {
@@ -440,7 +469,8 @@ public class OverviewView
     info.add(name);
 
     // Category — shows user-friendly label (e.g. "Landscape") and coarse group
-    SourceCategory cat = ps.findAnalysis(asset.getId()).map(SemanticAnalysis::getSourceCategory).orElse(null);
+    SemanticAnalysis tileAnalysis = ps.findAnalysis(asset.getId()).orElse(null);
+    SourceCategory cat = tileAnalysis != null ? tileAnalysis.getSourceCategory() : null;
     if (cat != null) {
       String catDisplay = CategoryRegistry.getUserLabel(cat)
           + " \u00b7 " + CategoryRegistry.getGroupLabel(cat);
@@ -448,6 +478,22 @@ public class OverviewView
       catSpan.getStyle().set("font-size", "var(--lumo-font-size-xs)")
           .set("color", "var(--lumo-secondary-text-color)");
       info.add(catSpan);
+    }
+
+    // Secondary categories — compact comma-separated list
+    if (tileAnalysis != null) {
+      java.util.List<SourceCategory> secondary = tileAnalysis.getSecondaryCategories();
+      if (secondary != null && !secondary.isEmpty()) {
+        String secDisplay = secondary.stream()
+            .map(CategoryRegistry::getUserLabel)
+            .collect(java.util.stream.Collectors.joining(", "));
+        Span secSpan = new Span(secDisplay);
+        secSpan.getStyle()
+            .set("font-size", "var(--lumo-font-size-xs)")
+            .set("color", "var(--lumo-tertiary-text-color)")
+            .set("font-style", "italic");
+        info.add(secSpan);
+      }
     }
 
     // Location
@@ -651,6 +697,17 @@ public class OverviewView
     new DetailDialog(asset, analysis, assess, location).open();
   }
 
+  /**
+   * Opens a side-by-side {@link ComparisonDialog} for the exactly two currently selected images.
+   * Called when the "Compare" button in the batch toolbar is clicked.
+   */
+  private void openComparisonDialog() {
+    Set<ImageAsset> selected = grid.getSelectedItems();
+    if (selected.size() != 2) return; // guard — button should only appear with exactly 2
+    List<ImageAsset> pair = new java.util.ArrayList<>(selected);
+    new ComparisonDialog(pair.get(0), pair.get(1)).open();
+  }
+
   private void confirmDelete(ImageAsset asset) {
     Dialog dialog = new Dialog();
     dialog.setHeaderTitle(getTranslation("overview.delete.title"));
@@ -680,10 +737,10 @@ public class OverviewView
 
   private void softDeleteImage(ImageAsset asset) {
     PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
-    ps.softDeleteImage(asset.getId(), "User deleted from overview");
+    ps.softDeleteImage(asset.getId(), getTranslation("overview.archive.reason.single"));
     ServiceRegistry.getInstance().getAuditService()
         .log("SOFT_DELETE", asset.getId(), asset.getOriginalFilename(), "User archived from overview");
-    showNotification(getTranslation("overview.archive") + ": " + asset.getOriginalFilename(), false);
+    showNotification(getTranslation("overview.archived", asset.getOriginalFilename()), false);
     loadData();
   }
 
@@ -727,8 +784,7 @@ public class OverviewView
 
   private void loadData() {
     allImages = ServiceRegistry.getInstance().getPersistenceService().findAllImages();
-    currentPage = 1;
-    applyFilter();
+    applyFilter();  // renderTiles() inside handles the full reset
   }
 
   @Override

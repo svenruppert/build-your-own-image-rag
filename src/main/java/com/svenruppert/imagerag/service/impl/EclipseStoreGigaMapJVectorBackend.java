@@ -4,22 +4,14 @@ import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.dto.VectorSearchHit;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.VectorIndexService;
-import io.github.jbellis.jvector.graph.GraphIndexBuilder;
-import io.github.jbellis.jvector.graph.GraphSearcher;
-import io.github.jbellis.jvector.graph.ImmutableGraphIndex;
-import io.github.jbellis.jvector.graph.RandomAccessVectorValues;
-import io.github.jbellis.jvector.graph.SearchResult;
+import io.github.jbellis.jvector.graph.*;
 import io.github.jbellis.jvector.util.Bits;
 import io.github.jbellis.jvector.vector.VectorSimilarityFunction;
 import io.github.jbellis.jvector.vector.VectorizationProvider;
 import io.github.jbellis.jvector.vector.types.VectorFloat;
 import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * Vector-search backend that combines two responsibilities:
@@ -67,13 +59,21 @@ public class EclipseStoreGigaMapJVectorBackend
     implements VectorIndexService, HasLogger {
 
   // ── JVector 4.x HNSW tuning parameters ───────────────────────────────────
-  /** Max graph connections per node (DiskANN M). Higher = better recall, more RAM. */
+  /**
+   * Max graph connections per node (DiskANN M). Higher = better recall, more RAM.
+   */
   private static final int HNSW_M = 16;
-  /** Construction beam width (efConstruction). Higher = better quality, slower build. */
+  /**
+   * Construction beam width (efConstruction). Higher = better quality, slower build.
+   */
   private static final int HNSW_EF_CONSTRUCTION = 100;
-  /** DiskANN neighborOverflow — candidate pool multiplier during build (1.2 = typical). */
+  /**
+   * DiskANN neighborOverflow — candidate pool multiplier during build (1.2 = typical).
+   */
   private static final float HNSW_NEIGHBOR_OVERFLOW = 1.2f;
-  /** DiskANN alpha — long-range pruning parameter (1.2 = typical production value). */
+  /**
+   * DiskANN alpha — long-range pruning parameter (1.2 = typical production value).
+   */
   private static final float HNSW_ALPHA = 1.2f;
 
   /**
@@ -81,18 +81,18 @@ public class EclipseStoreGigaMapJVectorBackend
    * Selects the best float-vector implementation at JVM startup (Panama SIMD or plain array).
    */
   private static final VectorTypeSupport VT = VectorizationProvider.getInstance()
-                                                                    .getVectorTypeSupport();
+      .getVectorTypeSupport();
 
   private final PersistenceService persistenceService;
-
+  /**
+   * Guards concurrent rebuilds so only one runs at a time.
+   */
+  private final Object rebuildLock = new Object();
   /**
    * Live JVector index snapshot; replaced atomically after each rebuild.
    * {@code null} before the first successful build (empty store).
    */
   private volatile JVectorIndexSnapshot currentIndex = null;
-
-  /** Guards concurrent rebuilds so only one runs at a time. */
-  private final Object rebuildLock = new Object();
 
   public EclipseStoreGigaMapJVectorBackend(PersistenceService persistenceService) {
     this.persistenceService = persistenceService;
@@ -156,7 +156,7 @@ public class EclipseStoreGigaMapJVectorBackend
     Map<UUID, float[]> stored = persistenceService.findAllRawVectors();
     if (stored.isEmpty()) {
       logger().info("EclipseStore GigaMap raw-vector store is empty — JVector index not built. "
-                    + "Vectors will be indexed as images are processed.");
+                        + "Vectors will be indexed as images are processed.");
       return;
     }
     logger().info("Building JVector 4.x HNSW index from {} vectors in EclipseStore...",
@@ -209,23 +209,25 @@ public class EclipseStoreGigaMapJVectorBackend
    */
   private static class JVectorIndexSnapshot {
 
-    /** JVector 4.x: getGraph() return type is ImmutableGraphIndex. */
+    /**
+     * JVector 4.x: getGraph() return type is ImmutableGraphIndex.
+     */
     private final ImmutableGraphIndex graph;
-    /** Maps JVector node-int-id → application UUID. Index = node ID. */
+    /**
+     * Maps JVector node-int-id → application UUID. Index = node ID.
+     */
     private final List<UUID> nodeToUuid;
-    /** Pre-converted JVector float vectors in node-ID order, reused for search scoring. */
+    /**
+     * Pre-converted JVector float vectors in node-ID order, reused for search scoring.
+     */
     private final FloatVectorValues ravv;
 
     private JVectorIndexSnapshot(ImmutableGraphIndex graph,
-                                  List<UUID> nodeToUuid,
-                                  FloatVectorValues ravv) {
+                                 List<UUID> nodeToUuid,
+                                 FloatVectorValues ravv) {
       this.graph = graph;
       this.nodeToUuid = nodeToUuid;
       this.ravv = ravv;
-    }
-
-    boolean isEmpty() {
-      return nodeToUuid.isEmpty();
     }
 
     /**
@@ -263,6 +265,10 @@ public class EclipseStoreGigaMapJVectorBackend
       // getGraph() return type in JVector 4.x is ImmutableGraphIndex
       ImmutableGraphIndex graph = builder.getGraph();
       return new JVectorIndexSnapshot(graph, uuids, ravv);
+    }
+
+    boolean isEmpty() {
+      return nodeToUuid.isEmpty();
     }
 
     /**
@@ -314,7 +320,8 @@ public class EclipseStoreGigaMapJVectorBackend
    * {@link VectorFloat} object created via {@link VectorizationProvider}, so
    * {@link #isValueShared()} returns {@code false}.
    */
-  private static class FloatVectorValues implements RandomAccessVectorValues {
+  private static class FloatVectorValues
+      implements RandomAccessVectorValues {
 
     private final List<VectorFloat<?>> vectors;
     private final int dimension;
@@ -334,7 +341,9 @@ public class EclipseStoreGigaMapJVectorBackend
       return dimension;
     }
 
-    /** Returns the pre-converted {@link VectorFloat} for {@code nodeId}. */
+    /**
+     * Returns the pre-converted {@link VectorFloat} for {@code nodeId}.
+     */
     @Override
     public VectorFloat<?> getVector(int nodeId) {
       return vectors.get(nodeId);

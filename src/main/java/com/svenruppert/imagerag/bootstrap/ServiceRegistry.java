@@ -13,7 +13,9 @@ import com.svenruppert.imagerag.service.impl.*;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,7 +42,9 @@ public class ServiceRegistry
   private final SensitivityAssessmentService sensitivityAssessmentService;
   private final EmbeddingService embeddingService;
   private final VectorIndexService vectorIndexService;
-  /** Which vector backend was selected at startup — exposed for diagnostics / UI. */
+  /**
+   * Which vector backend was selected at startup — exposed for diagnostics / UI.
+   */
   private final VectorBackendType vectorBackendType;
   private final KeywordIndexService keywordIndexService;
   private final QueryUnderstandingService queryUnderstandingService;
@@ -48,6 +52,8 @@ public class ServiceRegistry
   private final ReprocessingService reprocessingService;
   private final IngestionPipeline ingestionPipeline;
   private final AuditService auditService;
+  private final com.svenruppert.imagerag.service.TaxonomySuggestionService taxonomySuggestionService;
+  private final com.svenruppert.imagerag.service.TaxonomyAnalysisService taxonomyAnalysisService;
 
   /**
    * Shared executor for background search tasks across all UI sessions.
@@ -106,14 +112,18 @@ public class ServiceRegistry
       case GIGAMAP_JVECTOR -> {
         var jvectorBackend = new EclipseStoreGigaMapJVectorBackend(persistenceService);
         vectorIndexService = jvectorBackend;
-        // If no raw vectors have been persisted yet (first run with this backend,
-        // or first switch from IN_MEMORY), migrate by re-embedding from analysis text.
         if (jvectorBackend.isEmpty() && !persistenceService.findAllIndexedImageIds().isEmpty()) {
+          // First run with this backend — migrate by re-embedding from analysis text.
           logger().info("GIGAMAP_JVECTOR backend: no persisted raw vectors found "
-                        + "— running one-time migration by re-embedding existing analyses.");
+                            + "— running one-time migration by re-embedding existing analyses.");
           migrateToGigaMapJVector(jvectorBackend);
+        } else if (!persistenceService.findAllIndexedImageIds().isEmpty()) {
+          // Subsequent startups: detect if the configured embedding model changed since
+          // vectors were last written.  Mixed-model vectors would produce nonsensical
+          // search results, so we proactively re-embed before building the HNSW index.
+          migrateStaleVectors();
         }
-        // Load persisted vectors and build the JVector HNSW index (no Ollama needed).
+        // Build the JVector HNSW index from (possibly freshly updated) raw vectors.
         jvectorBackend.initialize();
       }
       default -> {
@@ -161,6 +171,13 @@ public class ServiceRegistry
     // Reprocessing service — thin facade that delegates to the pipeline for visibility.
     // Reprocessing jobs appear in the Pipeline view just like upload jobs.
     reprocessingService = new ReprocessingServiceImpl(ingestionPipeline, persistenceService);
+
+    // Taxonomy maintenance services
+    taxonomySuggestionService =
+        new com.svenruppert.imagerag.service.impl.TaxonomySuggestionServiceImpl(persistenceService);
+    taxonomyAnalysisService =
+        new com.svenruppert.imagerag.service.impl.TaxonomyAnalysisServiceImpl(
+            persistenceService, ollamaClient, ollamaConfig);
 
     logger().info("ServiceRegistry initialized. {} images in store.",
                   persistenceService.findAllImages().size());
@@ -304,6 +321,11 @@ public class ServiceRegistry
           // would trigger a full rebuild after every image; here we batch-persist
           // and let initialize() build the index once at the end.
           persistenceService.saveRawVector(imageId, vector);
+          // Record which model produced this vector so migrateStaleVectors() can
+          // detect future model changes and re-embed before building the HNSW index.
+          var entry = new com.svenruppert.imagerag.domain.VectorEntry(
+              imageId, ollamaConfig.getEmbeddingModel(), vector.length, Instant.now());
+          persistenceService.saveVectorEntry(imageId, entry);
           migrated++;
         }
       } catch (Exception e) {
@@ -312,6 +334,63 @@ public class ServiceRegistry
     }
     logger().info("Migration complete: {}/{} vectors written to EclipseStore GigaMap",
                   migrated, imageIds.size());
+  }
+
+  /**
+   * Detects persisted {@link com.svenruppert.imagerag.domain.VectorEntry} objects whose
+   * {@code embeddingModel} field differs from the currently configured model
+   * ({@link com.svenruppert.imagerag.ollama.OllamaConfig#getEmbeddingModel()}).
+   *
+   * <p>If any mismatch is found, <em>all</em> images are re-embedded and their raw vectors
+   * and {@code VectorEntry} metadata are updated in EclipseStore before the caller builds
+   * the JVector HNSW index.  This prevents a scenario where stored vectors were produced
+   * by (e.g.) {@code nomic-embed-text} but queries are embedded with {@code bge-m3},
+   * which would yield garbage search results.
+   *
+   * <p>Called only for the {@link com.svenruppert.imagerag.domain.enums.VectorBackendType#GIGAMAP_JVECTOR}
+   * backend at startup, after the backend object is created but before
+   * {@link EclipseStoreGigaMapJVectorBackend#initialize()} is called.
+   */
+  private void migrateStaleVectors() {
+    String configuredModel = ollamaConfig.getEmbeddingModel();
+    boolean mismatch = persistenceService.findAllIndexedImageIds().stream()
+        .anyMatch(id -> persistenceService.findVectorEntry(id)
+            .map(e -> !Objects.equals(configuredModel, e.getEmbeddingModel()))
+            .orElse(false));
+
+    if (!mismatch) {
+      logger().info("Embedding model '{}' matches all stored vectors — no migration needed.",
+                    configuredModel);
+      return;
+    }
+
+    logger().warn("EMBEDDING MODEL MISMATCH: configured model is '{}' but some persisted "
+                      + "vectors were created by a different model. "
+                      + "Re-embedding all images before building HNSW index...", configuredModel);
+
+    var imageIds = persistenceService.findAllIndexedImageIds();
+    int migrated = 0;
+    for (var imageId : imageIds) {
+      try {
+        var analysisOpt = persistenceService.findAnalysis(imageId);
+        if (analysisOpt.isEmpty()) continue;
+        String text = buildEmbeddingText(analysisOpt.get());
+        float[] vector = embeddingService.embed(text);
+        if (vector != null && vector.length > 0) {
+          persistenceService.saveRawVector(imageId, vector);
+          // Update VectorEntry so the model is recorded correctly.
+          var entry = new com.svenruppert.imagerag.domain.VectorEntry(
+              imageId, configuredModel, vector.length, Instant.now());
+          persistenceService.saveVectorEntry(imageId, entry);
+          migrated++;
+        }
+      } catch (Exception e) {
+        logger().warn("Could not re-embed image {} during stale-vector migration: {}",
+                      imageId, e.getMessage());
+      }
+    }
+    logger().info("Stale-vector migration complete: {}/{} images re-embedded with model '{}'",
+                  migrated, imageIds.size(), configuredModel);
   }
 
   private void restoreKeywordIndex() {
@@ -325,6 +404,13 @@ public class ServiceRegistry
         String summary = analysis != null ? analysis.getSummary() : null;
         List<String> tags = analysis != null && analysis.getTags() != null ? analysis.getTags() : List.of();
         String catLabel = analysis != null && analysis.getSourceCategory() != null ? analysis.getSourceCategory().name() : null;
+        // Include secondary categories so keyword search can find images via any category.
+        if (analysis != null && analysis.getSecondaryCategories() != null && !analysis.getSecondaryCategories().isEmpty()) {
+          String secondaryCats = analysis.getSecondaryCategories().stream()
+              .map(sc -> sc.name())
+              .collect(java.util.stream.Collectors.joining(" "));
+          catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
+        }
         String locText = location != null ? location.toHumanReadable() : null;
         String ocrText = ocr != null ? ocr.getExtractedText() : null;
         keywordIndexService.index(asset.getId(), asset.getOriginalFilename(), summary,
@@ -391,15 +477,71 @@ public class ServiceRegistry
 
   /**
    * Completely removes an image from every data store:
-   * in-memory vector index, file system, and EclipseStore.
+   * in-memory vector index, keyword index, image file, preview cache, and EclipseStore.
+   *
+   * <p>This is a permanent, irreversible operation.  The caller (UI) is responsible
+   * for confirming with the user before invoking this method.
    */
   public void deleteImage(UUID imageId)
       throws IOException {
     vectorIndexService.remove(imageId);
     keywordIndexService.remove(imageId);
+    previewService.deletePreviewCache(imageId);
     imageStorageService.delete(imageId);
     persistenceService.deleteImage(imageId);
-    logger().info("Fully deleted image imageId={}", imageId);
+    logger().info("Permanently deleted image imageId={}", imageId);
+  }
+
+  /**
+   * Restores a previously archived (soft-deleted) image to the active dataset.
+   *
+   * <ol>
+   *   <li>Clears the {@code deleted} flag and the {@code deletedAt}/{@code deletedReason}
+   *       fields in EclipseStore.</li>
+   *   <li>Re-approves the image if its stored sensitivity assessment is SAFE; otherwise
+   *       leaves it locked (requires manual approval in the Overview view).</li>
+   *   <li>Re-adds the image to the keyword (BM25) index, which may have been missing
+   *       if the application was restarted while the image was archived.</li>
+   * </ol>
+   *
+   * <p>The in-memory vector index entry is preserved across archive/restore cycles because
+   * soft-delete does not call {@link VectorIndexService#remove}.
+   *
+   * @param imageId the image to restore; must currently be in archived state
+   */
+  public void restoreImage(UUID imageId) {
+    persistenceService.restoreImage(imageId);  // clears flags, conditionally re-approves
+
+    // Re-index in keyword index: the Lucene index excludes archived images after a
+    // restart (restoreKeywordIndex uses findAllImages which filters deleted).
+    // Re-indexing here is idempotent and ensures the image is always searchable after restore.
+    persistenceService.findImage(imageId).ifPresent(asset -> {
+      try {
+        var analysis = persistenceService.findAnalysis(imageId).orElse(null);
+        var location = persistenceService.findLocation(imageId).orElse(null);
+        var ocr = persistenceService.findOcrResult(imageId).orElse(null);
+        String summary = analysis != null ? analysis.getSummary() : null;
+        List<String> tags = analysis != null && analysis.getTags() != null
+            ? analysis.getTags() : List.of();
+        String catLabel = analysis != null && analysis.getSourceCategory() != null
+            ? analysis.getSourceCategory().name() : null;
+        if (analysis != null && analysis.getSecondaryCategories() != null
+            && !analysis.getSecondaryCategories().isEmpty()) {
+          String secondaryCats = analysis.getSecondaryCategories().stream()
+              .map(sc -> sc.name())
+              .collect(java.util.stream.Collectors.joining(" "));
+          catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
+        }
+        String locText = location != null ? location.toHumanReadable() : null;
+        String ocrText = ocr != null ? ocr.getExtractedText() : null;
+        keywordIndexService.index(imageId, asset.getOriginalFilename(), summary,
+                                  tags, catLabel, locText, ocrText);
+        logger().info("Re-indexed keyword entry for restored image imageId={}", imageId);
+      } catch (Exception e) {
+        logger().warn("Could not re-index keyword entry for restored image {}: {}",
+                      imageId, e.getMessage());
+      }
+    });
   }
 
   /**
@@ -509,5 +651,90 @@ public class ServiceRegistry
 
   public AuditService getAuditService() {
     return auditService;
+  }
+
+  public com.svenruppert.imagerag.service.TaxonomySuggestionService getTaxonomySuggestionService() {
+    return taxonomySuggestionService;
+  }
+
+  public com.svenruppert.imagerag.service.TaxonomyAnalysisService getTaxonomyAnalysisService() {
+    return taxonomyAnalysisService;
+  }
+
+  // -------------------------------------------------------------------------
+  // Vector index rebuild — explicit maintenance action triggered from the UI
+  // -------------------------------------------------------------------------
+
+  /**
+   * Rebuilds the active vector index from currently persisted data.
+   *
+   * <ul>
+   *   <li>For the {@link VectorBackendType#GIGAMAP_JVECTOR} backend: re-embeds all
+   *       analysed images, persists the raw vectors to EclipseStore (replacing any
+   *       previously stored ones), and rebuilds the in-memory JVector HNSW index.
+   *       This is the correct path after switching the embedding model.</li>
+   *   <li>For the {@link VectorBackendType#IN_MEMORY} backend: clears the in-memory
+   *       store and re-embeds all analysed images from Ollama.</li>
+   * </ul>
+   *
+   * <p>This method blocks until the rebuild is complete.  Call it on a background
+   * thread (the Pipeline view does this via {@link Thread#ofVirtual()}).
+   */
+  public void rebuildVectorIndex() {
+    logger().info("Vector index rebuild started (backend={})", vectorBackendType);
+    int rebuilt = 0;
+    var imageIds = persistenceService.findAllIndexedImageIds();
+
+    String activeModel = ollamaConfig.getEmbeddingModel();
+
+    if (vectorBackendType == VectorBackendType.GIGAMAP_JVECTOR) {
+      // Re-embed every image, persist raw vectors and update VectorEntry metadata.
+      // The HNSW index is rebuilt once at the end via initialize().
+      for (var imageId : imageIds) {
+        try {
+          var analysisOpt = persistenceService.findAnalysis(imageId);
+          if (analysisOpt.isEmpty()) continue;
+          String text = buildEmbeddingText(analysisOpt.get());
+          float[] vector = embeddingService.embed(text);
+          if (vector != null && vector.length > 0) {
+            persistenceService.saveRawVector(imageId, vector);
+            // Keep VectorEntry metadata in sync so the model field is always accurate.
+            var entry = new com.svenruppert.imagerag.domain.VectorEntry(
+                imageId, activeModel, vector.length, Instant.now());
+            persistenceService.saveVectorEntry(imageId, entry);
+            rebuilt++;
+          }
+        } catch (Exception e) {
+          logger().warn("Could not re-embed image {} during vector rebuild: {}",
+                        imageId, e.getMessage());
+        }
+      }
+      // Rebuild the in-memory HNSW index from the freshly persisted vectors.
+      ((EclipseStoreGigaMapJVectorBackend) vectorIndexService).initialize();
+    } else {
+      // IN_MEMORY: replace in-memory store by re-embedding from Ollama.
+      for (var imageId : imageIds) {
+        try {
+          var analysisOpt = persistenceService.findAnalysis(imageId);
+          if (analysisOpt.isEmpty()) continue;
+          String text = buildEmbeddingText(analysisOpt.get());
+          float[] vector = embeddingService.embed(text);
+          if (vector != null && vector.length > 0) {
+            vectorIndexService.index(imageId, vector);
+            // Update VectorEntry metadata so the recorded model stays current.
+            var entry = new com.svenruppert.imagerag.domain.VectorEntry(
+                imageId, activeModel, vector.length, Instant.now());
+            persistenceService.saveVectorEntry(imageId, entry);
+            rebuilt++;
+          }
+        } catch (Exception e) {
+          logger().warn("Could not re-embed image {} during vector rebuild: {}",
+                        imageId, e.getMessage());
+        }
+      }
+    }
+
+    logger().info("Vector index rebuild complete — {} / {} images indexed",
+                  rebuilt, imageIds.size());
   }
 }

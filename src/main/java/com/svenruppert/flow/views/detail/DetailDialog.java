@@ -3,6 +3,7 @@ package com.svenruppert.flow.views.detail;
 import com.svenruppert.flow.views.shared.MarkdownRenderer;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.*;
+import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -20,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Optional;
 
 public class DetailDialog
@@ -164,6 +166,62 @@ public class DetailDialog
     form.addFormItem(new Span(bool(analysis.getContainsReadableText())), "Readable Text");
     layout.add(form);
 
+    // ── Secondary categories — displayed as removable badges + "Add" button ──
+    layout.add(new H4(getTranslation("detail.analysis.secondary.categories")));
+    Div secCatsContainer = new Div();
+    secCatsContainer.getStyle().set("display", "flex").set("flex-wrap", "wrap")
+        .set("gap", "var(--lumo-space-xs)").set("align-items", "center");
+    refreshSecondaryBadges(secCatsContainer, analysis);
+
+    Button addSecBtn = new Button("+", e ->
+        new CategoryTreeChooserDialog(chosen -> {
+          var cats = new ArrayList<>(analysis.getSecondaryCategories());
+          if (!cats.contains(chosen) && !chosen.equals(analysis.getSourceCategory())) {
+            cats.add(chosen);
+            ServiceRegistry.getInstance().getPersistenceService()
+                .updateSecondaryCategories(analysis.getImageId(), cats);
+            analysis.setSecondaryCategories(cats);
+            refreshSecondaryBadges(secCatsContainer, analysis);
+          }
+        }).open());
+    addSecBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+    addSecBtn.getElement().setAttribute("title",
+                                        getTranslation("detail.analysis.secondary.add"));
+
+    HorizontalLayout secRow = new HorizontalLayout(secCatsContainer, addSecBtn);
+    secRow.setAlignItems(com.vaadin.flow.component.orderedlayout.FlexComponent.Alignment.CENTER);
+    secRow.setSpacing(true);
+    layout.add(secRow);
+
+    // ── Category confidence ───────────────────────────────────────────────────
+    CategoryConfidence cc = analysis.getCategoryConfidence();
+    if (cc != null) {
+      layout.add(new H4(getTranslation("detail.analysis.confidence.heading")));
+      Span primaryScore = new Span(String.format("%.0f%%", cc.getPrimaryScore() * 100));
+      primaryScore.getStyle().set("font-weight", "bold");
+      String color = cc.getPrimaryScore() >= 0.7 ? "var(--lumo-success-color)"
+          : cc.getPrimaryScore() >= 0.5 ? "var(--lumo-warning-color)"
+            : "var(--lumo-error-color)";
+      primaryScore.getStyle().set("color", color);
+      var paragraph = new Paragraph(getTranslation("detail.analysis.confidence.primary",
+                                                   CategoryRegistry.getUserLabel(cc.getPrimaryCategory())) + ": ");
+      paragraph.add(primaryScore);
+      layout.add(paragraph);
+      if (!cc.getAlternatives().isEmpty()) {
+        Div altRow = new Div();
+        altRow.getStyle().set("display", "flex").set("flex-wrap", "wrap")
+            .set("gap", "var(--lumo-space-xs)");
+        for (CategoryCandidate alt : cc.getAlternatives()) {
+          Span chip = new Span(CategoryRegistry.getUserLabel(alt.getCategory())
+                                   + " " + String.format("(%.0f%%)", alt.getScore() * 100));
+          chip.getElement().getThemeList().add("badge contrast");
+          altRow.add(chip);
+        }
+        layout.add(new Paragraph(getTranslation("detail.analysis.confidence.alternatives") + ":"),
+                   altRow);
+      }
+    }
+
     if (analysis.getTags() != null && !analysis.getTags().isEmpty()) {
       HorizontalLayout tags = new HorizontalLayout();
       tags.getStyle().set("flex-wrap", "wrap");
@@ -263,6 +321,8 @@ public class DetailDialog
     String visionModel = "\u2014";
     String semanticModel = "\u2014";
     String analysisTime = "\u2014";
+    String visionPromptVersion = "\u2014";
+    String semanticPromptVersion = "\u2014";
 
     if (analysis != null) {
       if (analysis.getVisionModel() != null) {
@@ -274,12 +334,22 @@ public class DetailDialog
       if (analysis.getAnalysisTimestamp() != null) {
         analysisTime = DATE_FMT.format(analysis.getAnalysisTimestamp());
       }
+      if (analysis.getVisionPromptVersion() != null) {
+        visionPromptVersion = analysis.getVisionPromptVersion();
+      }
+      if (analysis.getSemanticPromptVersion() != null) {
+        semanticPromptVersion = analysis.getSemanticPromptVersion();
+      }
     }
 
     form.addFormItem(new Span(visionModel),
                      getTranslation("detail.provenance.vision.model"));
+    form.addFormItem(new Span(visionPromptVersion),
+                     getTranslation("detail.provenance.vision.prompt.version"));
     form.addFormItem(new Span(semanticModel),
                      getTranslation("detail.provenance.semantic.model"));
+    form.addFormItem(new Span(semanticPromptVersion),
+                     getTranslation("detail.provenance.semantic.prompt.version"));
     form.addFormItem(new Span(analysisTime),
                      getTranslation("detail.provenance.analysis.time"));
     layout.add(form);
@@ -304,6 +374,50 @@ public class DetailDialog
     }
 
     return layout;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Secondary category helpers
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Clears and repopulates {@code container} with one badge per secondary category.
+   * Each badge has an "×" button that removes the category from the analysis and persists.
+   */
+  private void refreshSecondaryBadges(Div container, SemanticAnalysis analysis) {
+    container.removeAll();
+    var cats = analysis.getSecondaryCategories();
+    if (cats.isEmpty()) {
+      Span none = new Span("—");
+      none.getStyle().set("color", "var(--lumo-secondary-text-color)")
+          .set("font-size", "var(--lumo-font-size-s)");
+      container.add(none);
+      return;
+    }
+    for (SourceCategory sc : cats) {
+      Span label = new Span(CategoryRegistry.getUserLabel(sc));
+      label.getStyle().set("font-size", "var(--lumo-font-size-s)");
+
+      Button removeBtn = new Button("×");
+      removeBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY,
+                                 ButtonVariant.LUMO_ERROR);
+      removeBtn.getStyle().set("min-width", "unset").set("padding", "0 4px");
+      removeBtn.addClickListener(e -> {
+        var updated = new ArrayList<>(analysis.getSecondaryCategories());
+        updated.remove(sc);
+        ServiceRegistry.getInstance().getPersistenceService()
+            .updateSecondaryCategories(analysis.getImageId(), updated);
+        analysis.setSecondaryCategories(updated);
+        refreshSecondaryBadges(container, analysis);
+      });
+
+      Div badge = new Div(label, removeBtn);
+      badge.getElement().getThemeList().add("badge");
+      badge.getElement().getThemeList().add("contrast");
+      badge.getStyle().set("display", "flex").set("align-items", "center")
+          .set("gap", "2px").set("padding-right", "2px");
+      container.add(badge);
+    }
   }
 
   // ---------------------------------------------------------------------------

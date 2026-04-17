@@ -35,6 +35,34 @@ public class SemanticAnalysis {
    */
   private java.time.Instant analysisTimestamp;
 
+  /**
+   * Version identifier of the vision/OCR prompt template that produced this analysis.
+   * Allows operators to tell which prompt version was active when the image was analysed.
+   */
+  private String visionPromptVersion;
+
+  /**
+   * Version identifier of the semantic-derivation prompt template.
+   */
+  private String semanticPromptVersion;
+
+  /**
+   * Secondary / additional category assignments beyond the primary {@link #sourceCategory}.
+   * An image that is primarily a "Portrait" but also shows a "Park / Garden" in the
+   * background would have {@code sourceCategory=PORTRAIT} and
+   * {@code secondaryCategories=[PARK_GARDEN]}.
+   */
+  private List<SourceCategory> secondaryCategories = new ArrayList<>();
+
+  /**
+   * Category confidence data produced during semantic derivation (prompt v3+) or
+   * during a taxonomy-maintenance analysis pass.
+   *
+   * <p>Null for images analysed before confidence tracking was introduced.
+   * Not declared final — EclipseStore Unsafe reconstruction compatibility.
+   */
+  private CategoryConfidence categoryConfidence;
+
   public SemanticAnalysis() {
   }
 
@@ -156,5 +184,37 @@ public class SemanticAnalysis {
 
   public void setAnalysisTimestamp(java.time.Instant analysisTimestamp) {
     this.analysisTimestamp = analysisTimestamp;
+  }
+
+  public String getVisionPromptVersion() {
+    return visionPromptVersion;
+  }
+
+  public void setVisionPromptVersion(String visionPromptVersion) {
+    this.visionPromptVersion = visionPromptVersion;
+  }
+
+  public String getSemanticPromptVersion() {
+    return semanticPromptVersion;
+  }
+
+  public void setSemanticPromptVersion(String semanticPromptVersion) {
+    this.semanticPromptVersion = semanticPromptVersion;
+  }
+
+  public List<SourceCategory> getSecondaryCategories() {
+    return secondaryCategories != null ? secondaryCategories : new ArrayList<>();
+  }
+
+  public void setSecondaryCategories(List<SourceCategory> secondaryCategories) {
+    this.secondaryCategories = secondaryCategories != null ? secondaryCategories : new ArrayList<>();
+  }
+
+  public CategoryConfidence getCategoryConfidence() {
+    return categoryConfidence;
+  }
+
+  public void setCategoryConfidence(CategoryConfidence categoryConfidence) {
+    this.categoryConfidence = categoryConfidence;
   }
 }

@@ -22,7 +22,9 @@ package com.svenruppert.imagerag.domain.enums;
  */
 public enum VectorBackendType {
 
-  /** In-memory cosine similarity — existing implementation. */
+  /**
+   * In-memory cosine similarity — existing implementation.
+   */
   IN_MEMORY,
 
   /**
@@ -31,13 +33,19 @@ public enum VectorBackendType {
    */
   GIGAMAP_JVECTOR;
 
-  /** Configuration key used to select the backend at startup. */
+  /**
+   * Configuration key used to select the backend at startup.
+   */
   public static final String PROPERTY_KEY = "vector.backend";
 
-  /** Property value for {@link #IN_MEMORY}. */
+  /**
+   * Property value for {@link #IN_MEMORY}.
+   */
   public static final String VALUE_IN_MEMORY = "in-memory";
 
-  /** Property value for {@link #GIGAMAP_JVECTOR}. */
+  /**
+   * Property value for {@link #GIGAMAP_JVECTOR}.
+   */
   public static final String VALUE_GIGAMAP_JVECTOR = "gigamap-jvector";
 
   /**
@@ -52,7 +60,7 @@ public enum VectorBackendType {
    */
   public static VectorBackendType fromConfig() {
     String raw = com.svenruppert.imagerag.bootstrap.AppConfig.getInstance()
-                                                             .getVectorBackend();
+        .getVectorBackend();
     return switch (raw) {
       case VALUE_GIGAMAP_JVECTOR -> GIGAMAP_JVECTOR;
       default -> IN_MEMORY;

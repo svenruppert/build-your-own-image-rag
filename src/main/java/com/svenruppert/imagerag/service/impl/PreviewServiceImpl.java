@@ -16,25 +16,16 @@ import java.util.UUID;
 /**
  * Disk-caching implementation of {@link PreviewService}.
  *
- * <p>Tile previews are generated as JPEG files ({@code <uuid>_tile.jpg}) inside
- * {@code _data_images_previews}.  The first call for a given image generates the
- * file; subsequent calls reuse the cached file on disk.
+ * <p>Previews are generated as JPEG files in {@code _data_images_previews} following the
+ * naming pattern {@code <uuid>_<size>.jpg} where {@code <size>} is the
+ * {@link PreviewService.PreviewSize} suffix ({@code table}, {@code tile}, {@code detail}).
  *
- * <p>Thumbnail dimensions target 400 × 300 px while preserving the original aspect
- * ratio.  PNG images with an alpha channel are composited onto a white background
- * before JPEG encoding.
+ * <p>The first call for a given image+size combination generates the file; subsequent
+ * calls reuse the cached file.  PNG images with an alpha channel are composited onto a
+ * white background before JPEG encoding.  Original images are never modified.
  */
 public class PreviewServiceImpl
     implements PreviewService, HasLogger {
-
-  /**
-   * Maximum width of a tile preview in pixels.
-   */
-  private static final int TILE_MAX_WIDTH = 400;
-  /**
-   * Maximum height of a tile preview in pixels.
-   */
-  private static final int TILE_MAX_HEIGHT = 300;
 
   private final Path previewRoot;
 
@@ -48,32 +39,34 @@ public class PreviewServiceImpl
   // ── PreviewService interface ───────────────────────────────────────────────
 
   @Override
-  public Path tilePreviewPath(UUID imageId) {
-    return previewRoot.resolve(imageId + "_tile.jpg");
+  public Path previewPath(UUID imageId, PreviewSize size) {
+    return previewRoot.resolve(imageId + "_" + size.getSuffix() + ".jpg");
   }
 
   @Override
-  public boolean tilePreviewExists(UUID imageId) {
-    return Files.exists(tilePreviewPath(imageId));
+  public boolean previewExists(UUID imageId, PreviewSize size) {
+    return Files.exists(previewPath(imageId, size));
   }
 
   @Override
-  public StreamResource getTilePreview(UUID imageId, Path originalPath, String resourceName) {
-    Path previewPath = tilePreviewPath(imageId);
+  public StreamResource getPreview(UUID imageId, Path originalPath,
+                                   String resourceName, PreviewSize size) {
+    Path previewPath = previewPath(imageId, size);
 
     // Generate preview if not yet cached
     if (!Files.exists(previewPath)) {
       try {
-        generateTilePreview(originalPath, previewPath);
-        logger().info("Generated tile preview for imageId={}", imageId);
+        generatePreview(originalPath, previewPath, size.getMaxWidth(), size.getMaxHeight());
+        logger().debug("Generated {} preview for imageId={}", size, imageId);
       } catch (Exception e) {
-        logger().warn("Could not generate tile preview for imageId={}: {}", imageId, e.getMessage());
+        logger().warn("Could not generate {} preview for imageId={}: {}", size, imageId, e.getMessage());
         return null; // caller falls back to original
       }
     }
 
     // Build a StreamResource backed by the cached JPEG
-    return new StreamResource(imageId + "_tile.jpg", () -> {
+    final String resourceId = imageId + "_" + size.getSuffix() + ".jpg";
+    return new StreamResource(resourceId, () -> {
       try {
         return Files.newInputStream(previewPath);
       } catch (IOException ex) {
@@ -82,36 +75,50 @@ public class PreviewServiceImpl
     });
   }
 
+  @Override
+  public void deletePreviewCache(UUID imageId) {
+    int deleted = 0;
+    for (PreviewSize size : PreviewSize.values()) {
+      Path p = previewPath(imageId, size);
+      try {
+        if (Files.deleteIfExists(p)) {
+          deleted++;
+        }
+      } catch (IOException e) {
+        logger().warn("Could not delete preview cache file {}: {}", p, e.getMessage());
+      }
+    }
+    if (deleted > 0) {
+      logger().debug("Deleted {} preview cache file(s) for imageId={}", deleted, imageId);
+    }
+  }
+
   // ── Internal generation ────────────────────────────────────────────────────
 
   /**
    * Reads the image at {@code source}, scales it to fit within
-   * {@link #TILE_MAX_WIDTH} × {@link #TILE_MAX_HEIGHT} keeping aspect ratio,
+   * {@code maxWidth × maxHeight} (preserving aspect ratio, never up-scaling),
    * and writes a JPEG to {@code dest}.
    */
-  private void generateTilePreview(Path source, Path dest)
+  private void generatePreview(Path source, Path dest, int maxWidth, int maxHeight)
       throws IOException {
     BufferedImage original = ImageIO.read(source.toFile());
     if (original == null) {
       throw new IOException("ImageIO could not read: " + source);
     }
 
-    // Compute scale to fit within target box
+    // Compute scale to fit within target box; never up-scale tiny images
     double scale = Math.min(
-        TILE_MAX_WIDTH / (double) original.getWidth(),
-        TILE_MAX_HEIGHT / (double) original.getHeight());
-
-    // Never up-scale tiny images
+        maxWidth / (double) original.getWidth(),
+        maxHeight / (double) original.getHeight());
     scale = Math.min(scale, 1.0);
 
     int newW = Math.max(1, (int) (original.getWidth() * scale));
     int newH = Math.max(1, (int) (original.getHeight() * scale));
 
-    // Scale with bilinear interpolation
     BufferedImage scaled = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_RGB);
     Graphics2D g = scaled.createGraphics();
     try {
-      // White background for transparent (PNG/GIF) sources
       g.setBackground(Color.WHITE);
       g.clearRect(0, 0, newW, newH);
       g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
@@ -123,8 +130,6 @@ public class PreviewServiceImpl
       g.dispose();
     }
 
-    // Write JPEG (float compression quality via ImageWriteParam not needed here —
-    // the default quality is good enough for tile previews)
     if (!ImageIO.write(scaled, "JPEG", dest.toFile())) {
       throw new IOException("No JPEG writer available for: " + dest);
     }

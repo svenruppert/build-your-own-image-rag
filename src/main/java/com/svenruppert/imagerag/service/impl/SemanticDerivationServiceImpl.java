@@ -3,6 +3,8 @@ package com.svenruppert.imagerag.service.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.imagerag.domain.CategoryCandidate;
+import com.svenruppert.imagerag.domain.CategoryConfidence;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
@@ -12,13 +14,25 @@ import com.svenruppert.imagerag.ollama.OllamaConfig;
 import com.svenruppert.imagerag.service.SemanticDerivationService;
 
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 
 public class SemanticDerivationServiceImpl
     implements SemanticDerivationService, HasLogger {
+
+  /**
+   * Increment this version string whenever the prompt template below is changed.
+   * The value is persisted in {@link com.svenruppert.imagerag.domain.SemanticAnalysis#setSemanticPromptVersion}
+   * so that provenance tracking can show which version produced a given result.
+   * v3: Added primaryCategoryConfidence and alternativeCategories fields for taxonomy maintenance.
+   */
+  public static final String DERIVATION_PROMPT_VERSION = "v3";
+
+  /**
+   * Vision-side prompt version identifier.  The vision step is handled by
+   * {@link com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl}; this constant
+   * is a placeholder so the provenance tab always has something to display.
+   */
+  public static final String VISION_PROMPT_VERSION = "v1";
 
   private static final String DERIVATION_PROMPT_TEMPLATE = """
       You are a structured data extractor. Given the following image description, extract structured fields as JSON.
@@ -28,7 +42,12 @@ public class SemanticDerivationServiceImpl
       {
         "shortSummary": "<max 20 words summary>",
         "tags": ["tag1", "tag2", "tag3"],
-        "sourceCategory": "<see allowed values below>",
+        "sourceCategory": "<see allowed values below — choose the single best match>",
+        "primaryCategoryConfidence": <float 0.0-1.0, your confidence in sourceCategory>,
+        "secondaryCategories": ["<optional additional categories — empty array if none apply>"],
+        "alternativeCategories": [
+          {"category": "<CATEGORY>", "confidence": <float 0.0-1.0>}
+        ],
         "sceneType": "<indoor|outdoor|urban|rural|natural|mixed>",
         "seasonHint": "<WINTER|SPRING|SUMMER|AUTUMN|UNKNOWN>",
         "containsPerson": <true|false>,
@@ -37,7 +56,7 @@ public class SemanticDerivationServiceImpl
         "containsReadableText": <true|false>,
         "containsLicensePlateHint": <true|false>
       }
-      Allowed sourceCategory values (choose the single best match):
+      Allowed sourceCategory / secondaryCategories / alternativeCategories values:
       Nature:     LANDSCAPE, MOUNTAIN, FOREST, BEACH_COASTAL, DESERT, RIVER_WATER,
                   LAKE_POND, SKY_CLOUDS, FIELD_MEADOW, PLANT_BOTANICAL, SNOW_ICE,
                   ROCK_GEOLOGY, FLOWER
@@ -87,10 +106,13 @@ public class SemanticDerivationServiceImpl
     if (analysis.getSourceCategory() == null) analysis.setSourceCategory(SourceCategory.UNKNOWN);
     if (analysis.getSeasonHint() == null) analysis.setSeasonHint(SeasonHint.UNKNOWN);
 
-    // Populate provenance fields so the detail view can show which models produced this analysis
+    // Populate provenance fields so the detail view can show which models and prompt versions
+    // produced this analysis.
     analysis.setVisionModel(response.model() != null ? response.model() : config.getVisionModel());
     analysis.setSemanticModel(config.getTextModel());
     analysis.setAnalysisTimestamp(Instant.now());
+    analysis.setVisionPromptVersion(VISION_PROMPT_VERSION);
+    analysis.setSemanticPromptVersion(DERIVATION_PROMPT_VERSION);
 
     return analysis;
   }
@@ -114,6 +136,41 @@ public class SemanticDerivationServiceImpl
 
       String cat = node.path("sourceCategory").asText("UNKNOWN").toUpperCase();
       analysis.setSourceCategory(safeEnum(SourceCategory.class, cat, SourceCategory.UNKNOWN));
+
+      // Parse optional secondary categories (empty array = no secondary categories)
+      List<SourceCategory> secondaryCats = new ArrayList<>();
+      node.path("secondaryCategories").forEach(t -> {
+        String secCat = t.asText("").toUpperCase();
+        if (!secCat.isBlank()) {
+          SourceCategory sc = safeEnum(SourceCategory.class, secCat, null);
+          if (sc != null && sc != analysis.getSourceCategory()) {
+            secondaryCats.add(sc);
+          }
+        }
+      });
+      analysis.setSecondaryCategories(secondaryCats);
+
+      // Parse confidence data (v3 prompt fields)
+      double primaryConf = node.path("primaryCategoryConfidence").asDouble(-1.0);
+      if (primaryConf >= 0.0) {
+        List<CategoryCandidate> alternatives = new ArrayList<>();
+        node.path("alternativeCategories").forEach(alt -> {
+          String altCatStr = alt.path("category").asText("").toUpperCase();
+          double altConf = alt.path("confidence").asDouble(0.0);
+          SourceCategory altCat = safeEnum(SourceCategory.class, altCatStr, null);
+          if (altCat != null && altCat != analysis.getSourceCategory()) {
+            alternatives.add(new CategoryCandidate(altCat, altConf));
+          }
+        });
+        // Keep top 5 alternatives sorted descending.
+        // Use new ArrayList<> — subList() returns ArrayList$SubList which EclipseStore cannot persist.
+        alternatives.sort(Comparator.comparingDouble(CategoryCandidate::getScore).reversed());
+        List<CategoryCandidate> top5 = new ArrayList<>(alternatives.subList(0, Math.min(5, alternatives.size())));
+        CategoryConfidence confidence = new CategoryConfidence(
+            analysis.getImageId(), analysis.getSourceCategory(),
+            primaryConf, top5, java.time.Instant.now(), config.getTextModel());
+        analysis.setCategoryConfidence(confidence);
+      }
 
       String season = node.path("seasonHint").asText("UNKNOWN").toUpperCase();
       analysis.setSeasonHint(safeEnum(SeasonHint.class, season, SeasonHint.UNKNOWN));
@@ -172,6 +229,7 @@ public class SemanticDerivationServiceImpl
   }
 
   private <T extends Enum<T>> T safeEnum(Class<T> enumClass, String value, T defaultValue) {
+    if (value == null || value.isBlank()) return defaultValue;
     try {
       return Enum.valueOf(enumClass, value);
     } catch (IllegalArgumentException e) {

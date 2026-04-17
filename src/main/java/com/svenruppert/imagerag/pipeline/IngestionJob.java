@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.pipeline;
 
+import com.svenruppert.imagerag.domain.ReprocessingDiff;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
@@ -35,6 +37,19 @@ public class IngestionJob {
    * Used by the pipeline UI to give the operator a quick reference.
    */
   private volatile String duplicateOfFilename;
+
+  /**
+   * Job priority.  Higher value = execute sooner.
+   * Default is {@code 0} (normal).  Set to {@code 1} (high) via
+   * {@link com.svenruppert.imagerag.pipeline.IngestionPipeline#promote}.
+   */
+  private volatile int priority = 0;
+
+  /**
+   * Diff produced after a successful {@link JobType#REPROCESS_EXISTING} run.
+   * {@code null} for upload jobs or when the diff was not computable.
+   */
+  private volatile ReprocessingDiff reprocessingDiff;
 
   public IngestionJob(String filename, String mimeType) {
     this(filename, mimeType, JobType.INGEST_UPLOAD);
@@ -177,5 +192,21 @@ public class IngestionJob {
 
   public String getDuplicateOfFilename() {
     return duplicateOfFilename;
+  }
+
+  public int getPriority() {
+    return priority;
+  }
+
+  public void setPriority(int priority) {
+    this.priority = priority;
+  }
+
+  public ReprocessingDiff getReprocessingDiff() {
+    return reprocessingDiff;
+  }
+
+  public void setReprocessingDiff(ReprocessingDiff reprocessingDiff) {
+    this.reprocessingDiff = reprocessingDiff;
   }
 }

@@ -2,6 +2,7 @@ package com.svenruppert.flow.views.pipeline;
 
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
+import com.svenruppert.flow.views.detail.ReprocessingDiffDialog;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.LocationSummary;
 import com.svenruppert.imagerag.domain.ProcessingSettings;
@@ -19,6 +20,7 @@ import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.grid.GridVariant;
+import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.html.Span;
@@ -72,6 +74,8 @@ public class PipelineView
   private final Span batchElapsedLabel = new Span();
   private final Span batchEtaLabel = new Span();
   private final HorizontalLayout batchSection = new HorizontalLayout();
+  // ── Completion summary card (visible when all jobs are terminal) ────────────
+  private final Div completionSummaryCard = new Div();
   // ── Filter state ──────────────────────────────────────────────────────────
   private JobStep filterStep = null;
   private JobType filterType = null;
@@ -100,13 +104,26 @@ public class PipelineView
                                           e -> confirmRebuildKeywordIndex());
     rebuildKeywordBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
 
-    add(new HorizontalLayout(pauseBtn, statsLabel, refreshBtn, rebuildKeywordBtn));
+    Button rebuildVectorBtn = new Button(getTranslation("pipeline.rebuild.vector"),
+                                         e -> confirmRebuildVectorIndex());
+    rebuildVectorBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
+
+    add(new HorizontalLayout(pauseBtn, statsLabel, refreshBtn, rebuildKeywordBtn, rebuildVectorBtn));
 
     // ── Filter bar ─────────────────────────────────────────────────────────
     add(buildFilterBar());
 
     // ── Batch progress section ─────────────────────────────────────────────
     add(buildBatchSection());
+
+    // ── Completion summary card ────────────────────────────────────────────
+    completionSummaryCard.getStyle()
+        .set("background", "var(--lumo-contrast-5pct)")
+        .set("border-radius", "var(--lumo-border-radius-l)")
+        .set("padding", "var(--lumo-space-m)")
+        .set("margin", "var(--lumo-space-s) 0");
+    completionSummaryCard.setVisible(false);
+    add(completionSummaryCard);
 
     configureGrid();
     add(grid);
@@ -198,6 +215,34 @@ public class PipelineView
     bar.setAlignItems(Alignment.END);
     bar.setSpacing(true);
     return bar;
+  }
+
+  private void confirmRebuildVectorIndex() {
+    ConfirmDialog dlg = new ConfirmDialog();
+    dlg.setHeader(getTranslation("pipeline.rebuild.vector"));
+    dlg.setText(getTranslation("pipeline.rebuild.vector.confirm",
+                               ServiceRegistry.getInstance().getVectorBackendType().name()));
+    dlg.setCancelable(true);
+    dlg.setConfirmText("Rebuild");
+    dlg.addConfirmListener(e -> rebuildVectorIndex());
+    dlg.open();
+  }
+
+  private void rebuildVectorIndex() {
+    Thread.ofVirtual().start(() -> {
+      try {
+        ServiceRegistry.getInstance().rebuildVectorIndex();
+        getUI().ifPresent(ui -> ui.access(() ->
+                                              Notification.show(getTranslation("pipeline.rebuild.vector.started"),
+                                                                4000, Notification.Position.BOTTOM_END)
+                                                  .addThemeVariants(NotificationVariant.LUMO_SUCCESS)));
+      } catch (Exception ex) {
+        getUI().ifPresent(ui -> ui.access(() ->
+                                              Notification.show("Vector index rebuild failed: " + ex.getMessage(),
+                                                                6000, Notification.Position.MIDDLE)
+                                                  .addThemeVariants(NotificationVariant.LUMO_ERROR)));
+      }
+    });
   }
 
   private void confirmRebuildKeywordIndex() {
@@ -350,10 +395,12 @@ public class PipelineView
 
   /**
    * Updates the batch progress bar, count, elapsed time, and ETA based on all known jobs.
+   * When all jobs are terminal, shows a completion summary card instead of the ETA.
    */
   private void updateBatchProgress(List<IngestionJob> jobs) {
     if (jobs.isEmpty()) {
       batchSection.setVisible(false);
+      completionSummaryCard.setVisible(false);
       return;
     }
 
@@ -374,7 +421,11 @@ public class PipelineView
         .map(IngestionJob::getSubmittedAt)
         .min(Instant::compareTo)
         .orElse(Instant.now());
-    Duration elapsed = Duration.between(earliest, Instant.now());
+    Instant latest = jobs.stream()
+        .map(j -> j.getFinishedAt() != null ? j.getFinishedAt() : Instant.now())
+        .max(Instant::compareTo)
+        .orElse(Instant.now());
+    Duration elapsed = Duration.between(earliest, remaining == 0 ? latest : Instant.now());
     batchElapsedLabel.setText(getTranslation("pipeline.progress.elapsed",
                                              formatDuration(elapsed)));
 
@@ -387,15 +438,75 @@ public class PipelineView
 
     if (remaining == 0) {
       batchEtaLabel.setText(getTranslation("pipeline.progress.done"));
-    } else if (completedDurations.size() < 2) {
-      batchEtaLabel.setText(getTranslation("pipeline.progress.calculating"));
+      showCompletionSummary(jobs, elapsed, completedDurations);
     } else {
-      long avgSeconds = completedDurations.stream()
-          .mapToLong(Duration::toSeconds)
-          .sum() / completedDurations.size();
-      Duration eta = Duration.ofSeconds(avgSeconds * remaining);
-      batchEtaLabel.setText(getTranslation("pipeline.progress.eta", formatDuration(eta)));
+      completionSummaryCard.setVisible(false);
+      if (completedDurations.size() < 2) {
+        batchEtaLabel.setText(getTranslation("pipeline.progress.calculating"));
+      } else {
+        long avgSeconds = completedDurations.stream()
+            .mapToLong(Duration::toSeconds)
+            .sum() / completedDurations.size();
+        Duration eta = Duration.ofSeconds(avgSeconds * remaining);
+        batchEtaLabel.setText(getTranslation("pipeline.progress.eta", formatDuration(eta)));
+      }
     }
+  }
+
+  /**
+   * Populates and shows the completion summary card when all jobs in the batch are terminal.
+   */
+  private void showCompletionSummary(List<IngestionJob> jobs, Duration elapsed,
+                                     List<Duration> completedDurations) {
+    completionSummaryCard.removeAll();
+
+    long total = jobs.size();
+    long completed = jobs.stream().filter(j -> j.getCurrentStep() == JobStep.COMPLETED).count();
+    long duplicate = jobs.stream().filter(j -> j.getCurrentStep() == JobStep.DUPLICATE).count();
+    long failed = jobs.stream().filter(j -> j.getCurrentStep() == JobStep.FAILED).count();
+    long cancelled = jobs.stream().filter(j -> j.getCurrentStep() == JobStep.CANCELLED).count();
+
+    long avgSeconds = completedDurations.isEmpty() ? 0
+        : completedDurations.stream().mapToLong(Duration::toSeconds).sum()
+          / completedDurations.size();
+
+    // Title row
+    Span title = new Span(getTranslation("pipeline.summary.title"));
+    title.getStyle().set("font-weight", "700").set("font-size", "var(--lumo-font-size-m)");
+
+    // Stats row — compact badges
+    HorizontalLayout stats = new HorizontalLayout();
+    stats.setSpacing(true);
+    stats.getStyle().set("flex-wrap", "wrap");
+    stats.add(summaryBadge(getTranslation("pipeline.summary.total", total), "#455A64", "white"));
+    stats.add(summaryBadge(getTranslation("pipeline.summary.completed", completed), "#2E7D32", "white"));
+    stats.add(summaryBadge(getTranslation("pipeline.summary.duplicate", duplicate), "#E65100", "white"));
+    stats.add(summaryBadge(getTranslation("pipeline.summary.failed", failed), "#C62828", "white"));
+    stats.add(summaryBadge(getTranslation("pipeline.summary.cancelled", cancelled), "#78909C", "white"));
+
+    // Time row
+    Span timeInfo = new Span(
+        getTranslation("pipeline.summary.elapsed", formatDuration(elapsed))
+            + (avgSeconds > 0
+            ? "  ·  " + getTranslation("pipeline.summary.avg", formatDuration(Duration.ofSeconds(avgSeconds)))
+            : ""));
+    timeInfo.getStyle()
+        .set("font-size", "var(--lumo-font-size-s)")
+        .set("color", "var(--lumo-secondary-text-color)");
+
+    VerticalLayout card = new VerticalLayout(title, stats, timeInfo);
+    card.setPadding(false);
+    card.setSpacing(false);
+    card.getStyle().set("gap", "var(--lumo-space-xs)");
+    completionSummaryCard.add(card);
+    completionSummaryCard.setVisible(true);
+  }
+
+  private Span summaryBadge(String text, String bg, String fg) {
+    Span s = new Span(text);
+    s.getElement().getThemeList().add("badge");
+    s.getStyle().set("background-color", bg).set("color", fg);
+    return s;
   }
 
   // -------------------------------------------------------------------------
@@ -407,23 +518,18 @@ public class PipelineView
     grid.setHeightFull();
     grid.addThemeVariants(GridVariant.LUMO_ROW_STRIPES, GridVariant.LUMO_COMPACT);
 
-    // Status badge — wide enough to show multi-word labels without truncation
+    // Status badge — stage-coloured; covers all pipeline stages at a glance.
+    // The "Current Step" plain-text column has been removed as it was redundant.
     grid.addComponentColumn(job -> stepBadge(job.getCurrentStep()))
         .setHeader(getTranslation("pipeline.col.status"))
-        .setWidth("220px")
+        .setWidth("240px")
         .setFlexGrow(0);
 
     // Job type badge — distinguishes upload jobs from reprocess jobs
     grid.addComponentColumn(job -> jobTypeBadge(job.getJobType()))
         .setHeader(getTranslation("pipeline.col.type"))
-        .setWidth("140px")
+        .setWidth("130px")
         .setFlexGrow(0);
-
-    // Current step label
-    grid.addColumn(job -> job.getCurrentStep().getLabel())
-        .setHeader(getTranslation("pipeline.col.step"))
-        .setFlexGrow(2)
-        .setSortable(true);
 
     // Filename
     grid.addColumn(IngestionJob::getFilename)
@@ -465,7 +571,7 @@ public class PipelineView
         .setWidth("110px")
         .setFlexGrow(0);
 
-    // Context message: error text for FAILED jobs; duplicate info for DUPLICATE jobs
+    // Context column: error / duplicate info / reprocess diff button
     grid.addComponentColumn(job -> {
       if (job.getCurrentStep() == JobStep.FAILED && job.getErrorMessage() != null) {
         Span err = new Span(job.getErrorMessage());
@@ -489,8 +595,35 @@ public class PipelineView
         cell.getStyle().set("gap", "2px");
         return cell;
       }
+      // Show "View Diff" for completed reprocessing jobs that have diff data
+      if (job.getJobType() == JobType.REPROCESS_EXISTING
+          && job.getCurrentStep() == JobStep.COMPLETED
+          && job.getReprocessingDiff() != null) {
+        Button diffBtn = new Button(getTranslation("pipeline.diff.view"));
+        diffBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+        diffBtn.addClickListener(e -> new ReprocessingDiffDialog(job.getReprocessingDiff()).open());
+        return diffBtn;
+      }
       return new Span();
     }).setHeader(getTranslation("pipeline.col.error")).setFlexGrow(3);
+
+    // Promote button — visible only for QUEUED jobs (moves to front of queue)
+    grid.addComponentColumn(job -> {
+      if (job.getCurrentStep() == JobStep.QUEUED) {
+        Button promoteBtn = new Button(getTranslation("pipeline.promote"));
+        promoteBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+        promoteBtn.getElement().setAttribute("title",
+                                             "Move this job to the front of the queue so it executes next");
+        promoteBtn.addClickListener(e -> {
+          ServiceRegistry.getInstance().getIngestionPipeline().promote(job);
+          Notification.show(getTranslation("pipeline.promote.done", job.getFilename()),
+                            2500, Notification.Position.BOTTOM_END)
+              .addThemeVariants(NotificationVariant.LUMO_PRIMARY);
+        });
+        return promoteBtn;
+      }
+      return new Span();
+    }).setHeader("").setWidth("110px").setFlexGrow(0);
 
     // Cancel button — visible only for queued and running jobs
     grid.addComponentColumn(job -> {
@@ -503,7 +636,7 @@ public class PipelineView
         return cancelBtn;
       }
       return new Span();
-    }).setHeader("").setWidth("120px").setFlexGrow(0);
+    }).setHeader("").setWidth("110px").setFlexGrow(0);
 
     // Retry button — visible only for FAILED jobs
     grid.addComponentColumn(job -> {
@@ -609,13 +742,32 @@ public class PipelineView
     Span badge = new Span(step.getLabel());
     badge.getElement().getThemeList().add("badge");
     switch (step) {
+      // ── Terminal states use built-in Lumo theme variants ─────────────────
       case QUEUED -> badge.getElement().getThemeList().add("contrast");
       case COMPLETED -> badge.getElement().getThemeList().add("success");
       case FAILED -> badge.getElement().getThemeList().add("error");
       case CANCELLED -> badge.getElement().getThemeList().add("contrast");
-      // DUPLICATE is a distinct, operationally clear terminal state — not an error
-      case DUPLICATE -> badge.getElement().getThemeList().add("contrast");
-      default -> badge.getElement().getThemeList().add("primary");
+      // DUPLICATE: orange — not an error, but distinct from success
+      case DUPLICATE -> badge.getStyle()
+          .set("background-color", "#E65100").set("color", "white");
+      // ── Active pipeline stages — each gets a distinct colour ─────────────
+      case STORING, LOADING_IMAGE -> badge.getStyle()
+          .set("background-color", "#0277BD").set("color", "white");          // steel-blue
+      case EXTRACTING_METADATA, GEOCODING -> badge.getStyle()
+          .set("background-color", "#6A1B9A").set("color", "white");          // purple
+      case OCR_TEXT -> badge.getStyle()
+          .set("background-color", "#F57F17").set("color", "white");          // amber-dark
+      case ANALYZING_VISION -> badge.getStyle()
+          .set("background-color", "#4527A0").set("color", "white");          // deep-purple
+      case DERIVING_SEMANTICS -> badge.getStyle()
+          .set("background-color", "#00695C").set("color", "white");          // teal
+      case ASSESSING_SENSITIVITY -> badge.getStyle()
+          .set("background-color", "#BF360C").set("color", "white");          // deep-orange
+      case EMBEDDING -> badge.getStyle()
+          .set("background-color", "#F9A825").set("color", "#1a1a1a");        // yellow (dark text)
+      case INDEXING, KEYWORD_INDEXING -> badge.getStyle()
+          .set("background-color", "#1B5E20").set("color", "white");          // dark-green
+      default -> throw new RuntimeException("Unknown step: " + step);
     }
     return badge;
   }

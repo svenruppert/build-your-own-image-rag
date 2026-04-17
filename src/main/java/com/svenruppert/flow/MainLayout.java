@@ -2,10 +2,12 @@ package com.svenruppert.flow;
 
 import com.svenruppert.flow.views.AboutView;
 import com.svenruppert.flow.views.YoutubeView;
+import com.svenruppert.flow.views.archive.ArchiveView;
 import com.svenruppert.flow.views.main.MainView;
 import com.svenruppert.flow.views.overview.OverviewView;
 import com.svenruppert.flow.views.pipeline.PipelineView;
 import com.svenruppert.flow.views.search.SearchView;
+import com.svenruppert.flow.views.taxonomy.TaxonomyMaintenanceView;
 import com.svenruppert.flow.views.upload.UploadView;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.applayout.AppLayout;
@@ -47,11 +49,17 @@ public class MainLayout
     left.setAlignItems(FlexComponent.Alignment.CENTER);
     left.setSpacing(false);
 
-    // Language toggle — EN / DE
+    // Language toggle — EN / DE.
+    // The currently active locale is highlighted with a PRIMARY variant so the user
+    // always knows which language is in effect.
+    String activeLang = UI.getCurrent().getLocale().getLanguage();
+
     Button enBtn = new Button("EN", e -> switchLanguage("en"));
     Button deBtn = new Button("DE", e -> switchLanguage("de"));
-    enBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
-    deBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+    enBtn.addThemeVariants(ButtonVariant.LUMO_SMALL,
+                           "en".equals(activeLang) ? ButtonVariant.LUMO_PRIMARY : ButtonVariant.LUMO_TERTIARY);
+    deBtn.addThemeVariants(ButtonVariant.LUMO_SMALL,
+                           "de".equals(activeLang) ? ButtonVariant.LUMO_PRIMARY : ButtonVariant.LUMO_TERTIARY);
     enBtn.getElement().setAttribute("title", "Switch to English");
     deBtn.getElement().setAttribute("title", "Auf Deutsch wechseln");
 
@@ -88,7 +96,9 @@ public class MainLayout
         new SideNavItem(getTranslation("nav.upload"), "/" + UploadView.PATH, UPLOAD.create()),
         new SideNavItem(getTranslation("nav.pipeline"), "/" + PipelineView.PATH, LIST.create()),
         new SideNavItem(getTranslation("nav.overview"), "/" + OverviewView.PATH, TABLE.create()),
+        new SideNavItem(getTranslation("nav.archive"), "/" + ArchiveView.PATH, ARCHIVE.create()),
         new SideNavItem(getTranslation("nav.search"), "/" + SearchView.PATH, SEARCH.create()),
+        new SideNavItem(getTranslation("nav.taxonomy"), "/" + TaxonomyMaintenanceView.PATH, TAG.create()),
         new SideNavItem(getTranslation("nav.dashboard"), "/" + MainView.PATH, DASHBOARD.create()),
         new SideNavItem(getTranslation("nav.youtube"), "/" + YoutubeView.PATH, CART.create()),
         new SideNavItem(getTranslation("nav.about"), "/" + AboutView.PATH, USER_HEART.create())

@@ -57,6 +57,7 @@ public class SearchInspectorComponent
   private final StepRow stepRetrieval;
   private final StepRow stepFiltering;
   private final StepRow stepResults;
+
   public SearchInspectorComponent() {
     setPadding(false);
     setSpacing(false);

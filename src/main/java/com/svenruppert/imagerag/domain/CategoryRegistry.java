@@ -3,9 +3,7 @@ package com.svenruppert.imagerag.domain;
 import com.svenruppert.imagerag.domain.enums.CategoryGroup;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 
-import java.util.EnumMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
  * Static mapping from fine-grained {@link SourceCategory} values to coarse
@@ -24,6 +22,15 @@ public final class CategoryRegistry {
 
   private static final Map<SourceCategory, CategoryMeta> REGISTRY =
       new EnumMap<>(SourceCategory.class);
+
+  /**
+   * Alias → canonical {@link SourceCategory} mapping.
+   * Keys are lower-cased and trimmed for case-insensitive lookup.
+   *
+   * <p>Aliases cover common German and English synonyms and abbreviations that users or
+   * the LLM might use in free-text queries or category assignments.
+   */
+  private static final Map<String, SourceCategory> ALIASES = new HashMap<>();
 
   static {
     // ── Nature ────────────────────────────────────────────────────────────────
@@ -97,6 +104,106 @@ public final class CategoryRegistry {
     // ── Uncategorized / legacy catch-alls ─────────────────────────────────────
     reg(SourceCategory.MIXED, CategoryGroup.UNCATEGORIZED, "Mixed");
     reg(SourceCategory.UNKNOWN, CategoryGroup.UNCATEGORIZED, "Unknown");
+
+    // ── Aliases / synonyms ────────────────────────────────────────────────────
+    // Vehicles
+    alias("auto", SourceCategory.CAR);
+    alias("pkw", SourceCategory.CAR);
+    alias("car", SourceCategory.CAR);
+    alias("kfz", SourceCategory.CAR);
+    alias("lkw", SourceCategory.TRUCK_HEAVY);
+    alias("truck", SourceCategory.TRUCK_HEAVY);
+    alias("motorrad", SourceCategory.MOTORCYCLE);
+    alias("bike", SourceCategory.BICYCLE);
+    alias("fahrrad", SourceCategory.BICYCLE);
+    alias("flugzeug", SourceCategory.AIRCRAFT);
+    alias("plane", SourceCategory.AIRCRAFT);
+    alias("ship", SourceCategory.WATERCRAFT);
+    alias("schiff", SourceCategory.WATERCRAFT);
+    alias("bus", SourceCategory.PUBLIC_TRANSPORT);
+    alias("zug", SourceCategory.PUBLIC_TRANSPORT);
+    alias("train", SourceCategory.PUBLIC_TRANSPORT);
+    // Nature
+    alias("wald", SourceCategory.FOREST);
+    alias("forest", SourceCategory.FOREST);
+    alias("berg", SourceCategory.MOUNTAIN);
+    alias("mountain", SourceCategory.MOUNTAIN);
+    alias("strand", SourceCategory.BEACH_COASTAL);
+    alias("sea", SourceCategory.BEACH_COASTAL);
+    alias("meer", SourceCategory.BEACH_COASTAL);
+    alias("beach", SourceCategory.BEACH_COASTAL);
+    alias("see", SourceCategory.LAKE_POND);
+    alias("lake", SourceCategory.LAKE_POND);
+    alias("teich", SourceCategory.LAKE_POND);
+    alias("pond", SourceCategory.LAKE_POND);
+    alias("fluss", SourceCategory.RIVER_WATER);
+    alias("river", SourceCategory.RIVER_WATER);
+    alias("wüste", SourceCategory.DESERT);
+    alias("schnee", SourceCategory.SNOW_ICE);
+    alias("snow", SourceCategory.SNOW_ICE);
+    alias("blume", SourceCategory.FLOWER);
+    alias("flower", SourceCategory.FLOWER);
+    alias("pflanze", SourceCategory.PLANT_BOTANICAL);
+    alias("plant", SourceCategory.PLANT_BOTANICAL);
+    alias("feld", SourceCategory.FIELD_MEADOW);
+    alias("wiese", SourceCategory.FIELD_MEADOW);
+    alias("field", SourceCategory.FIELD_MEADOW);
+    alias("himmel", SourceCategory.SKY_CLOUDS);
+    alias("sky", SourceCategory.SKY_CLOUDS);
+    // Animals
+    alias("vogel", SourceCategory.BIRD);
+    alias("bird", SourceCategory.BIRD);
+    alias("hund", SourceCategory.MAMMAL_DOMESTIC);
+    alias("katze", SourceCategory.MAMMAL_DOMESTIC);
+    alias("dog", SourceCategory.MAMMAL_DOMESTIC);
+    alias("cat", SourceCategory.MAMMAL_DOMESTIC);
+    alias("tier", SourceCategory.MAMMAL_WILD);
+    alias("animal", SourceCategory.MAMMAL_WILD);
+    alias("fisch", SourceCategory.MARINE_LIFE);
+    alias("fish", SourceCategory.MARINE_LIFE);
+    // People
+    alias("person", SourceCategory.PORTRAIT);
+    alias("mensch", SourceCategory.PORTRAIT);
+    alias("portrait", SourceCategory.PORTRAIT);
+    alias("group", SourceCategory.GROUP_PEOPLE);
+    alias("gruppe", SourceCategory.GROUP_PEOPLE);
+    alias("family", SourceCategory.FAMILY_CHILD);
+    alias("familie", SourceCategory.FAMILY_CHILD);
+    alias("sport", SourceCategory.SPORT_ACTIVITY);
+    alias("work", SourceCategory.WORK_PROFESSIONAL);
+    alias("arbeit", SourceCategory.WORK_PROFESSIONAL);
+    // Urban
+    alias("gebäude", SourceCategory.ARCHITECTURE_EXTERIOR);
+    alias("building", SourceCategory.ARCHITECTURE_EXTERIOR);
+    alias("haus", SourceCategory.ARCHITECTURE_EXTERIOR);
+    alias("house", SourceCategory.ARCHITECTURE_EXTERIOR);
+    alias("innenraum", SourceCategory.ARCHITECTURE_INTERIOR);
+    alias("interior", SourceCategory.ARCHITECTURE_INTERIOR);
+    alias("brücke", SourceCategory.BRIDGE_INFRASTRUCTURE);
+    alias("bridge", SourceCategory.BRIDGE_INFRASTRUCTURE);
+    alias("park", SourceCategory.PARK_GARDEN);
+    alias("garten", SourceCategory.PARK_GARDEN);
+    alias("garden", SourceCategory.PARK_GARDEN);
+    alias("markt", SourceCategory.MARKET_COMMERCIAL);
+    alias("market", SourceCategory.MARKET_COMMERCIAL);
+    alias("nacht", SourceCategory.NIGHT_SCENE);
+    alias("night", SourceCategory.NIGHT_SCENE);
+    alias("stadt", SourceCategory.CITY);
+    alias("city", SourceCategory.CITY);
+    // Objects
+    alias("essen", SourceCategory.FOOD_DRINK);
+    alias("food", SourceCategory.FOOD_DRINK);
+    alias("dokument", SourceCategory.DOCUMENT_TEXT);
+    alias("document", SourceCategory.DOCUMENT_TEXT);
+    alias("schild", SourceCategory.SIGN_SIGNAGE);
+    alias("sign", SourceCategory.SIGN_SIGNAGE);
+    alias("kunst", SourceCategory.ARTWORK_GRAPHIC);
+    alias("art", SourceCategory.ARTWORK_GRAPHIC);
+    // Technology
+    alias("technik", SourceCategory.ELECTRONICS);
+    alias("electronics", SourceCategory.ELECTRONICS);
+    alias("maschine", SourceCategory.INDUSTRIAL_MACHINERY);
+    alias("machine", SourceCategory.INDUSTRIAL_MACHINERY);
   }
 
   private CategoryRegistry() {
@@ -104,6 +211,10 @@ public final class CategoryRegistry {
 
   private static void reg(SourceCategory cat, CategoryGroup group, String label) {
     REGISTRY.put(cat, new CategoryMeta(group, label));
+  }
+
+  private static void alias(String key, SourceCategory cat) {
+    ALIASES.put(key.toLowerCase(), cat);
   }
 
   /**
@@ -138,6 +249,32 @@ public final class CategoryRegistry {
    */
   public static String getGroupLabel(SourceCategory cat) {
     return getGroup(cat).getLabel();
+  }
+
+  /**
+   * Looks up a {@link SourceCategory} by an alias or synonym (case-insensitive).
+   *
+   * <p>Examples: {@code "auto"} → {@code CAR}, {@code "wald"} → {@code FOREST}.
+   * Returns {@link Optional#empty()} when the alias is not registered.
+   *
+   * @param alias the alias or synonym to resolve (may be {@code null})
+   * @return the matching category, or empty if unknown
+   */
+  public static Optional<SourceCategory> findByAlias(String alias) {
+    if (alias == null || alias.isBlank()) return Optional.empty();
+    return Optional.ofNullable(ALIASES.get(alias.toLowerCase().trim()));
+  }
+
+  /**
+   * Returns all registered alias keys (lower-cased) for the given category.
+   * Useful for search expansion and display.
+   */
+  public static List<String> getAliasesFor(SourceCategory cat) {
+    return ALIASES.entrySet().stream()
+        .filter(e -> e.getValue() == cat)
+        .map(Map.Entry::getKey)
+        .sorted()
+        .toList();
   }
 
   /**

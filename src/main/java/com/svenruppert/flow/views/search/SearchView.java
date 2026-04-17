@@ -84,9 +84,11 @@ public class SearchView
 
   public static final String PATH = "search";
 
-  private static final int POLL_INTERVAL_MS = 800;
-  private static final int MAX_VISIBLE_CHIPS = 3;
-  private static final int PAGE_SIZE = 30;
+  private static final int    POLL_INTERVAL_MS      = 800;
+  private static final int    MAX_VISIBLE_CHIPS     = 3;
+  private static final int    PAGE_SIZE             = 30;
+  private static final double DEFAULT_MIN_SCORE     =
+      com.svenruppert.imagerag.bootstrap.AppConfig.getInstance().getSearchMinScore();
   // ── Boolean select values ─────────────────────────────────────────────────
   private static final String BOOL_ANY = "any";
   private static final String BOOL_YES = "yes";
@@ -125,7 +127,7 @@ public class SearchView
   // ── Results ───────────────────────────────────────────────────────────────
   private final Grid<SearchResultItem> resultsGrid = new Grid<>(SearchResultItem.class, false);
   private final Div tileContainer = new Div();
-  private final Button loadMoreTilesBtn = new Button("Load more");
+  private final Button loadMoreTilesBtn = new Button();
   /**
    * Compact facet panel shown below the two-column top area after a search completes.
    */
@@ -140,7 +142,17 @@ public class SearchView
    * Subset of lastResults currently visible after facet filtering; null means show all.
    */
   private List<SearchResultItem> facetFilteredResults = null;
-  private int currentPage = 1;
+  /**
+   * The list currently rendered in the tile container — either {@link #lastResults}
+   * or {@link #facetFilteredResults} depending on whether a facet is active.
+   * Used by {@link #appendTiles} so "Load more" always appends from the right list.
+   */
+  private List<SearchResultItem> currentTileSource = List.of();
+  /**
+   * Number of tile cards currently rendered in {@link #tileContainer}.
+   * Incremented by {@link #appendTiles} so "Load more" only adds NEW tiles.
+   */
+  private int renderedTileCount = 0;
   /**
    * Currently active facet key, e.g. "cat:NATURE" or "risk:HIGH", or null for "all".
    */
@@ -262,12 +274,11 @@ public class SearchView
     add(tileContainer);
 
     // ── Load more button (tile view only) ─────────────────────────────────
+    loadMoreTilesBtn.setText(getTranslation("search.loadmore"));
     loadMoreTilesBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
     loadMoreTilesBtn.setVisible(false);
-    loadMoreTilesBtn.addClickListener(e -> {
-      currentPage++;
-      renderTiles(lastResults);
-    });
+    // Append the next page of tiles WITHOUT destroying already-rendered cards.
+    loadMoreTilesBtn.addClickListener(e -> appendTiles(PAGE_SIZE));
     add(loadMoreTilesBtn);
 
     // ── Action bar (Save Search, Load Saved, Export CSV) ─────────────────
@@ -398,7 +409,7 @@ public class SearchView
     scoreField.setMin(0.0);
     scoreField.setMax(1.0);
     scoreField.setStep(0.05);
-    scoreField.setValue(0.45);  // matches server default MIN_SCORE = 0.45
+    scoreField.setValue(DEFAULT_MIN_SCORE);
     scoreField.setWidth("130px");
 
     // "Refine Search" — skip LLM and use the edited plan directly
@@ -444,8 +455,7 @@ public class SearchView
     tileMode = tiles;
     List<SearchResultItem> active = facetFilteredResults != null ? facetFilteredResults : lastResults;
     if (!active.isEmpty()) {
-      currentPage = 1;
-      renderResultsView(active);
+      renderResultsView(active);  // renderTiles() resets renderedTileCount internally
     }
   }
 
@@ -818,7 +828,6 @@ public class SearchView
     lastResults = results;
     facetFilteredResults = null;  // clear any active facet filter on new search
     activeFacetKey = null;
-    currentPage = 1;
     if (results.isEmpty()) {
       Notification.show(getTranslation("search.notfound"), 3000, Notification.Position.MIDDLE);
       resultsGrid.setVisible(false);
@@ -884,8 +893,7 @@ public class SearchView
       activeFacetKey = null;
       facetFilteredResults = null;
       buildFacetPanel(allResults);
-      currentPage = 1;
-      renderResultsView(allResults);
+      renderResultsView(allResults);  // renderTiles() resets renderedTileCount internally
     });
     facetPanel.add(allChip);
 
@@ -966,8 +974,7 @@ public class SearchView
       activeFacetKey = null;
       facetFilteredResults = null;
       buildFacetPanel(allResults);
-      currentPage = 1;
-      renderResultsView(allResults);
+      renderResultsView(allResults);  // renderTiles() resets renderedTileCount internally
       return;
     }
 
@@ -990,19 +997,33 @@ public class SearchView
 
     facetFilteredResults = filtered;
     buildFacetPanel(allResults);
-    currentPage = 1;
-    renderResultsView(filtered);
+    renderResultsView(filtered);  // renderTiles() resets renderedTileCount internally
   }
 
+  /**
+   * Full reset: clears all tile cards and renders the first {@link #PAGE_SIZE} items.
+   * Call this whenever the displayed list changes (new search, facet change, mode toggle).
+   * For "Load more" use {@link #appendTiles} instead.
+   */
   private void renderTiles(List<SearchResultItem> results) {
+    currentTileSource = results;
     tileContainer.removeAll();
-    int limit = currentPage * PAGE_SIZE;
-    int total = results.size();
-    int visible = Math.min(limit, total);
-    for (int i = 0; i < visible; i++) {
-      tileContainer.add(buildResultTile(results.get(i), i + 1));
+    renderedTileCount = 0;
+    appendTiles(PAGE_SIZE);
+  }
+
+  /**
+   * Appends up to {@code count} new tile cards from {@link #currentTileSource} starting
+   * at {@link #renderedTileCount}.  Does NOT clear existing cards.
+   */
+  private void appendTiles(int count) {
+    int from = renderedTileCount;
+    int to = Math.min(from + count, currentTileSource.size());
+    for (int i = from; i < to; i++) {
+      tileContainer.add(buildResultTile(currentTileSource.get(i), i + 1));
     }
-    loadMoreTilesBtn.setVisible(total > limit);
+    renderedTileCount = to;
+    loadMoreTilesBtn.setVisible(renderedTileCount < currentTileSource.size());
   }
 
   // -------------------------------------------------------------------------

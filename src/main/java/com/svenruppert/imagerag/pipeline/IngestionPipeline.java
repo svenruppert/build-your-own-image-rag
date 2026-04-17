@@ -50,11 +50,21 @@ public class IngestionPipeline
   private final KeywordIndexService keywordIndexService;
   private final OllamaConfig ollamaConfig;
   /**
-   * Worker executor — size reflects the current ingestion parallelism setting.
-   * Initially sequential (1 thread). Call {@link #updateParallelism} to resize.
-   * Declared {@code volatile} so {@link #submit} always sees the latest executor.
+   * Maps each job's UUID to the {@link FutureTask} that was submitted to the executor.
+   * Used by {@link #promote} to locate and reorder the task in the work queue.
    */
-  private volatile ExecutorService executor = buildExecutor(1);
+  private final ConcurrentHashMap<UUID, FutureTask<?>> taskMap = new ConcurrentHashMap<>();
+  /**
+   * Work queue for the current executor.  Using {@link LinkedBlockingDeque} instead of a
+   * plain {@link LinkedBlockingQueue} allows {@link #promote} to move a queued task to the
+   * front of the deque so it executes before other pending tasks.
+   */
+  private volatile LinkedBlockingDeque<Runnable> workQueue = new LinkedBlockingDeque<>();
+  /**
+   * Worker executor — size reflects the current ingestion parallelism setting.
+   * Initially sequential (1 thread).  Call {@link #updateParallelism} to resize.
+   */
+  private volatile ThreadPoolExecutor executor = buildThreadPoolExecutor(1, workQueue);
 
   public IngestionPipeline(ImageStorageService imageStorageService,
                            MetadataExtractionService metadataExtractionService,
@@ -95,13 +105,12 @@ public class IngestionPipeline
     }
   }
 
-  private static ExecutorService buildExecutor(int parallelism) {
-    if (parallelism <= 1) {
-      return Executors.newSingleThreadExecutor(
-          Thread.ofVirtual().name("ingestion-pipeline").factory());
-    }
-    return Executors.newFixedThreadPool(
-        parallelism, Thread.ofVirtual().name("ingestion-", 0).factory());
+  private static ThreadPoolExecutor buildThreadPoolExecutor(int parallelism,
+                                                            LinkedBlockingDeque<Runnable> queue) {
+    int threads = Math.max(1, parallelism);
+    return new ThreadPoolExecutor(
+        threads, threads, 0L, TimeUnit.MILLISECONDS, queue,
+        Thread.ofVirtual().name("ingestion-", 0).factory());
   }
 
   private static String computeSha256(byte[] data) {
@@ -159,8 +168,13 @@ public class IngestionPipeline
     byte[] data = inputStream.readAllBytes();
     IngestionJob job = new IngestionJob(filename, mimeType);
     jobs.add(job);
-    Future<?> future = executor.submit(() -> process(job, data));
-    job.setFuture(future);
+    FutureTask<Void> task = new FutureTask<>(() -> {
+      process(job, data);
+      return null;
+    });
+    taskMap.put(job.getJobId(), task);
+    executor.execute(task);
+    job.setFuture(task);
     logger().info("Job queued: {} ({})", filename, job.getJobId());
     return job;
   }
@@ -183,8 +197,13 @@ public class IngestionPipeline
       throws IOException {
     IngestionJob job = new IngestionJob(filename, mimeType);
     jobs.add(job);
-    Future<?> future = executor.submit(() -> processFromPath(job, tempFile));
-    job.setFuture(future);
+    FutureTask<Void> task = new FutureTask<>(() -> {
+      processFromPath(job, tempFile);
+      return null;
+    });
+    taskMap.put(job.getJobId(), task);
+    executor.execute(task);
+    job.setFuture(task);
     logger().info("Job queued (from path): {} ({})", filename, job.getJobId());
     return job;
   }
@@ -207,8 +226,13 @@ public class IngestionPipeline
     IngestionJob job = new IngestionJob(asset.getOriginalFilename(), asset.getMimeType(),
                                         JobType.REPROCESS_EXISTING);
     jobs.add(job);
-    Future<?> future = executor.submit(() -> reprocess(job, asset));
-    job.setFuture(future);
+    FutureTask<Void> task = new FutureTask<>(() -> {
+      reprocess(job, asset);
+      return null;
+    });
+    taskMap.put(job.getJobId(), task);
+    executor.execute(task);
+    job.setFuture(task);
     logger().info("Reprocess job queued: {} ({})", asset.getOriginalFilename(), job.getJobId());
     return job;
   }
@@ -267,8 +291,13 @@ public class IngestionPipeline
    */
   public synchronized void updateParallelism(int parallelism) {
     int clamped = Math.max(1, Math.min(6, parallelism));
-    ExecutorService old = executor;
-    executor = buildExecutor(clamped);
+    ThreadPoolExecutor old = executor;
+    // Create a fresh queue so the old executor can drain its queue without interference
+    // from the new executor.  Tasks already in the old queue complete on old executor threads.
+    // promote() references workQueue via a volatile read, so newly submitted tasks get the
+    // new queue automatically.
+    workQueue = new LinkedBlockingDeque<>();
+    executor = buildThreadPoolExecutor(clamped, workQueue);
     old.shutdown(); // lets already-submitted jobs finish; no new work accepted
     logger().info("Ingestion parallelism updated to {}", clamped);
   }
@@ -277,12 +306,58 @@ public class IngestionPipeline
   // SHA-256 helper — used for duplicate detection from raw byte array
   // -------------------------------------------------------------------------
 
+  /**
+   * Promotes a QUEUED job to the front of the work queue so it executes next.
+   *
+   * <p>Implementation: the job's {@link FutureTask} is looked up in the task map, removed
+   * from wherever it sits in the {@link LinkedBlockingDeque}, and re-inserted at the head.
+   * If the task has already been picked up by a worker thread (i.e. is already running),
+   * the deque no longer contains it and this method is a safe no-op.
+   *
+   * @param job the job to promote; must currently be in {@link JobStep#QUEUED} state
+   */
+  public void promote(IngestionJob job) {
+    if (job.getCurrentStep() != JobStep.QUEUED) {
+      logger().warn("Cannot promote non-queued job {} (step={})",
+                    job.getFilename(), job.getCurrentStep());
+      return;
+    }
+    FutureTask<?> task = taskMap.get(job.getJobId());
+    if (task == null) {
+      logger().warn("No task found for job {} — cannot promote", job.getFilename());
+      return;
+    }
+    // Remove from current position and push to the front (next to execute).
+    // workQueue may have been replaced by updateParallelism(); in that case remove() returns false
+    // and we log accordingly — this is a safe, benign race condition.
+    LinkedBlockingDeque<Runnable> q = workQueue;
+    if (q.remove(task)) {
+      q.addFirst(task);
+      job.setPriority(1);
+      logger().info("Job {} promoted to front of queue", job.getFilename());
+    } else {
+      logger().warn("Job {} not found in current work queue (may have started or queue was replaced)",
+                    job.getFilename());
+    }
+  }
+
   public void shutdown() {
     executor.shutdownNow();
   }
 
   private void reprocess(IngestionJob job, ImageAsset asset) {
     UUID imageId = asset.getId();
+
+    // ── Snapshot pre-reprocessing state for diff computation ──────────────────
+    SemanticAnalysis previousAnalysis = persistenceService.findAnalysis(imageId).orElse(null);
+    SensitivityAssessment previousAssessment = persistenceService.findAssessment(imageId).orElse(null);
+    OcrResult previousOcr = persistenceService.findOcrResult(imageId).orElse(null);
+
+    // Working variables assigned during the pipeline steps
+    SemanticAnalysis semanticAnalysis = null;
+    SensitivityAssessment assessment = null;
+    OcrResult ocrResult = null;
+
     try {
       // Step 1: Load image from disk
       checkPauseOrCancelled();
@@ -301,7 +376,7 @@ public class IngestionPipeline
       // Step 3: Semantic derivation — overwrites existing analysis
       checkPauseOrCancelled();
       job.transition(JobStep.DERIVING_SEMANTICS);
-      SemanticAnalysis semanticAnalysis = semanticDerivationService.derive(imageId, visionResponse);
+      semanticAnalysis = semanticDerivationService.derive(imageId, visionResponse);
       persistenceService.saveAnalysis(imageId, semanticAnalysis);
 
       // Step 4: Sensitivity assessment — re-evaluate using stored metadata/location
@@ -309,7 +384,7 @@ public class IngestionPipeline
       job.transition(JobStep.ASSESSING_SENSITIVITY);
       ImageMetadataInfo metadataInfo = persistenceService.findMetadata(imageId).orElse(null);
       LocationSummary locationSummary = persistenceService.findLocation(imageId).orElse(null);
-      SensitivityAssessment assessment = sensitivityAssessmentService.assess(
+      assessment = sensitivityAssessmentService.assess(
           asset, metadataInfo, locationSummary, semanticAnalysis);
       persistenceService.saveAssessment(imageId, assessment);
       logger().info("[reprocess][{}] Risk: {} | Flags: {}",
@@ -351,7 +426,6 @@ public class IngestionPipeline
       // Step 7: OCR (reprocess)
       checkPauseOrCancelled();
       job.transition(JobStep.OCR_TEXT);
-      OcrResult ocrResult = null;
       try {
         com.svenruppert.imagerag.dto.VisionAnalysisResponse ocrResponse =
             visionAnalysisService.analyzeImage(imagePath);
@@ -364,16 +438,29 @@ public class IngestionPipeline
         logger().warn("[reprocess][{}] OCR step failed (non-fatal): {}", asset.getOriginalFilename(), e.getMessage());
       }
 
+      // ── Compute diff between previous and new derived state ───────────────
+      if (previousAnalysis != null || semanticAnalysis != null) {
+        job.setReprocessingDiff(buildReprocessingDiff(
+            previousAnalysis, previousAssessment, previousOcr,
+            semanticAnalysis, assessment, ocrResult));
+      }
+
       // Step 8: Keyword indexing (BM25)
       checkPauseOrCancelled();
       job.transition(JobStep.KEYWORD_INDEXING);
       String locText = locationSummary != null ? locationSummary.toHumanReadable() : null;
       String ocrText = ocrResult != null ? ocrResult.getExtractedText() : null;
+      String catLabel = semanticAnalysis.getSourceCategory() != null
+          ? semanticAnalysis.getSourceCategory().name() : null;
+      if (semanticAnalysis.getSecondaryCategories() != null
+          && !semanticAnalysis.getSecondaryCategories().isEmpty()) {
+        String secondaryCats = semanticAnalysis.getSecondaryCategories().stream()
+            .map(sc -> sc.name())
+            .collect(java.util.stream.Collectors.joining(" "));
+        catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
+      }
       keywordIndexService.index(imageId, asset.getOriginalFilename(), semanticAnalysis.getSummary(),
-                                semanticAnalysis.getTags(),
-                                semanticAnalysis.getSourceCategory() != null
-                                    ? semanticAnalysis.getSourceCategory().name() : null,
-                                locText, ocrText);
+                                semanticAnalysis.getTags(), catLabel, locText, ocrText);
 
       job.complete(imageId);
       logger().info("[reprocess][{}] COMPLETED", asset.getOriginalFilename());
@@ -563,11 +650,17 @@ public class IngestionPipeline
       job.transition(JobStep.KEYWORD_INDEXING);
       String locText = locationSummary != null ? locationSummary.toHumanReadable() : null;
       String ocrText = ocrResult != null ? ocrResult.getExtractedText() : null;
+      String catLabel = semanticAnalysis.getSourceCategory() != null
+          ? semanticAnalysis.getSourceCategory().name() : null;
+      if (semanticAnalysis.getSecondaryCategories() != null
+          && !semanticAnalysis.getSecondaryCategories().isEmpty()) {
+        String secondaryCats = semanticAnalysis.getSecondaryCategories().stream()
+            .map(sc -> sc.name())
+            .collect(java.util.stream.Collectors.joining(" "));
+        catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
+      }
       keywordIndexService.index(imageId, stored.originalFilename(), semanticAnalysis.getSummary(),
-                                semanticAnalysis.getTags(),
-                                semanticAnalysis.getSourceCategory() != null
-                                    ? semanticAnalysis.getSourceCategory().name() : null,
-                                locText, ocrText);
+                                semanticAnalysis.getTags(), catLabel, locText, ocrText);
 
       // Done
       job.complete(imageId);
@@ -582,6 +675,30 @@ public class IngestionPipeline
       logger().error("[{}] Pipeline FAILED: {}", job.getFilename(), e.getMessage(), e);
       job.fail(e.getMessage());
     }
+  }
+
+  private ReprocessingDiff buildReprocessingDiff(SemanticAnalysis prevAnalysis,
+                                                 SensitivityAssessment prevAssessment,
+                                                 OcrResult prevOcr,
+                                                 SemanticAnalysis newAnalysis,
+                                                 SensitivityAssessment newAssessment,
+                                                 OcrResult newOcr) {
+    return new ReprocessingDiff(
+        prevAnalysis != null ? prevAnalysis.getSummary() : null,
+        newAnalysis != null ? newAnalysis.getSummary() : null,
+        prevAnalysis != null ? prevAnalysis.getSourceCategory() : null,
+        newAnalysis != null ? newAnalysis.getSourceCategory() : null,
+        prevAssessment != null ? prevAssessment.getRiskLevel() : null,
+        newAssessment != null ? newAssessment.getRiskLevel() : null,
+        prevAnalysis != null ? prevAnalysis.getTags() : null,
+        newAnalysis != null ? newAnalysis.getTags() : null,
+        prevAnalysis != null ? prevAnalysis.getVisionModel() : null,
+        newAnalysis != null ? newAnalysis.getVisionModel() : null,
+        prevAnalysis != null ? prevAnalysis.getSemanticPromptVersion() : null,
+        newAnalysis != null ? newAnalysis.getSemanticPromptVersion() : null,
+        prevOcr != null ? prevOcr.getExtractedText() : null,
+        newOcr != null ? newOcr.getExtractedText() : null
+    );
   }
 
   private String buildEmbeddingText(SemanticAnalysis analysis) {

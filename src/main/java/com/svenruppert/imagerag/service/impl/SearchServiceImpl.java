@@ -16,9 +16,10 @@ public class SearchServiceImpl
     implements SearchService, HasLogger {
 
   /**
-   * Minimum cosine similarity for a candidate to be included in results.
-   * nomic-embed-text typically scores unrelated texts at 0.3–0.5 and related
-   * texts at 0.6–0.9. A threshold of 0.45 removes clearly unrelated images
+   * Minimum normalised RRF score for a candidate to be included in results.
+   * bge-m3 produces dense 1024-dim vectors; typical unrelated pairs score well
+   * below 0.5 after RRF normalisation, while semantically related pairs sit
+   * between 0.6–1.0.  A threshold of 0.65 removes clearly unrelated images
    * while keeping semantically adjacent results.
    */
   private static final double MIN_SCORE = 0.65;
@@ -71,16 +72,32 @@ public class SearchServiceImpl
     double maxRrf = rrfScores.values().stream().mapToDouble(Double::doubleValue).max().orElse(1.0);
 
     // Step 5: Apply score threshold + structural filters.
-    double effectiveMin = (plan.getMinScore() != null) ? Math.max(0.0, Math.min(1.0, plan.getMinScore())) : MIN_SCORE;
+    double effectiveMin = (plan.getMinScore() != null) ? Math.clamp(plan.getMinScore(), 0.0, 1.0) : MIN_SCORE;
 
     // Sort candidates by descending RRF score
-    List<UUID> sortedIds = rrfScores.entrySet().stream().sorted(Map.Entry.<UUID, Double>comparingByValue().reversed()).map(Map.Entry::getKey).toList();
+    List<UUID> sortedIds = rrfScores.entrySet().stream().sorted(Map.Entry.<UUID, Double> comparingByValue().reversed()).map(Map.Entry::getKey).toList();
 
     List<SearchResultItem> results = new ArrayList<>();
 
     for (UUID imageId : sortedIds) {
       double rrfScore = rrfScores.get(imageId);
       double normalizedScore = maxRrf > 0 ? rrfScore / maxRrf : 0.0;
+
+      // Category-confidence boost: when the query targets a specific category group and
+      // the image's stored confidence for that primary category is known, reward high-
+      // confidence classifications by up to +15 % so they rank above lower-confidence
+      // results in the same score band.
+      if (plan.getCategoryGroup() != null) {
+        Optional<SemanticAnalysis> boostAnalysis = persistenceService.findAnalysis(imageId);
+        if (boostAnalysis.isPresent()) {
+          CategoryConfidence cc =
+              boostAnalysis.get().getCategoryConfidence();
+          if (cc != null
+              && CategoryRegistry.getGroup(cc.getPrimaryCategory()) == plan.getCategoryGroup()) {
+            normalizedScore = Math.min(1.0, normalizedScore * (1.0 + 0.15 * cc.getPrimaryScore()));
+          }
+        }
+      }
 
       if (normalizedScore < effectiveMin) {
         logger().debug("RRF score below threshold {} — stopping", effectiveMin);
@@ -158,10 +175,15 @@ public class SearchServiceImpl
     }
 
     // --- Category group ---
-    // Filter by coarse category group: an image passes if its fine-grained SourceCategory
-    // maps to the same CategoryGroup that the search plan requests.
+    // An image passes if its primary OR any secondary SourceCategory maps to the
+    // requested CategoryGroup.  This ensures multi-category images are discoverable
+    // via any of their assigned categories.
     if (plan.getCategoryGroup() != null) {
-      if (CategoryRegistry.getGroup(analysis.getSourceCategory()) != plan.getCategoryGroup()) {
+      boolean primaryMatches =
+          CategoryRegistry.getGroup(analysis.getSourceCategory()) == plan.getCategoryGroup();
+      boolean secondaryMatches = analysis.getSecondaryCategories().stream()
+          .anyMatch(sc -> CategoryRegistry.getGroup(sc) == plan.getCategoryGroup());
+      if (!primaryMatches && !secondaryMatches) {
         return false;
       }
     }

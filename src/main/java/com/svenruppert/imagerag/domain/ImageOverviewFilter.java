@@ -105,17 +105,23 @@ public class ImageOverviewFilter {
    * @return {@code true} if the asset matches all active constraints
    */
   public boolean matches(ImageAsset asset, PersistenceService ps) {
-    // Fine-grained check takes precedence over coarse-group check.
+    // Fine-grained check: image passes if its primary OR any secondary category matches.
     if (specificCategory != null) {
-      SourceCategory assetCat = ps.findAnalysis(asset.getId())
-          .map(SemanticAnalysis::getSourceCategory)
-          .orElse(null);
-      if (!Objects.equals(specificCategory, assetCat)) return false;
+      SemanticAnalysis analysis = ps.findAnalysis(asset.getId()).orElse(null);
+      if (analysis == null) return false;
+      boolean primaryMatch = Objects.equals(specificCategory, analysis.getSourceCategory());
+      boolean secondaryMatch = analysis.getSecondaryCategories().stream()
+          .anyMatch(sc -> Objects.equals(specificCategory, sc));
+      if (!primaryMatch && !secondaryMatch) return false;
     } else if (category != null) {
-      CategoryGroup assetGroup = ps.findAnalysis(asset.getId())
-          .map(a -> CategoryRegistry.getGroup(a.getSourceCategory()))
-          .orElse(null);
-      if (!Objects.equals(category, assetGroup)) return false;
+      // Coarse group: image passes if primary OR any secondary category maps to the group.
+      SemanticAnalysis analysis = ps.findAnalysis(asset.getId()).orElse(null);
+      if (analysis == null) return false;
+      boolean primaryMatch =
+          Objects.equals(category, CategoryRegistry.getGroup(analysis.getSourceCategory()));
+      boolean secondaryMatch = analysis.getSecondaryCategories().stream()
+          .anyMatch(sc -> Objects.equals(category, CategoryRegistry.getGroup(sc)));
+      if (!primaryMatch && !secondaryMatch) return false;
     }
 
     if (risk != null) {

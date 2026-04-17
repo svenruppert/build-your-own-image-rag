@@ -2,10 +2,7 @@ package com.svenruppert.imagerag.persistence;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.*;
-import com.svenruppert.imagerag.domain.enums.RiskLevel;
-import com.svenruppert.imagerag.domain.enums.SearchMode;
-import com.svenruppert.imagerag.domain.enums.SensitivityFlag;
-import com.svenruppert.imagerag.domain.enums.SourceCategory;
+import com.svenruppert.imagerag.domain.enums.*;
 import org.eclipse.store.storage.embedded.types.EmbeddedStorage;
 import org.eclipse.store.storage.embedded.types.EmbeddedStorageManager;
 
@@ -13,6 +10,8 @@ import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
+
+import static java.util.List.*;
 
 public class PersistenceService
     implements HasLogger {
@@ -42,6 +41,8 @@ public class PersistenceService
       existingRoot.getSavedSearchViews();    // lazy init if null (added later)
       existingRoot.getAuditLog();            // lazy init if null (added later)
       existingRoot.getRawVectorStore();      // lazy init if null (added for GIGAMAP_JVECTOR backend)
+      existingRoot.getTaxonomySuggestions(); // lazy init if null (added for taxonomy maintenance)
+      existingRoot.getCategoryMetadata();    // lazy init if null (added for taxonomy maintenance)
       storage.store(existingRoot);           // persist updated field references
       migrateEnumSets();                  // fix any EnumSet fields broken by Unsafe reconstruction
       logger().info("EclipseStore loaded existing data: {} images, {} approved, {} recent searches",
@@ -95,7 +96,8 @@ public class PersistenceService
 
   /**
    * Permanently removes all persisted data for the given image.
-   * Caller is responsible for also removing the image file and the vector-index entry.
+   * Caller is responsible for also removing the image file, preview cache,
+   * and in-memory index entries (vector + keyword).
    */
   public void deleteImage(UUID imageId) {
     // Remove hash index entry before removing the asset record
@@ -111,6 +113,9 @@ public class PersistenceService
     root.getAssessments().remove(imageId);
     root.getVectorEntries().remove(imageId);
     root.getApprovedImageIds().remove(imageId);
+    // Also clean derived data added in later iterations
+    root.getOcrResults().remove(imageId);
+    root.getRawVectorStore().remove(imageId);
     storage.store(root.getImages());
     storage.store(root.getMetadata());
     storage.store(root.getLocations());
@@ -118,7 +123,9 @@ public class PersistenceService
     storage.store(root.getAssessments());
     storage.store(root.getVectorEntries());
     storage.store(root.getApprovedImageIds());
-    logger().info("Deleted all persisted data for imageId={}", imageId);
+    storage.store(root.getOcrResults());
+    storage.store(root.getRawVectorStore());
+    logger().info("Permanently deleted all persisted data for imageId={}", imageId);
   }
 
   // -------------------------------------------------------------------------
@@ -152,6 +159,22 @@ public class PersistenceService
       analysis.setSourceCategory(newCategory);
       storage.store(analysis);
       logger().info("Updated sourceCategory to {} for imageId={}", newCategory, imageId);
+    });
+  }
+
+  /**
+   * Update the secondary (additional) categories of an existing analysis and persist.
+   *
+   * <p>The list replaces any previously stored secondary categories. Pass an empty list
+   * to clear all secondary categories.
+   */
+  public void updateSecondaryCategories(UUID imageId,
+                                        java.util.List<SourceCategory> categories) {
+    findAnalysis(imageId).ifPresent(analysis -> {
+      analysis.setSecondaryCategories(
+          categories != null ? categories : of());
+      storage.store(analysis);
+      logger().info("Updated secondaryCategories for imageId={}: {}", imageId, categories);
     });
   }
 
@@ -443,6 +466,107 @@ public class PersistenceService
       asset.setDeletedReason(null);
       storage.store(asset);
     });
+    // Re-approve only if the stored sensitivity assessment is SAFE.
+    // REVIEW / SENSITIVE images remain locked and require manual approval in the Overview.
+    findAssessment(imageId).ifPresent(assessment -> {
+      if (assessment.getRiskLevel() == RiskLevel.SAFE) {
+        approveImage(imageId);
+        logger().info("Auto-approved restored image {} (SAFE risk)", imageId);
+      } else {
+        logger().info("Restored image {} remains locked ({} risk) — manual approval required",
+                      imageId, assessment.getRiskLevel());
+      }
+    });
+  }
+
+  /**
+   * Returns all images that have been soft-deleted (archived), regardless of their
+   * approval state or risk level.  Used by the Archive view.
+   */
+  public List<ImageAsset> findArchivedImages() {
+    return root.getImages().values().stream()
+        .filter(ImageAsset::isDeleted)
+        .sorted(Comparator.comparing(
+            a -> a.getDeletedAt() != null ? a.getDeletedAt() : Instant.EPOCH,
+            Comparator.reverseOrder()))
+        .collect(Collectors.toList());
+  }
+
+  // -------------------------------------------------------------------------
+  // Taxonomy suggestions
+  // -------------------------------------------------------------------------
+
+  /**
+   * Persists a {@link TaxonomySuggestion}.  If a suggestion with the same id already
+   * exists it is replaced; otherwise the suggestion is appended.
+   */
+  public void saveTaxonomySuggestion(TaxonomySuggestion suggestion) {
+    List<TaxonomySuggestion> list = root.getTaxonomySuggestions();
+    list.removeIf(s -> suggestion.getId().equals(s.getId()));
+    list.add(suggestion);
+    storage.store(list);
+  }
+
+  /**
+   * Returns an unmodifiable snapshot of all stored taxonomy suggestions (newest first).
+   */
+  public List<TaxonomySuggestion> findAllSuggestions() {
+    return Collections.unmodifiableList(root.getTaxonomySuggestions());
+  }
+
+  /**
+   * Returns suggestions filtered by status.
+   */
+  public List<TaxonomySuggestion> findSuggestionsByStatus(SuggestionStatus status) {
+    return root.getTaxonomySuggestions().stream()
+        .filter(s -> s.getStatus() == status)
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Returns a single suggestion by id.
+   */
+  public Optional<TaxonomySuggestion> findSuggestion(java.util.UUID suggestionId) {
+    return root.getTaxonomySuggestions().stream()
+        .filter(s -> suggestionId.equals(s.getId()))
+        .findFirst();
+  }
+
+  /**
+   * Removes all stored taxonomy suggestions.  Used before a fresh analysis run so
+   * the user sees only the most recent batch of proposals.
+   */
+  public void clearTaxonomySuggestions() {
+    root.getTaxonomySuggestions().clear();
+    storage.store(root.getTaxonomySuggestions());
+  }
+
+  // -------------------------------------------------------------------------
+  // Category lifecycle metadata
+  // -------------------------------------------------------------------------
+
+  /**
+   * Persists (creates or replaces) category lifecycle metadata for the given category.
+   */
+  public void saveCategoryMetadata(CategoryMetadata meta) {
+    root.getCategoryMetadata().put(meta.getCategory().name(), meta);
+    storage.store(root.getCategoryMetadata());
+  }
+
+  /**
+   * Returns the stored {@link CategoryMetadata} for the given category, or empty if
+   * no metadata record has been created (the category is implicitly ACTIVE).
+   */
+  public Optional<CategoryMetadata> findCategoryMetadata(SourceCategory category) {
+    if (category == null) return Optional.empty();
+    return Optional.ofNullable(root.getCategoryMetadata().get(category.name()));
+  }
+
+  /**
+   * Returns an unmodifiable snapshot of all stored category metadata records.
+   */
+  public List<CategoryMetadata> findAllCategoryMetadata() {
+    return Collections.unmodifiableList(new ArrayList<>(root.getCategoryMetadata().values()));
   }
 
   public void shutdown() {

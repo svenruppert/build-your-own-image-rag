@@ -6,41 +6,127 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 /**
- * Generates and caches scaled tile previews for the image tile view.
+ * Generates and caches scaled image previews for multiple UI contexts.
  *
- * <p>Previews are stored on disk in {@code _data_images_previews} as JPEG files named
- * {@code <uuid>_tile.jpg}.  They are generated lazily on first demand and reused on
- * subsequent calls, so the Vaadin UI can call {@link #getTilePreview} repeatedly
- * without reprocessing.
+ * <p>Three sizes are supported:
+ * <ul>
+ *   <li><b>TABLE</b> ({@code 80×60 px}) — compact thumbnails in the table/list view.</li>
+ *   <li><b>TILE</b> ({@code 400×300 px}) — tile-view cards (existing default).</li>
+ *   <li><b>DETAIL</b> ({@code 800×600 px}) — full-size preview in dialogs.</li>
+ * </ul>
  *
- * <p>Original images are never modified.
+ * <p>Previews are stored on disk as JPEG files in {@code _data_images_previews} using
+ * the naming scheme {@code <uuid>_<size>.jpg}.  They are generated lazily on first demand
+ * and reused on subsequent calls.  Original images are never modified.
  */
 public interface PreviewService {
 
   /**
-   * Returns the path to the tile-preview file for the given image.
-   * The file may not yet exist; call {@link #tilePreviewExists} first if needed.
+   * Returns the path to the cached preview file for the given image and size.
+   * The file may not exist yet.
    */
-  Path tilePreviewPath(UUID imageId);
+  Path previewPath(UUID imageId, PreviewSize size);
+
+  // ── Size-independent helpers ───────────────────────────────────────────────
 
   /**
-   * Returns {@code true} if a cached tile preview already exists on disk.
+   * Returns {@code true} if a cached preview for the given size already exists.
    */
-  boolean tilePreviewExists(UUID imageId);
+  boolean previewExists(UUID imageId, PreviewSize size);
 
   /**
-   * Returns a Vaadin {@link StreamResource} for the tile preview.
+   * Returns a Vaadin {@link StreamResource} for a preview of the requested size.
    *
-   * <p>If the preview does not yet exist it is generated from the original image at
-   * {@code originalPath} and written to disk before the stream is opened.
-   * If generation fails the method returns {@code null}; callers should fall back
-   * to streaming the original or showing a placeholder.
-   *
-   * @param imageId      image identifier
-   * @param originalPath path to the full-resolution original image
-   * @param resourceName name used for the {@link StreamResource} (typically
-   *                     the stored filename)
-   * @return a {@link StreamResource} for the preview, or {@code null} on error
+   * <p>If no cached file exists, the preview is generated from {@code originalPath} and
+   * written to disk before the resource is opened.  Returns {@code null} on error so
+   * callers can fall back to streaming the original.
    */
-  StreamResource getTilePreview(UUID imageId, Path originalPath, String resourceName);
+  StreamResource getPreview(UUID imageId, Path originalPath, String resourceName,
+                            PreviewSize size);
+
+  /**
+   * @deprecated Use {@link #previewPath(UUID, PreviewSize)} with {@link PreviewSize#TILE}.
+   */
+  @Deprecated
+  default Path tilePreviewPath(UUID imageId) {
+    return previewPath(imageId, PreviewSize.TILE);
+  }
+
+  // ── Convenience shorthands ────────────────────────────────────────────────
+
+  /**
+   * @deprecated Use {@link #previewExists(UUID, PreviewSize)} with {@link PreviewSize#TILE}.
+   */
+  @Deprecated
+  default boolean tilePreviewExists(UUID imageId) {
+    return previewExists(imageId, PreviewSize.TILE);
+  }
+
+  /**
+   * Returns a {@link StreamResource} for the TILE-sized preview.
+   * Kept for backward compatibility — delegates to {@link #getPreview} with {@link PreviewSize#TILE}.
+   */
+  default StreamResource getTilePreview(UUID imageId, Path originalPath, String resourceName) {
+    return getPreview(imageId, originalPath, resourceName, PreviewSize.TILE);
+  }
+
+  /**
+   * Deletes all cached preview files for the given image from disk.
+   *
+   * <p>Called as part of permanent image deletion to reclaim disk space.
+   * Safe to call even if no cached previews exist — missing files are silently ignored.
+   *
+   * @param imageId the image whose preview cache should be cleared
+   */
+  void deletePreviewCache(UUID imageId);
+
+  /**
+   * Available preview sizes.  Each size has distinct pixel dimensions and a
+   * corresponding on-disk file suffix.
+   */
+  enum PreviewSize {
+    /**
+     * Compact thumbnail for table/list rows — 80 × 60 px.
+     */
+    TABLE("table", 80, 60),
+    /**
+     * Medium thumbnail for tile-view cards — 400 × 300 px.
+     */
+    TILE("tile", 400, 300),
+    /**
+     * Large preview for detail dialogs — 800 × 600 px.
+     */
+    DETAIL("detail", 800, 600);
+
+    private final String suffix;
+    private final int maxWidth;
+    private final int maxHeight;
+
+    PreviewSize(String suffix, int maxWidth, int maxHeight) {
+      this.suffix = suffix;
+      this.maxWidth = maxWidth;
+      this.maxHeight = maxHeight;
+    }
+
+    /**
+     * File-name suffix used for the cached JPEG, e.g. {@code "tile"}.
+     */
+    public String getSuffix() {
+      return suffix;
+    }
+
+    /**
+     * Maximum width in pixels.
+     */
+    public int getMaxWidth() {
+      return maxWidth;
+    }
+
+    /**
+     * Maximum height in pixels.
+     */
+    public int getMaxHeight() {
+      return maxHeight;
+    }
+  }
 }

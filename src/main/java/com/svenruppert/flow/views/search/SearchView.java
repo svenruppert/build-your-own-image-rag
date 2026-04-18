@@ -33,7 +33,6 @@ import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.server.StreamResource;
-import com.vaadin.flow.shared.Registration;
 
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -41,6 +40,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -69,7 +72,10 @@ import java.util.stream.Collectors;
  * deletion.
  * <p>History is persisted <em>after</em> each run completes so that the entry always
  * captures the original query together with the LLM-transformed final query.
- * <p>Background searches use client-side polling (no {@code @Push} required).
+ * <p>Background searches are pushed to the UI via {@code ui.access()} (Push(AUTOMATIC)
+ * in {@link com.svenruppert.flow.AppShell}). While a search is in flight a server-side
+ * scheduler ticks every {@link #POLL_INTERVAL_MS} ms and calls {@link #onPoll()} on the
+ * UI thread to reflect intermediate inspector state.
  */
 @PageTitle("Search Images")
 @Route(value = SearchView.PATH, layout = MainLayout.class)
@@ -155,7 +161,10 @@ public class SearchView
   // ── Runtime state ─────────────────────────────────────────────────────────
   private SearchPlan currentPlan = null;
   private volatile SearchRunState currentSearch;
-  private Registration pollRegistration;
+
+  // ── Push-driven UI refresh scheduler (replaces former client-side polling) ──
+  private ScheduledExecutorService progressScheduler;
+  private ScheduledFuture<?> progressTask;
 
   public SearchView() {
     // Natural page scroll — do NOT call setSizeFull() so the page can grow with content.
@@ -457,7 +466,8 @@ public class SearchView
   @Override
   protected void onAttach(AttachEvent event) {
     super.onAttach(event);
-    pollRegistration = event.getUI().addPollListener(e -> onPoll());
+    // No client-side polling anymore: runSearch() pushes state changes directly
+    // via ui.access() (see startProgressPush()). Relies on @Push(AUTOMATIC).
   }
 
   // -------------------------------------------------------------------------
@@ -467,12 +477,38 @@ public class SearchView
   @Override
   protected void onDetach(DetachEvent event) {
     super.onDetach(event);
-    if (pollRegistration != null) {
-      pollRegistration.remove();
-      pollRegistration = null;
-    }
-    event.getUI().setPollInterval(-1);
+    stopProgressPush();
     // The shared search executor is NOT shut down here — it is managed by ServiceRegistry.
+  }
+
+  /**
+   * Starts the server-side scheduler that calls {@link #onPoll()} via
+   * {@code ui.access()} while a search is in flight. Replaces the old
+   * client-side polling ({@code UI.setPollInterval}).
+   */
+  private void startProgressPush() {
+    stopProgressPush();
+    getUI().ifPresent(ui -> {
+      progressScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "search-view-progress");
+        t.setDaemon(true);
+        return t;
+      });
+      progressTask = progressScheduler.scheduleAtFixedRate(
+          () -> ui.access(this::onPoll),
+          POLL_INTERVAL_MS, POLL_INTERVAL_MS, TimeUnit.MILLISECONDS);
+    });
+  }
+
+  private void stopProgressPush() {
+    if (progressTask != null) {
+      progressTask.cancel(false);
+      progressTask = null;
+    }
+    if (progressScheduler != null) {
+      progressScheduler.shutdownNow();
+      progressScheduler = null;
+    }
   }
 
   /**
@@ -541,7 +577,7 @@ public class SearchView
     tileContainer.setVisible(false);
     viewToggle.setVisible(false);
 
-    getUI().ifPresent(ui -> ui.setPollInterval(POLL_INTERVAL_MS));
+    startProgressPush();
 
     if (prebuiltPlan != null) {
       ServiceRegistry.getInstance().getSearchExecutor()
@@ -691,7 +727,7 @@ public class SearchView
     }
 
     // ── Search finished ────────────────────────────────────────────────────
-    getUI().ifPresent(ui -> ui.setPollInterval(-1));
+    stopProgressPush();
     currentSearch = null;
     progressBar.setVisible(false);
     statusLabel.setVisible(false);

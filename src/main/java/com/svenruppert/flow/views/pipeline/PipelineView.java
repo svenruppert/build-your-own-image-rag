@@ -40,11 +40,16 @@ import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Live pipeline monitor.
- * <p>Uses Vaadin client-side polling ({@link com.vaadin.flow.component.UI#setPollInterval})
- * to refresh the grid every 2 seconds — no {@code @Push} required.
+ * <p>A server-side {@link ScheduledExecutorService} ticks every 2 seconds and pushes
+ * grid updates to the browser via {@link com.vaadin.flow.component.UI#access(com.vaadin.flow.server.Command)}.
+ * This relies on the {@code @Push(AUTOMATIC)} configured in {@code AppShell}.
  * Each queued or running job shows an "Abbrechen" button that calls
  * {@link com.svenruppert.imagerag.pipeline.IngestionPipeline#cancel} on the server.
  * <p>Also exposes a bounded {@link Select} for the maximum number of parallel ingestion
@@ -58,7 +63,11 @@ public class PipelineView
 
   public static final String PATH = "pipeline";
 
-  private static final int POLL_INTERVAL_MS = 2_000;
+  private static final int REFRESH_INTERVAL_MS = 2_000;
+
+  /** Shared scheduler — one daemon thread per view instance; cancelled on detach. */
+  private ScheduledExecutorService scheduler;
+  private ScheduledFuture<?> refreshTask;
   private static final DateTimeFormatter TIME_FMT =
       DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
 
@@ -355,8 +364,15 @@ public class PipelineView
   @Override
   protected void onAttach(AttachEvent attachEvent) {
     super.onAttach(attachEvent);
-    attachEvent.getUI().setPollInterval(POLL_INTERVAL_MS);
-    attachEvent.getUI().addPollListener(e -> refreshGrid());
+    final var ui = attachEvent.getUI();
+    scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+      Thread t = new Thread(r, "pipeline-view-refresh");
+      t.setDaemon(true);
+      return t;
+    });
+    refreshTask = scheduler.scheduleAtFixedRate(
+        () -> ui.access(this::refreshGrid),
+        REFRESH_INTERVAL_MS, REFRESH_INTERVAL_MS, TimeUnit.MILLISECONDS);
   }
 
   // -------------------------------------------------------------------------
@@ -366,7 +382,14 @@ public class PipelineView
   @Override
   protected void onDetach(DetachEvent detachEvent) {
     super.onDetach(detachEvent);
-    detachEvent.getUI().setPollInterval(-1);
+    if (refreshTask != null) {
+      refreshTask.cancel(false);
+      refreshTask = null;
+    }
+    if (scheduler != null) {
+      scheduler.shutdownNow();
+      scheduler = null;
+    }
   }
 
   private HorizontalLayout buildBatchSection() {

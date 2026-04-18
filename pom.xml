@@ -73,7 +73,8 @@
         <maven.compiler.testSource>${jdk.version}</maven.compiler.testSource>
         <maven.compiler.testTarget>${jdk.version}</maven.compiler.testTarget>
 
-        <minimum-maven.version>3.9.14</minimum-maven.version>
+<!--        <minimum-maven.version>3.9.14</minimum-maven.version>-->
+        <minimum-maven.version>3.9.9</minimum-maven.version>
 
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
@@ -88,7 +89,7 @@
         <failOnMissingWebXml>false</failOnMissingWebXml>
         <vaadin.version>25.1.1</vaadin.version>
         <drivers.downloader.phase>pre-integration-test</drivers.downloader.phase>
-        <jetty.version>12.1.7</jetty.version>
+        <jetty.version>12.1.8</jetty.version>
         <warName>application</warName>
         <eclipse-store.version>4.0.1</eclipse-store.version>
     </properties>
@@ -196,10 +197,17 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
+            <version>2.0.17</version>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
+            <version>2.0.17</version>
+        </dependency>
+       <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>log4j-over-slf4j</artifactId>
+            <version>2.0.17</version>
         </dependency>
 
         <dependency>
@@ -292,6 +300,24 @@
                         <allowDuplicateFragmentNames>true</allowDuplicateFragmentNames>
                     </webApp>
                 </configuration>
+                <!--
+                Force SLF4J 2.x onto the plugin's classloader. Jetty 12.1 internals
+                call Logger.atDebug() which only exists in SLF4J 2.0+, but transitive
+                Maven plugin deps still drag in slf4j-api 1.7.36 which otherwise wins
+                at @Push teardown ("NoSuchMethodError: Logger.atDebug()").
+                -->
+                <dependencies>
+                    <dependency>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>slf4j-api</artifactId>
+                        <version>2.0.17</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.slf4j</groupId>
+                        <artifactId>slf4j-simple</artifactId>
+                        <version>2.0.17</version>
+                    </dependency>
+                </dependencies>
             </plugin>
             <!--
     Take care of synchronizing java dependencies and imports in

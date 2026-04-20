@@ -49,6 +49,7 @@ public class TuningInspectorComponent
   // ── Stored UI elements (updated in onAttach) ──────────────────────────────
   private final H4 headingEl = new H4();
   private final Map<PipelineStep, StepRow> rows = new LinkedHashMap<>();
+
   public TuningInspectorComponent() {
     setPadding(false);
     setSpacing(false);

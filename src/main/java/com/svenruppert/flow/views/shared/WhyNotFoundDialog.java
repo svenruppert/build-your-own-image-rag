@@ -36,7 +36,7 @@ public class WhyNotFoundDialog
   private final WhyNotFoundService whyNotFoundService;
   private final SearchTuningConfig config;
 
-  private final TextField queryField   = new TextField();
+  private final TextField queryField = new TextField();
   private final TextField imageIdField = new TextField();
   private final VerticalLayout resultPane = new VerticalLayout();
 
@@ -108,9 +108,45 @@ public class WhyNotFoundDialog
 
   // ── Analysis trigger ─────────────────────────────────────────────────────
 
+  private static H4 sectionHeading(String text) {
+    H4 h = new H4(text);
+    h.getStyle()
+        .set("font-size", "var(--lumo-font-size-xs)")
+        .set("text-transform", "uppercase")
+        .set("letter-spacing", "0.05em")
+        .set("color", "var(--lumo-secondary-text-color)")
+        .set("margin", "0.6rem 0 0.2rem 0");
+    return h;
+  }
+
+  // ── Analysis rendering ───────────────────────────────────────────────────
+
+  private static Div bullet(String icon, String text, String color) {
+    Div row = new Div();
+    row.getStyle()
+        .set("display", "flex").set("gap", "0.4rem").set("align-items", "flex-start")
+        .set("font-size", "var(--lumo-font-size-xs)");
+    Span ic = new Span(icon);
+    ic.getStyle().set("color", color).set("flex-shrink", "0");
+    Span tx = new Span(text);
+    tx.getStyle().set("color", "var(--lumo-body-text-color)");
+    row.add(ic, tx);
+    return row;
+  }
+
+  private static void addGridRow(Div grid, String label, String value) {
+    Span l = new Span(label + ":");
+    l.getStyle().set("color", "var(--lumo-secondary-text-color)").set("white-space", "nowrap");
+    Span v = new Span(value);
+    v.getStyle().set("color", "var(--lumo-body-text-color)");
+    grid.add(l, v);
+  }
+
+  // ── Rendering helpers ────────────────────────────────────────────────────
+
   private void triggerAnalyze() {
     String query = queryField.getValue();
-    String idStr  = imageIdField.getValue();
+    String idStr = imageIdField.getValue();
     if (query == null || query.isBlank()) {
       Notification.show(getTranslation("wnf.query.required"),
                         2500, Notification.Position.MIDDLE);
@@ -129,8 +165,6 @@ public class WhyNotFoundDialog
     }
     analyze(imageId, query);
   }
-
-  // ── Analysis rendering ───────────────────────────────────────────────────
 
   private void analyze(UUID imageId, String query) {
     if (imageId == null || query == null || query.isBlank()) return;
@@ -197,53 +231,19 @@ public class WhyNotFoundDialog
         .set("border-radius", "var(--lumo-border-radius-s)")
         .set("margin-bottom", "0.4rem");
 
-    addGridRow(grid, getTranslation("wnf.score.semantic"),      String.format("%.3f", a.semanticScore()));
-    addGridRow(grid, getTranslation("wnf.score.bm25"),          String.format("%.3f", a.bm25Score()));
-    addGridRow(grid, getTranslation("wnf.score.estimated"),     String.format("%.3f", a.estimatedFinalScore()));
-    addGridRow(grid, getTranslation("wnf.score.cutoff"),        String.format("%.2f", a.scoreCutoff()));
+    addGridRow(grid, getTranslation("wnf.score.semantic"), String.format("%.3f", a.semanticScore()));
+    addGridRow(grid, getTranslation("wnf.score.bm25"), String.format("%.3f", a.bm25Score()));
+    addGridRow(grid, getTranslation("wnf.score.estimated"), String.format("%.3f", a.estimatedFinalScore()));
+    addGridRow(grid, getTranslation("wnf.score.cutoff"), String.format("%.2f", a.scoreCutoff()));
     addGridRow(grid, getTranslation("wnf.score.above.threshold"),
                a.aboveThreshold() ? "\u2713 " + getTranslation("wnf.yes") : "\u2717 " + getTranslation("wnf.no"));
     addGridRow(grid, getTranslation("wnf.score.approved"),
-               a.approved()  ? "\u2713 " + getTranslation("wnf.yes") : "\u2717 " + getTranslation("wnf.no"));
+               a.approved() ? "\u2713 " + getTranslation("wnf.yes") : "\u2717 " + getTranslation("wnf.no"));
     addGridRow(grid, getTranslation("wnf.score.archived"),
-               a.archived()  ? "\u2713 " + getTranslation("wnf.archived.yes") : getTranslation("wnf.archived.no"));
+               a.archived() ? "\u2713 " + getTranslation("wnf.archived.yes") : getTranslation("wnf.archived.no"));
     addGridRow(grid, getTranslation("wnf.score.vector"),
                a.vectorAvailable() ? "\u2713 " + getTranslation("wnf.yes") : "\u2717 " + getTranslation("wnf.no"));
     return grid;
-  }
-
-  // ── Rendering helpers ────────────────────────────────────────────────────
-
-  private static H4 sectionHeading(String text) {
-    H4 h = new H4(text);
-    h.getStyle()
-        .set("font-size", "var(--lumo-font-size-xs)")
-        .set("text-transform", "uppercase")
-        .set("letter-spacing", "0.05em")
-        .set("color", "var(--lumo-secondary-text-color)")
-        .set("margin", "0.6rem 0 0.2rem 0");
-    return h;
-  }
-
-  private static Div bullet(String icon, String text, String color) {
-    Div row = new Div();
-    row.getStyle()
-        .set("display", "flex").set("gap", "0.4rem").set("align-items", "flex-start")
-        .set("font-size", "var(--lumo-font-size-xs)");
-    Span ic = new Span(icon);
-    ic.getStyle().set("color", color).set("flex-shrink", "0");
-    Span tx = new Span(text);
-    tx.getStyle().set("color", "var(--lumo-body-text-color)");
-    row.add(ic, tx);
-    return row;
-  }
-
-  private static void addGridRow(Div grid, String label, String value) {
-    Span l = new Span(label + ":");
-    l.getStyle().set("color", "var(--lumo-secondary-text-color)").set("white-space", "nowrap");
-    Span v = new Span(value);
-    v.getStyle().set("color", "var(--lumo-body-text-color)");
-    grid.add(l, v);
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────

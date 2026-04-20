@@ -1,7 +1,5 @@
 package com.svenruppert.imagerag.service.impl;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.SearchPlan;
 import com.svenruppert.imagerag.domain.enums.CategoryGroup;
@@ -9,6 +7,8 @@ import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
 import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.service.QueryUnderstandingService;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.Optional;
 

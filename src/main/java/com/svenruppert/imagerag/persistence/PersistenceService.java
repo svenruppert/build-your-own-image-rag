@@ -171,7 +171,7 @@ public class PersistenceService
    * to clear all secondary categories.
    */
   public void updateSecondaryCategories(UUID imageId,
-                                        java.util.List<SourceCategory> categories) {
+                                        List<SourceCategory> categories) {
     findAnalysis(imageId).ifPresent(analysis -> {
       analysis.setSecondaryCategories(
           categories != null ? categories : of());
@@ -321,9 +321,9 @@ public class PersistenceService
         recent.remove(i);
       }
     }
-    recent.add(0, new RecentSearchEntry(trimmed, finalQuery, mode, Instant.now()));
+    recent.addFirst(new RecentSearchEntry(trimmed, finalQuery, mode, Instant.now()));
     while (recent.size() > MAX_RECENT_SEARCHES) {
-      recent.remove(recent.size() - 1);
+      recent.removeLast();
     }
     storage.store(recent);
     logger().debug("Recent search history updated: {} entries", recent.size());
@@ -447,9 +447,9 @@ public class PersistenceService
 
   public void addAuditEntry(AuditEntry entry) {
     List<AuditEntry> log = root.getAuditLog();
-    log.add(0, entry);
+    log.addFirst(entry);
     // Keep last 500 entries
-    while (log.size() > 500) log.remove(log.size() - 1);
+    while (log.size() > 500) log.removeLast();
     storage.store(log);
   }
 
@@ -611,7 +611,7 @@ public class PersistenceService
    * ordered by insertion (oldest first).
    */
   public List<com.svenruppert.imagerag.domain.SearchTuningPreset> findAllTuningPresets() {
-    return Collections.unmodifiableList(new ArrayList<>(root.getTuningPresets()));
+    return List.copyOf(root.getTuningPresets());
   }
 
   /**
@@ -636,7 +636,7 @@ public class PersistenceService
   }
 
   public List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> findAllClusterSuggestions() {
-    return Collections.unmodifiableList(new ArrayList<>(root.getClusterSuggestions()));
+    return List.copyOf(root.getClusterSuggestions());
   }
 
   /**
@@ -673,7 +673,7 @@ public class PersistenceService
   }
 
   public List<com.svenruppert.imagerag.domain.PromptTemplateVersion> findAllPromptVersions() {
-    return Collections.unmodifiableList(new ArrayList<>(root.getPromptVersions()));
+    return List.copyOf(root.getPromptVersions());
   }
 
   public Optional<com.svenruppert.imagerag.domain.PromptTemplateVersion> findActivePromptVersion(String promptKey) {

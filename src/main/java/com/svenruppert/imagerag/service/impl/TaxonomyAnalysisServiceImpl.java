@@ -1,7 +1,5 @@
 package com.svenruppert.imagerag.service.impl;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.CategoryLifecycleState;
@@ -11,6 +9,8 @@ import com.svenruppert.imagerag.ollama.OllamaConfig;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.TaxonomyAnalysisProgress;
 import com.svenruppert.imagerag.service.TaxonomyAnalysisService;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.*;

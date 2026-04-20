@@ -64,13 +64,8 @@ public class PipelineView
   public static final String PATH = "pipeline";
 
   private static final int REFRESH_INTERVAL_MS = 2_000;
-
-  /** Shared scheduler — one daemon thread per view instance; cancelled on detach. */
-  private ScheduledExecutorService scheduler;
-  private ScheduledFuture<?> refreshTask;
   private static final DateTimeFormatter TIME_FMT =
       DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
-
   private final Grid<IngestionJob> grid = new Grid<>(IngestionJob.class, false);
   private final Span statsLabel = new Span();
   // ── Pause button ─────────────────────────────────────────────────────────
@@ -83,6 +78,11 @@ public class PipelineView
   private final HorizontalLayout batchSection = new HorizontalLayout();
   // ── Completion summary card (visible when all jobs are terminal) ────────────
   private final Div completionSummaryCard = new Div();
+  /**
+   * Shared scheduler — one daemon thread per view instance; cancelled on detach.
+   */
+  private ScheduledExecutorService scheduler;
+  private ScheduledFuture<?> refreshTask;
   // ── Filter state ──────────────────────────────────────────────────────────
   private JobStep filterStep = null;
   private JobType filterType = null;

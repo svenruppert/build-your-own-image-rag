@@ -20,7 +20,9 @@ import java.util.Optional;
 public class OllamaClient
     implements HasLogger {
 
-  /** Safety cap on image bytes sent to the vision model (50 MiB). */
+  /**
+   * Safety cap on image bytes sent to the vision model (50 MiB).
+   */
   private static final long MAX_VISION_IMAGE_BYTES = 50L * 1024 * 1024;
 
   private final OllamaConfig config;
@@ -44,7 +46,7 @@ public class OllamaClient
       long size = Files.size(imagePath);
       if (size > MAX_VISION_IMAGE_BYTES) {
         logger().warn("Refusing vision analysis for {}: size {} exceeds limit {}",
-            imagePath.getFileName(), size, MAX_VISION_IMAGE_BYTES);
+                      imagePath.getFileName(), size, MAX_VISION_IMAGE_BYTES);
         return Optional.empty();
       }
       byte[] imageBytes = Files.readAllBytes(imagePath);

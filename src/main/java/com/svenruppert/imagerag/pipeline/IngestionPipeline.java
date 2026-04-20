@@ -5,6 +5,7 @@ import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.dto.ExtractedMetadata;
 import com.svenruppert.imagerag.dto.StoredImage;
+import com.svenruppert.imagerag.dto.VisionAnalysisResponse;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.*;
@@ -243,7 +244,7 @@ public class IngestionPipeline
     if (imageId != null) {
       // Image was stored — reprocess it
       return persistenceService.findImage(imageId)
-          .map(asset -> submitReprocess(asset))
+          .map(this::submitReprocess)
           .orElseThrow(() -> new IllegalStateException("Image not found for retry"));
     }
     throw new IllegalStateException(
@@ -284,7 +285,7 @@ public class IngestionPipeline
    * @param parallelism desired number of concurrent workers
    */
   public synchronized void updateParallelism(int parallelism) {
-    int clamped = Math.max(1, Math.min(6, parallelism));
+    int clamped = Math.clamp(parallelism, 1, 6);
     ThreadPoolExecutor old = executor;
     // Create a fresh queue so the old executor can drain its queue without interference
     // from the new executor.  Tasks already in the old queue complete on old executor threads.
@@ -361,7 +362,7 @@ public class IngestionPipeline
       // Step 2: Vision analysis (LLM — slow)
       checkPauseOrCancelled();
       job.transition(JobStep.ANALYZING_VISION);
-      com.svenruppert.imagerag.dto.VisionAnalysisResponse visionResponse =
+      VisionAnalysisResponse visionResponse =
           visionAnalysisService.analyzeImage(imagePath);
       logger().info("[reprocess][{}] Vision done (successful={})",
                     asset.getOriginalFilename(), visionResponse.successful());
@@ -420,7 +421,7 @@ public class IngestionPipeline
       checkPauseOrCancelled();
       job.transition(JobStep.OCR_TEXT);
       try {
-        com.svenruppert.imagerag.dto.VisionAnalysisResponse ocrResponse =
+        VisionAnalysisResponse ocrResponse =
             visionAnalysisService.analyzeImage(imagePath);
         String raw = ocrResponse.rawDescription();
         boolean hasText = raw != null && !raw.isBlank() && !raw.equals("NO_TEXT");
@@ -448,7 +449,7 @@ public class IngestionPipeline
       if (semanticAnalysis.getSecondaryCategories() != null
           && !semanticAnalysis.getSecondaryCategories().isEmpty()) {
         String secondaryCats = semanticAnalysis.getSecondaryCategories().stream()
-            .map(sc -> sc.name())
+            .map(Enum::name)
             .collect(java.util.stream.Collectors.joining(" "));
         catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
       }
@@ -576,7 +577,7 @@ public class IngestionPipeline
       job.transition(JobStep.OCR_TEXT);
       OcrResult ocrResult = null;
       try {
-        com.svenruppert.imagerag.dto.VisionAnalysisResponse ocrResponse =
+        VisionAnalysisResponse ocrResponse =
             visionAnalysisService.analyzeImage(imageStorageService.resolvePath(imageId));
         String raw = ocrResponse.rawDescription();
         boolean hasText = raw != null && !raw.isBlank() && !raw.equals("NO_TEXT");
@@ -590,7 +591,7 @@ public class IngestionPipeline
       // Step 4: Vision analysis (LLM — slow, sequential)
       checkPauseOrCancelled();
       job.transition(JobStep.ANALYZING_VISION);
-      com.svenruppert.imagerag.dto.VisionAnalysisResponse visionResponse = visionAnalysisService.analyzeImage(
+      VisionAnalysisResponse visionResponse = visionAnalysisService.analyzeImage(
           imageStorageService.resolvePath(imageId));
       logger().info("[{}] Vision done (successful={})", job.getFilename(), visionResponse.successful());
 
@@ -648,7 +649,7 @@ public class IngestionPipeline
       if (semanticAnalysis.getSecondaryCategories() != null
           && !semanticAnalysis.getSecondaryCategories().isEmpty()) {
         String secondaryCats = semanticAnalysis.getSecondaryCategories().stream()
-            .map(sc -> sc.name())
+            .map(Enum::name)
             .collect(java.util.stream.Collectors.joining(" "));
         catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
       }

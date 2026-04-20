@@ -59,7 +59,9 @@ public class MigrationCenterView
 
   public static final String PATH = "migration";
 
-  /** Upper bound on prompt-draft test execution so a hung model can't freeze the dialog. */
+  /**
+   * Upper bound on prompt-draft test execution so a hung model can't freeze the dialog.
+   */
   private static final long PROMPT_TEST_TIMEOUT_SECONDS = 120L;
 
   private static final DateTimeFormatter DATE_FMT =
@@ -166,6 +168,24 @@ public class MigrationCenterView
 
   // ── Tab 2: Prompts ────────────────────────────────────────────────────────
 
+  /**
+   * Sanitises an LLM-derived description before substituting it into a user-authored
+   * prompt draft. Caps length, strips control characters, neutralises common prompt
+   * break-out tokens, and replaces double quotes to keep JSON-style prompts intact.
+   * <p>This is a defence-in-depth measure for the "Test draft" flow, where the draft
+   * may be executed against real image descriptions during prompt authoring.
+   */
+  private static String sanitizeForPrompt(String raw) {
+    if (raw == null) return "";
+    String s = raw.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", " ");
+    s = s.replace("```", "'''")
+        .replace("</", "< /")
+        .replace("\"", "'");
+    final int maxLen = 4000;
+    if (s.length() > maxLen) s = s.substring(0, maxLen) + "…";
+    return s;
+  }
+
   @Override
   public void beforeEnter(BeforeEnterEvent event) {
     refreshPromptSelectors();
@@ -182,6 +202,8 @@ public class MigrationCenterView
     return h;
   }
 
+  // ── Tab 3: Index Rebuild ──────────────────────────────────────────────────
+
   private Component buildTabSheet() {
     TabSheet tabs = new TabSheet();
     tabs.setWidthFull();
@@ -192,8 +214,6 @@ public class MigrationCenterView
 
     return tabs;
   }
-
-  // ── Tab 3: Index Rebuild ──────────────────────────────────────────────────
 
   private Component buildSystemConfigTab() {
     VerticalLayout tab = tabLayout();
@@ -236,6 +256,8 @@ public class MigrationCenterView
     return tab;
   }
 
+  // ── Prompt editor actions ─────────────────────────────────────────────────
+
   private Component buildPromptsTab() {
     VerticalLayout tab = tabLayout();
 
@@ -251,8 +273,6 @@ public class MigrationCenterView
     tab.add(split);
     return tab;
   }
-
-  // ── Prompt editor actions ─────────────────────────────────────────────────
 
   private VerticalLayout buildPromptHistoryPanel() {
     VerticalLayout panel = styledPanel("340px");
@@ -516,6 +536,8 @@ public class MigrationCenterView
     }
   }
 
+  // ── Prompt test / preview ─────────────────────────────────────────────────
+
   private String resolvePromptKeyFromEditor() {
     if (selectedVersion != null) return selectedVersion.getPromptKey();
     // Fallback: whichever selector has a value
@@ -523,8 +545,6 @@ public class MigrationCenterView
     if (semanticSelect.getValue() != null) return SemanticDerivationServiceImpl.PROMPT_KEY;
     return null;
   }
-
-  // ── Prompt test / preview ─────────────────────────────────────────────────
 
   /**
    * Opens a dialog that lets the user test the current draft prompt content against
@@ -601,7 +621,7 @@ public class MigrationCenterView
             ui.access(() -> {
               testProgress.setVisible(false);
               resultArea.setValue(getTranslation("migration.test.timeout",
-                  String.valueOf(PROMPT_TEST_TIMEOUT_SECONDS)));
+                                                 String.valueOf(PROMPT_TEST_TIMEOUT_SECONDS)));
             });
             return;
           }
@@ -680,25 +700,6 @@ public class MigrationCenterView
       return ollama.generateJson(formatted)
           .orElse(getTranslation("migration.test.no.result"));
     }
-  }
-
-  /**
-   * Sanitises an LLM-derived description before substituting it into a user-authored
-   * prompt draft. Caps length, strips control characters, neutralises common prompt
-   * break-out tokens, and replaces double quotes to keep JSON-style prompts intact.
-   *
-   * <p>This is a defence-in-depth measure for the "Test draft" flow, where the draft
-   * may be executed against real image descriptions during prompt authoring.
-   */
-  private static String sanitizeForPrompt(String raw) {
-    if (raw == null) return "";
-    String s = raw.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", " ");
-    s = s.replace("```", "'''")
-         .replace("</", "< /")
-         .replace("\"", "'");
-    final int maxLen = 4000;
-    if (s.length() > maxLen) s = s.substring(0, maxLen) + "…";
-    return s;
   }
 
   // ── Index rebuild actions ─────────────────────────────────────────────────

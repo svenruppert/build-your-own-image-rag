@@ -2,6 +2,7 @@ package com.svenruppert.imagerag.service.impl;
 
 import com.svenruppert.imagerag.domain.CategoryClusterSuggestion;
 import com.svenruppert.imagerag.domain.CategoryClusterSuggestion.SuggestionType;
+import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.persistence.PersistenceService;
@@ -72,7 +73,7 @@ public class ClusterDiscoveryServiceImpl
       return List.of();
     }
 
-    int k = Math.min(maxClusters, Math.max(2, vectors.size() / 10));
+    int k = Math.clamp(vectors.size() / 10, 2, maxClusters);
     notify(progress, String.format("Running k-means with k=%d over %d images…", k, vectors.size()));
 
     List<UUID> ids = new ArrayList<>(vectors.keySet());
@@ -97,7 +98,7 @@ public class ClusterDiscoveryServiceImpl
           Optional<SemanticAnalysis> a = persistenceService.findAnalysis(img.getId());
           return a.isPresent() && category.equals(a.get().getSourceCategory());
         })
-        .map(img -> img.getId())
+        .map(ImageAsset::getId)
         .toList();
 
     if (categoryIds.size() < minClusterSize * 2) return List.of();
@@ -108,7 +109,7 @@ public class ClusterDiscoveryServiceImpl
     }
     if (vectors.size() < minClusterSize * 2) return List.of();
 
-    int k = Math.min(5, Math.max(2, vectors.size() / 8));
+    int k = Math.clamp(vectors.size() / 8, 2, 5);
     List<UUID> ids = new ArrayList<>(vectors.keySet());
     List<float[]> vecs = ids.stream().map(vectors::get).toList();
 
@@ -118,7 +119,7 @@ public class ClusterDiscoveryServiceImpl
 
   private int[] kMeans(List<float[]> vectors, int k, Consumer<String> progress) {
     int n = vectors.size();
-    int dims = vectors.get(0).length;
+    int dims = vectors.getFirst().length;
 
     // Initialise centroids via k-means++ seeding
     float[][] centroids = initCentroids(vectors, k);

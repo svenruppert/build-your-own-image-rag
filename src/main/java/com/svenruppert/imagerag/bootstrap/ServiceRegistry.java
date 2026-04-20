@@ -52,12 +52,12 @@ public class ServiceRegistry
   private final ReprocessingService reprocessingService;
   private final IngestionPipeline ingestionPipeline;
   private final AuditService auditService;
-  private final com.svenruppert.imagerag.service.TaxonomySuggestionService taxonomySuggestionService;
-  private final com.svenruppert.imagerag.service.TaxonomyAnalysisService taxonomyAnalysisService;
-  private final com.svenruppert.imagerag.service.PromptTemplateService promptTemplateService;
-  private final com.svenruppert.imagerag.service.WhyNotFoundService whyNotFoundService;
-  private final com.svenruppert.imagerag.service.ClusterDiscoveryService clusterDiscoveryService;
-  private final com.svenruppert.imagerag.service.SearchStrategyAutopilot searchStrategyAutopilot;
+  private final TaxonomySuggestionService taxonomySuggestionService;
+  private final TaxonomyAnalysisService taxonomyAnalysisService;
+  private final PromptTemplateService promptTemplateService;
+  private final WhyNotFoundService whyNotFoundService;
+  private final ClusterDiscoveryService clusterDiscoveryService;
+  private final SearchStrategyAutopilot searchStrategyAutopilot;
 
   /**
    * Shared executor for background search tasks across all UI sessions.
@@ -78,8 +78,7 @@ public class ServiceRegistry
     ollamaClient = new OllamaClient(ollamaConfig);
 
     if (!ollamaClient.isAvailable()) {
-      logger().warn("Ollama is NOT reachable at {}. Vision and embedding features will degrade gracefully.",
-                    ollamaConfig.baseUrl());
+      logger().warn("Ollama is NOT reachable at {}. Vision and embedding features will degrade gracefully.", ollamaConfig.baseUrl());
     } else {
       logger().info("Ollama connected at {}", ollamaConfig.baseUrl());
     }
@@ -112,29 +111,24 @@ public class ServiceRegistry
     vectorBackendType = VectorBackendType.fromConfig();
     logger().info("Vector backend selected: {}", vectorBackendType);
 
-    switch (vectorBackendType) {
-      case GIGAMAP_JVECTOR -> {
-        var jvectorBackend = new EclipseStoreGigaMapJVectorBackend(persistenceService);
-        vectorIndexService = jvectorBackend;
-        if (jvectorBackend.isEmpty() && !persistenceService.findAllIndexedImageIds().isEmpty()) {
-          // First run with this backend — migrate by re-embedding from analysis text.
-          logger().info("GIGAMAP_JVECTOR backend: no persisted raw vectors found "
-                            + "— running one-time migration by re-embedding existing analyses.");
-          migrateToGigaMapJVector(jvectorBackend);
-        } else if (!persistenceService.findAllIndexedImageIds().isEmpty()) {
-          // Subsequent startups: detect if the configured embedding model changed since
-          // vectors were last written.  Mixed-model vectors would produce nonsensical
-          // search results, so we proactively re-embed before building the HNSW index.
-          migrateStaleVectors();
-        }
-        // Build the JVector HNSW index from (possibly freshly updated) raw vectors.
-        jvectorBackend.initialize();
+    if (Objects.requireNonNull(vectorBackendType) == VectorBackendType.GIGAMAP_JVECTOR) {
+      var jvectorBackend = new EclipseStoreGigaMapJVectorBackend(persistenceService);
+      vectorIndexService = jvectorBackend;
+      if (jvectorBackend.isEmpty() && !persistenceService.findAllIndexedImageIds().isEmpty()) {
+        // First run with this backend — migrate by re-embedding from analysis text.
+        logger().info("GIGAMAP_JVECTOR backend: no persisted raw vectors found " + "— running one-time migration by re-embedding existing analyses.");
+        migrateToGigaMapJVector(jvectorBackend);
+      } else if (!persistenceService.findAllIndexedImageIds().isEmpty()) {
+        // Subsequent startups: detect if the configured embedding model changed since
+        // vectors were last written.  Mixed-model vectors would produce nonsensical
+        // search results, so we proactively re-embed before building the HNSW index.
+        migrateStaleVectors();
       }
-      default -> {
-        // IN_MEMORY backend: existing implementation, re-embed on each restart.
-        vectorIndexService = new VectorIndexServiceImpl();
-        restoreVectorIndex();
-      }
+      // Build the JVector HNSW index from (possibly freshly updated) raw vectors.
+      jvectorBackend.initialize();
+    } else { // IN_MEMORY backend: existing implementation, re-embed on each restart.
+      vectorIndexService = new VectorIndexServiceImpl();
+      restoreVectorIndex();
     }
 
     // Keyword index — BM25 via Lucene, stored on disk
@@ -157,73 +151,51 @@ public class ServiceRegistry
 
     // Search
     queryUnderstandingService = new QueryUnderstandingServiceImpl(ollamaClient);
-    searchService = new SearchServiceImpl(
-        queryUnderstandingService, embeddingService,
-        vectorIndexService, persistenceService, keywordIndexService);
+    searchService = new SearchServiceImpl(queryUnderstandingService, embeddingService, vectorIndexService, persistenceService, keywordIndexService);
 
     // Shared search executor — initial size = configured search parallelism (default 1)
     searchExecutor = buildSearchExecutor(processingSettings.getSearchParallelism());
 
     // Async ingestion pipeline — handles uploads AND reprocessing jobs.
     // Must be constructed before reprocessingService so the latter can delegate to it.
-    ingestionPipeline = new IngestionPipeline(
-        imageStorageService, metadataExtractionService, reverseGeocodingService,
-        visionAnalysisService, semanticDerivationService, sensitivityAssessmentService,
-        embeddingService, vectorIndexService, persistenceService,
-        keywordIndexService, ollamaConfig);
+    ingestionPipeline = new IngestionPipeline(imageStorageService, metadataExtractionService, reverseGeocodingService, visionAnalysisService, semanticDerivationService, sensitivityAssessmentService, embeddingService, vectorIndexService, persistenceService, keywordIndexService, ollamaConfig);
 
     // Reprocessing service — thin facade that delegates to the pipeline for visibility.
     // Reprocessing jobs appear in the Pipeline view just like upload jobs.
     reprocessingService = new ReprocessingServiceImpl(ingestionPipeline, persistenceService);
 
     // Taxonomy maintenance services
-    taxonomySuggestionService =
-        new com.svenruppert.imagerag.service.impl.TaxonomySuggestionServiceImpl(persistenceService);
-    taxonomyAnalysisService =
-        new com.svenruppert.imagerag.service.impl.TaxonomyAnalysisServiceImpl(
-            persistenceService, ollamaClient, ollamaConfig);
+    taxonomySuggestionService = new TaxonomySuggestionServiceImpl(persistenceService);
+    taxonomyAnalysisService = new TaxonomyAnalysisServiceImpl(persistenceService, ollamaClient, ollamaConfig);
 
     // Prompt template service — manages versioned prompt overrides
-    promptTemplateService =
-        new com.svenruppert.imagerag.service.impl.PromptTemplateServiceImpl(persistenceService);
+    promptTemplateService = new PromptTemplateServiceImpl(persistenceService);
 
     // Import built-in prompts on first startup (idempotent)
-    promptTemplateService.importBuiltInIfAbsent(
-        com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl.PROMPT_KEY,
-        com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl.PROMPT_VERSION,
-        com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl.VISION_PROMPT);
-    promptTemplateService.importBuiltInIfAbsent(
-        com.svenruppert.imagerag.service.impl.SemanticDerivationServiceImpl.PROMPT_KEY,
-        com.svenruppert.imagerag.service.impl.SemanticDerivationServiceImpl.DERIVATION_PROMPT_VERSION,
-        com.svenruppert.imagerag.service.impl.SemanticDerivationServiceImpl.DERIVATION_PROMPT_TEMPLATE);
+    promptTemplateService.importBuiltInIfAbsent(VisionAnalysisServiceImpl.PROMPT_KEY, VisionAnalysisServiceImpl.PROMPT_VERSION, VisionAnalysisServiceImpl.VISION_PROMPT);
+    promptTemplateService.importBuiltInIfAbsent(SemanticDerivationServiceImpl.PROMPT_KEY, SemanticDerivationServiceImpl.DERIVATION_PROMPT_VERSION, SemanticDerivationServiceImpl.DERIVATION_PROMPT_TEMPLATE);
 
     // Wire PromptTemplateService into analysis services
-    ((com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl) visionAnalysisService)
-        .setPromptTemplateService(promptTemplateService);
-    ((com.svenruppert.imagerag.service.impl.SemanticDerivationServiceImpl) semanticDerivationService)
-        .setPromptTemplateService(promptTemplateService);
+    ((VisionAnalysisServiceImpl) visionAnalysisService).setPromptTemplateService(promptTemplateService);
+    ((SemanticDerivationServiceImpl) semanticDerivationService).setPromptTemplateService(promptTemplateService);
 
     // Why-not-found diagnostic service
-    whyNotFoundService = new com.svenruppert.imagerag.service.impl.WhyNotFoundServiceImpl(
-        persistenceService, embeddingService, vectorIndexService, keywordIndexService);
+    whyNotFoundService = new WhyNotFoundServiceImpl(persistenceService, embeddingService, vectorIndexService, keywordIndexService);
 
     // Cluster discovery service — k-means on raw vectors
-    clusterDiscoveryService = new com.svenruppert.imagerag.service.impl.ClusterDiscoveryServiceImpl(
-        persistenceService);
+    clusterDiscoveryService = new ClusterDiscoveryServiceImpl(persistenceService);
 
     // Search-strategy autopilot — heuristic advisor (stateless, no constructor args)
-    searchStrategyAutopilot = new com.svenruppert.imagerag.service.SearchStrategyAutopilot();
+    searchStrategyAutopilot = new SearchStrategyAutopilot();
 
-    logger().info("ServiceRegistry initialized. {} images in store.",
-                  persistenceService.findAllImages().size());
+    logger().info("ServiceRegistry initialized. {} images in store.", persistenceService.findAllImages().size());
   }
 
   public static ServiceRegistry getInstance() {
     if (serviceRegistry == null) {
       synchronized (ServiceRegistry.class) {
         if (serviceRegistry == null) {
-          throw new IllegalStateException(
-              "ServiceRegistry not initialized. Call initialize() at application startup.");
+          throw new IllegalStateException("ServiceRegistry not initialized. Call initialize() at application startup.");
         }
       }
     }
@@ -286,13 +258,11 @@ public class ServiceRegistry
   // -------------------------------------------------------------------------
 
   private static ExecutorService buildSearchExecutor(int parallelism) {
-    int clamped = Math.max(1, Math.min(4, parallelism));
+    int clamped = Math.clamp(parallelism, 1, 4);
     if (clamped <= 1) {
-      return Executors.newSingleThreadExecutor(
-          Thread.ofVirtual().name("search-worker").factory());
+      return Executors.newSingleThreadExecutor(Thread.ofVirtual().name("search-worker").factory());
     }
-    return Executors.newFixedThreadPool(
-        clamped, Thread.ofVirtual().name("search-", 0).factory());
+    return Executors.newFixedThreadPool(clamped, Thread.ofVirtual().name("search-", 0).factory());
   }
 
   /**
@@ -337,8 +307,7 @@ public class ServiceRegistry
    */
   private void migrateToGigaMapJVector(EclipseStoreGigaMapJVectorBackend backend) {
     var imageIds = persistenceService.findAllIndexedImageIds();
-    logger().info("Migrating {} images to EclipseStore GigaMap raw-vector store...",
-                  imageIds.size());
+    logger().info("Migrating {} images to EclipseStore GigaMap raw-vector store...", imageIds.size());
     int migrated = 0;
 
     for (var imageId : imageIds) {
@@ -356,8 +325,7 @@ public class ServiceRegistry
           persistenceService.saveRawVector(imageId, vector);
           // Record which model produced this vector so migrateStaleVectors() can
           // detect future model changes and re-embed before building the HNSW index.
-          var entry = new com.svenruppert.imagerag.domain.VectorEntry(
-              imageId, ollamaConfig.getEmbeddingModel(), vector.length, Instant.now());
+          var entry = new com.svenruppert.imagerag.domain.VectorEntry(imageId, ollamaConfig.getEmbeddingModel(), vector.length, Instant.now());
           persistenceService.saveVectorEntry(imageId, entry);
           migrated++;
         }
@@ -365,8 +333,7 @@ public class ServiceRegistry
         logger().warn("Could not migrate vector for image {}: {}", imageId, e.getMessage());
       }
     }
-    logger().info("Migration complete: {}/{} vectors written to EclipseStore GigaMap",
-                  migrated, imageIds.size());
+    logger().info("Migration complete: {}/{} vectors written to EclipseStore GigaMap", migrated, imageIds.size());
   }
 
   /**
@@ -384,20 +351,14 @@ public class ServiceRegistry
    */
   private void migrateStaleVectors() {
     String configuredModel = ollamaConfig.getEmbeddingModel();
-    boolean mismatch = persistenceService.findAllIndexedImageIds().stream()
-        .anyMatch(id -> persistenceService.findVectorEntry(id)
-            .map(e -> !Objects.equals(configuredModel, e.getEmbeddingModel()))
-            .orElse(false));
+    boolean mismatch = persistenceService.findAllIndexedImageIds().stream().anyMatch(id -> persistenceService.findVectorEntry(id).map(e -> !Objects.equals(configuredModel, e.getEmbeddingModel())).orElse(false));
 
     if (!mismatch) {
-      logger().info("Embedding model '{}' matches all stored vectors — no migration needed.",
-                    configuredModel);
+      logger().info("Embedding model '{}' matches all stored vectors — no migration needed.", configuredModel);
       return;
     }
 
-    logger().warn("EMBEDDING MODEL MISMATCH: configured model is '{}' but some persisted "
-                      + "vectors were created by a different model. "
-                      + "Re-embedding all images before building HNSW index...", configuredModel);
+    logger().warn("EMBEDDING MODEL MISMATCH: configured model is '{}' but some persisted " + "vectors were created by a different model. " + "Re-embedding all images before building HNSW index...", configuredModel);
 
     var imageIds = persistenceService.findAllIndexedImageIds();
     int migrated = 0;
@@ -410,18 +371,15 @@ public class ServiceRegistry
         if (vector != null && vector.length > 0) {
           persistenceService.saveRawVector(imageId, vector);
           // Update VectorEntry so the model is recorded correctly.
-          var entry = new com.svenruppert.imagerag.domain.VectorEntry(
-              imageId, configuredModel, vector.length, Instant.now());
+          var entry = new com.svenruppert.imagerag.domain.VectorEntry(imageId, configuredModel, vector.length, Instant.now());
           persistenceService.saveVectorEntry(imageId, entry);
           migrated++;
         }
       } catch (Exception e) {
-        logger().warn("Could not re-embed image {} during stale-vector migration: {}",
-                      imageId, e.getMessage());
+        logger().warn("Could not re-embed image {} during stale-vector migration: {}", imageId, e.getMessage());
       }
     }
-    logger().info("Stale-vector migration complete: {}/{} images re-embedded with model '{}'",
-                  migrated, imageIds.size(), configuredModel);
+    logger().info("Stale-vector migration complete: {}/{} images re-embedded with model '{}'", migrated, imageIds.size(), configuredModel);
   }
 
   private void restoreKeywordIndex() {
@@ -437,15 +395,12 @@ public class ServiceRegistry
         String catLabel = analysis != null && analysis.getSourceCategory() != null ? analysis.getSourceCategory().name() : null;
         // Include secondary categories so keyword search can find images via any category.
         if (analysis != null && analysis.getSecondaryCategories() != null && !analysis.getSecondaryCategories().isEmpty()) {
-          String secondaryCats = analysis.getSecondaryCategories().stream()
-              .map(sc -> sc.name())
-              .collect(java.util.stream.Collectors.joining(" "));
+          String secondaryCats = analysis.getSecondaryCategories().stream().map(Enum::name).collect(java.util.stream.Collectors.joining(" "));
           catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
         }
         String locText = location != null ? location.toHumanReadable() : null;
         String ocrText = ocr != null ? ocr.getExtractedText() : null;
-        keywordIndexService.index(asset.getId(), asset.getOriginalFilename(), summary,
-                                  tags, catLabel, locText, ocrText);
+        keywordIndexService.index(asset.getId(), asset.getOriginalFilename(), summary, tags, catLabel, locText, ocrText);
         indexed++;
       } catch (Exception e) {
         logger().warn("Could not restore keyword index for image {}: {}", asset.getId(), e.getMessage());
@@ -482,8 +437,7 @@ public class ServiceRegistry
       }
     }
 
-    logger().info("Approval migration complete — auto-approved: {}, locked (REVIEW/SENSITIVE): {}, pending assessment: {}",
-                  approved, locked, pending);
+    logger().info("Approval migration complete — auto-approved: {}, locked (REVIEW/SENSITIVE): {}, pending assessment: {}", approved, locked, pending);
   }
 
   // --- Accessors ---
@@ -548,25 +502,18 @@ public class ServiceRegistry
         var location = persistenceService.findLocation(imageId).orElse(null);
         var ocr = persistenceService.findOcrResult(imageId).orElse(null);
         String summary = analysis != null ? analysis.getSummary() : null;
-        List<String> tags = analysis != null && analysis.getTags() != null
-            ? analysis.getTags() : List.of();
-        String catLabel = analysis != null && analysis.getSourceCategory() != null
-            ? analysis.getSourceCategory().name() : null;
-        if (analysis != null && analysis.getSecondaryCategories() != null
-            && !analysis.getSecondaryCategories().isEmpty()) {
-          String secondaryCats = analysis.getSecondaryCategories().stream()
-              .map(sc -> sc.name())
-              .collect(java.util.stream.Collectors.joining(" "));
+        List<String> tags = analysis != null && analysis.getTags() != null ? analysis.getTags() : List.of();
+        String catLabel = analysis != null && analysis.getSourceCategory() != null ? analysis.getSourceCategory().name() : null;
+        if (analysis != null && analysis.getSecondaryCategories() != null && !analysis.getSecondaryCategories().isEmpty()) {
+          String secondaryCats = analysis.getSecondaryCategories().stream().map(Enum::name).collect(java.util.stream.Collectors.joining(" "));
           catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
         }
         String locText = location != null ? location.toHumanReadable() : null;
         String ocrText = ocr != null ? ocr.getExtractedText() : null;
-        keywordIndexService.index(imageId, asset.getOriginalFilename(), summary,
-                                  tags, catLabel, locText, ocrText);
+        keywordIndexService.index(imageId, asset.getOriginalFilename(), summary, tags, catLabel, locText, ocrText);
         logger().info("Re-indexed keyword entry for restored image imageId={}", imageId);
       } catch (Exception e) {
-        logger().warn("Could not re-index keyword entry for restored image {}: {}",
-                      imageId, e.getMessage());
+        logger().warn("Could not re-index keyword entry for restored image {}: {}", imageId, e.getMessage());
       }
     });
   }
@@ -586,7 +533,7 @@ public class ServiceRegistry
    * Bounded to [1, 4].
    */
   public synchronized void updateSearchParallelism(int parallelism) {
-    int clamped = Math.max(1, Math.min(4, parallelism));
+    int clamped = Math.clamp(parallelism, 1, 4);
     ExecutorService old = searchExecutor;
     searchExecutor = buildSearchExecutor(clamped);
     old.shutdown();
@@ -680,27 +627,27 @@ public class ServiceRegistry
     return auditService;
   }
 
-  public com.svenruppert.imagerag.service.TaxonomySuggestionService getTaxonomySuggestionService() {
+  public TaxonomySuggestionService getTaxonomySuggestionService() {
     return taxonomySuggestionService;
   }
 
-  public com.svenruppert.imagerag.service.TaxonomyAnalysisService getTaxonomyAnalysisService() {
+  public TaxonomyAnalysisService getTaxonomyAnalysisService() {
     return taxonomyAnalysisService;
   }
 
-  public com.svenruppert.imagerag.service.PromptTemplateService getPromptTemplateService() {
+  public PromptTemplateService getPromptTemplateService() {
     return promptTemplateService;
   }
 
-  public com.svenruppert.imagerag.service.WhyNotFoundService getWhyNotFoundService() {
+  public WhyNotFoundService getWhyNotFoundService() {
     return whyNotFoundService;
   }
 
-  public com.svenruppert.imagerag.service.ClusterDiscoveryService getClusterDiscoveryService() {
+  public ClusterDiscoveryService getClusterDiscoveryService() {
     return clusterDiscoveryService;
   }
 
-  public com.svenruppert.imagerag.service.SearchStrategyAutopilot getSearchStrategyAutopilot() {
+  public SearchStrategyAutopilot getSearchStrategyAutopilot() {
     return searchStrategyAutopilot;
   }
 
@@ -740,14 +687,12 @@ public class ServiceRegistry
           if (vector != null && vector.length > 0) {
             persistenceService.saveRawVector(imageId, vector);
             // Keep VectorEntry metadata in sync so the model field is always accurate.
-            var entry = new com.svenruppert.imagerag.domain.VectorEntry(
-                imageId, activeModel, vector.length, Instant.now());
+            var entry = new com.svenruppert.imagerag.domain.VectorEntry(imageId, activeModel, vector.length, Instant.now());
             persistenceService.saveVectorEntry(imageId, entry);
             rebuilt++;
           }
         } catch (Exception e) {
-          logger().warn("Could not re-embed image {} during vector rebuild: {}",
-                        imageId, e.getMessage());
+          logger().warn("Could not re-embed image {} during vector rebuild: {}", imageId, e.getMessage());
         }
       }
       // Rebuild the in-memory HNSW index from the freshly persisted vectors.
@@ -763,20 +708,17 @@ public class ServiceRegistry
           if (vector != null && vector.length > 0) {
             vectorIndexService.index(imageId, vector);
             // Update VectorEntry metadata so the recorded model stays current.
-            var entry = new com.svenruppert.imagerag.domain.VectorEntry(
-                imageId, activeModel, vector.length, Instant.now());
+            var entry = new com.svenruppert.imagerag.domain.VectorEntry(imageId, activeModel, vector.length, Instant.now());
             persistenceService.saveVectorEntry(imageId, entry);
             rebuilt++;
           }
         } catch (Exception e) {
-          logger().warn("Could not re-embed image {} during vector rebuild: {}",
-                        imageId, e.getMessage());
+          logger().warn("Could not re-embed image {} during vector rebuild: {}", imageId, e.getMessage());
         }
       }
     }
 
-    logger().info("Vector index rebuild complete — {} / {} images indexed",
-                  rebuilt, imageIds.size());
+    logger().info("Vector index rebuild complete — {} / {} images indexed", rebuilt, imageIds.size());
   }
 
   /**
@@ -788,11 +730,7 @@ public class ServiceRegistry
    */
   public void rebuildKeywordIndex() {
     logger().info("Keyword index rebuild started");
-    keywordIndexService.rebuildAll(
-        persistenceService::findAllImages,
-        persistenceService::findAnalysis,
-        persistenceService::findLocation,
-        persistenceService::findOcrResult);
+    keywordIndexService.rebuildAll(persistenceService::findAllImages, persistenceService::findAnalysis, persistenceService::findLocation, persistenceService::findOcrResult);
     logger().info("Keyword index rebuild complete");
   }
 }

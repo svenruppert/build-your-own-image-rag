@@ -2,13 +2,13 @@ package com.svenruppert.flow.views.tuning;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
+import com.svenruppert.flow.views.shared.WhyNotFoundDialog;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.FeedbackType;
 import com.svenruppert.imagerag.domain.enums.QueryIntentType;
 import com.svenruppert.imagerag.domain.enums.RetrievalMode;
 import com.svenruppert.imagerag.domain.enums.SimilarityFunction;
-import com.svenruppert.flow.views.shared.WhyNotFoundDialog;
 import com.svenruppert.imagerag.dto.*;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.ImageStorageService;
@@ -118,8 +118,8 @@ public class SearchTuningView
   // ── Query-by-Example: currently selected anchor image ─────────────────────
   private volatile UUID qbeImageId = null;
   // ── Run state ─────────────────────────────────────────────────────────────
-  private volatile boolean running = false;  private final FeedbackSessionPanel feedbackPanel = new FeedbackSessionPanel(this::removeFeedback);
-  private TuningRun currentRun = null;
+  private volatile boolean running = false;
+  private TuningRun currentRun = null;  private final FeedbackSessionPanel feedbackPanel = new FeedbackSessionPanel(this::removeFeedback);
   private TuningRun previousRun = null;
   public SearchTuningView() {
     this.searchService = ServiceRegistry.getInstance().getSearchService();
@@ -177,15 +177,13 @@ public class SearchTuningView
     return d;
   }
 
-  // ── Section 1: header ─────────────────────────────────────────────────────
-
   private static Span thumbPlaceholder() {
     Span ph = new Span("\u2014");
     ph.getStyle().set("font-size", "1.4rem").set("color", "var(--lumo-contrast-30pct)");
     return ph;
   }
 
-  // ── Section 2: top workbench — three columns ──────────────────────────────
+  // ── Section 1: header ─────────────────────────────────────────────────────
 
   private static Span buildTag(String text, String bg, String color) {
     Span tag = new Span(text);
@@ -198,12 +196,12 @@ public class SearchTuningView
     return tag;
   }
 
-  // ── Left column: query + run + QBE + presets ─────────────────────────────
+  // ── Section 2: top workbench — three columns ──────────────────────────────
 
   @Override
   public void beforeEnter(BeforeEnterEvent event) { /* nothing on entry */ }
 
-  // ── Middle column: retrieval parameters ───────────────────────────────────
+  // ── Left column: query + run + QBE + presets ─────────────────────────────
 
   private Component buildHeader() {
     H2 title = new H2(getTranslation("tuning.title"));
@@ -215,6 +213,8 @@ public class SearchTuningView
     h.getStyle().set("margin-bottom", "0.25rem");
     return h;
   }
+
+  // ── Middle column: retrieval parameters ───────────────────────────────────
 
   private Component buildTopWorkbench() {
     VerticalLayout queryPanel = buildQueryPanel();
@@ -437,8 +437,6 @@ public class SearchTuningView
     bm25WeightField.setEnabled(hasBm25);
   }
 
-  // ── Right column: inspector + feedback session ────────────────────────────
-
   private void updateQbeStatus() {
     if (qbeImageId == null) {
       qbeStatusSpan.setText(getTranslation("tuning.qbe.none"));
@@ -452,7 +450,7 @@ public class SearchTuningView
     }
   }
 
-  // ── Section 3: full-width summary bar ─────────────────────────────────────
+  // ── Right column: inspector + feedback session ────────────────────────────
 
   private VerticalLayout buildInspectorPanel() {
     Details feedbackDetails = new Details(
@@ -468,7 +466,7 @@ public class SearchTuningView
     return panel;
   }
 
-  // ── Section 4: full-width results area ────────────────────────────────────
+  // ── Section 3: full-width summary bar ─────────────────────────────────────
 
   private Component buildSummaryBar() {
     summaryBar.setWidthFull();
@@ -483,7 +481,7 @@ public class SearchTuningView
     return summaryBar;
   }
 
-  // ── Tuning execution ──────────────────────────────────────────────────────
+  // ── Section 4: full-width results area ────────────────────────────────────
 
   private Component buildResultsArea() {
     resultsArea.setSpacing(false);
@@ -491,6 +489,8 @@ public class SearchTuningView
     resultsArea.setWidthFull();
     return resultsArea;
   }
+
+  // ── Tuning execution ──────────────────────────────────────────────────────
 
   private void runTuning() {
     if (running) {
@@ -606,12 +606,12 @@ public class SearchTuningView
         .setQueryIntentEnabled(Boolean.TRUE.equals(intentToggle.getValue()));
   }
 
-  // ── Rendering ─────────────────────────────────────────────────────────────
-
   private double doubleValue(NumberField f, double fallback) {
     Double v = f.getValue();
     return (v != null && !Double.isNaN(v)) ? v : fallback;
   }
+
+  // ── Rendering ─────────────────────────────────────────────────────────────
 
   private void renderSummaryBar(TuningRun run) {
     SearchTuningConfig cfg = run.getConfig();
@@ -643,8 +643,6 @@ public class SearchTuningView
     summaryBar.setText(sb.toString());
   }
 
-  // ── Result card ───────────────────────────────────────────────────────────
-
   private void renderResults(TuningRun current, TuningRun previous) {
     resultsArea.removeAll();
     if (current.getResults().isEmpty()) {
@@ -659,6 +657,8 @@ public class SearchTuningView
       resultsArea.add(buildResultCard(i + 1, tsr, delta));
     }
   }
+
+  // ── Result card ───────────────────────────────────────────────────────────
 
   private Component buildResultCard(int rank, TuningSearchResult tsr, int delta) {
     SearchResultItem item = tsr.item();
@@ -757,8 +757,6 @@ public class SearchTuningView
     return card;
   }
 
-  // ── Feedback management ───────────────────────────────────────────────────
-
   /**
    * Per-result action row: feedback buttons + QBE anchor button.
    */
@@ -816,6 +814,8 @@ public class SearchTuningView
     return row;
   }
 
+  // ── Feedback management ───────────────────────────────────────────────────
+
   private void markFeedback(SearchResultItem item, FeedbackType type) {
     float[] vector = persistenceService.findRawVector(item.getImageId())
         .orElse(new float[0]);
@@ -831,13 +831,13 @@ public class SearchTuningView
     if (currentRun != null) renderResults(currentRun, previousRun);
   }
 
-  // ── Preset dialogs ────────────────────────────────────────────────────────
-
   private void removeFeedback(UUID imageId) {
     feedbackSession.remove(imageId);
     feedbackPanel.refresh(feedbackSession);
     if (currentRun != null) renderResults(currentRun, previousRun);
   }
+
+  // ── Preset dialogs ────────────────────────────────────────────────────────
 
   private void openSavePresetDialog() {
     Dialog dlg = new Dialog();
@@ -914,8 +914,6 @@ public class SearchTuningView
     dlg.open();
   }
 
-  // ── Thumbnail ─────────────────────────────────────────────────────────────
-
   private void applyPreset(SearchTuningPreset preset) {
     SearchTuningConfig cfg = preset.toConfig();
     if (preset.getQuery() != null && !preset.getQuery().isBlank()) {
@@ -933,6 +931,8 @@ public class SearchTuningView
     maxResultsField.setValue((double) cfg.getMaxResults());
     updateControlVisibility();
   }
+
+  // ── Thumbnail ─────────────────────────────────────────────────────────────
 
   private Component buildThumbnail(SearchResultItem item) {
     try {
@@ -966,8 +966,6 @@ public class SearchTuningView
     }
     return thumbPlaceholder();
   }
-
-  // ── Score breakdown ───────────────────────────────────────────────────────
 
   private Div buildScoreBreakdown(ScoreBreakdown bd, TuningSearchResult tsr) {
     Div container = new Div();
@@ -1032,7 +1030,7 @@ public class SearchTuningView
     return container;
   }
 
-  // ── Delta badge ───────────────────────────────────────────────────────────
+  // ── Score breakdown ───────────────────────────────────────────────────────
 
   private Span buildDeltaBadge(int delta) {
     Span badge = new Span();
@@ -1060,6 +1058,10 @@ public class SearchTuningView
     }
     return badge;
   }
+
+  // ── Delta badge ───────────────────────────────────────────────────────────
+
+
 
   // ── Tag chip ──────────────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 package com.svenruppert.imagerag.persistence;
 
 import com.svenruppert.imagerag.domain.*;
+import com.svenruppert.imagerag.domain.enums.SourceCategory;
 
 import java.util.*;
 
@@ -34,7 +35,7 @@ public class AppDataRoot {
    * SHA-256 hash → imageId lookup map for O(1) duplicate detection at upload time.
    * Not declared final for the same Unsafe reason as above.
    * Rebuilt from {@link #images} on startup via
-   * {@link com.svenruppert.imagerag.persistence.PersistenceService#rebuildHashIndex}.
+   * {@link PersistenceService#rebuildHashIndex}.
    */
   private Map<String, UUID> hashIndex;
 
@@ -72,14 +73,14 @@ public class AppDataRoot {
    * Suggestions are never applied automatically — require explicit user review.
    * Not declared final for EclipseStore Unsafe reconstruction compatibility.
    */
-  private List<com.svenruppert.imagerag.domain.TaxonomySuggestion> taxonomySuggestions;
+  private List<TaxonomySuggestion> taxonomySuggestions;
 
   /**
-   * Category lifecycle metadata keyed by {@link com.svenruppert.imagerag.domain.enums.SourceCategory#name()}.
+   * Category lifecycle metadata keyed by {@link SourceCategory#name()}.
    * Tracks which categories are ACTIVE, CANDIDATE, or DEPRECATED.
    * Not declared final for EclipseStore Unsafe reconstruction compatibility.
    */
-  private Map<String, com.svenruppert.imagerag.domain.CategoryMetadata> categoryMetadata;
+  private Map<String, CategoryMetadata> categoryMetadata;
 
   /**
    * User-saved Search Tuning Lab presets.
@@ -150,7 +151,7 @@ public class AppDataRoot {
 
   /**
    * Returns the hash → imageId index, lazily initialising it when first accessed.
-   * The caller ({@link com.svenruppert.imagerag.persistence.PersistenceService})
+   * The caller ({@link PersistenceService})
    * is responsible for populating this map from existing image assets on startup.
    */
   public Map<String, UUID> getHashIndex() {
@@ -205,7 +206,7 @@ public class AppDataRoot {
   /**
    * Returns the taxonomy suggestions list, lazily initialising it if null.
    */
-  public List<com.svenruppert.imagerag.domain.TaxonomySuggestion> getTaxonomySuggestions() {
+  public List<TaxonomySuggestion> getTaxonomySuggestions() {
     if (taxonomySuggestions == null) {
       taxonomySuggestions = new ArrayList<>();
     }
@@ -214,9 +215,9 @@ public class AppDataRoot {
 
   /**
    * Returns the category-metadata map, lazily initialising it if null.
-   * Keys are {@link com.svenruppert.imagerag.domain.enums.SourceCategory#name()} strings.
+   * Keys are {@link SourceCategory#name()} strings.
    */
-  public Map<String, com.svenruppert.imagerag.domain.CategoryMetadata> getCategoryMetadata() {
+  public Map<String, CategoryMetadata> getCategoryMetadata() {
     if (categoryMetadata == null) {
       categoryMetadata = new HashMap<>();
     }

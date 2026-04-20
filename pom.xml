@@ -11,7 +11,7 @@
         <version>06.00.16</version>
     </parent>
 
-    <artifactId>flow-template</artifactId>
+    <artifactId>build-your-own-image-rag</artifactId>
     <version>00.00.01-SNAPSHOT</version>
     <packaging>war</packaging>
 

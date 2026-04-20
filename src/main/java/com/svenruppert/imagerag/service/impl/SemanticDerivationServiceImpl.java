@@ -1,8 +1,5 @@
 package com.svenruppert.imagerag.service.impl;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.CategoryCandidate;
 import com.svenruppert.imagerag.domain.CategoryConfidence;
@@ -14,6 +11,8 @@ import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
 import com.svenruppert.imagerag.service.PromptTemplateService;
 import com.svenruppert.imagerag.service.SemanticDerivationService;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.*;

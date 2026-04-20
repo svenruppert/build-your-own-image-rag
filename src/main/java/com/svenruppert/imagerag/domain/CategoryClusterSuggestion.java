@@ -48,6 +48,7 @@ public class CategoryClusterSuggestion {
    * ID of the TaxonomySuggestion created from this cluster (after conversion).
    */
   private UUID convertedSuggestionId;
+
   public CategoryClusterSuggestion() {
   }
 

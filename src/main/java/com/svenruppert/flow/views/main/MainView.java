@@ -1,19 +1,15 @@
 package com.svenruppert.flow.views.main;
 
-import com.svenruppert.flow.MainLayout;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.i18n.LocaleChangeEvent;
 import com.vaadin.flow.i18n.LocaleChangeObserver;
-import com.vaadin.flow.router.Route;
 
 /**
- * The main view contains a text field for getting the username and a button
- * that shows a greeting message in a notification.
+ * Legacy greeting view — route removed; replaced by DashboardView at path "".
  */
-@Route(value = MainView.PATH, layout = MainLayout.class)
 public class MainView
     extends VerticalLayout
     implements LocaleChangeObserver {

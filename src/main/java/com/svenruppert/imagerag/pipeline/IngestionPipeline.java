@@ -682,6 +682,8 @@ public class IngestionPipeline
         newAnalysis != null ? newAnalysis.getSummary() : null,
         prevAnalysis != null ? prevAnalysis.getSourceCategory() : null,
         newAnalysis != null ? newAnalysis.getSourceCategory() : null,
+        prevAnalysis != null ? prevAnalysis.getSecondaryCategories() : null,
+        newAnalysis != null ? newAnalysis.getSecondaryCategories() : null,
         prevAssessment != null ? prevAssessment.getRiskLevel() : null,
         newAssessment != null ? newAssessment.getRiskLevel() : null,
         prevAnalysis != null ? prevAnalysis.getTags() : null,
@@ -704,6 +706,12 @@ public class IngestionPipeline
       sb.append(" Season: ").append(analysis.getSeasonHint().name());
     if (analysis.getSourceCategory() != null)
       sb.append(" Category: ").append(analysis.getSourceCategory().name());
+    if (analysis.getSecondaryCategories() != null && !analysis.getSecondaryCategories().isEmpty()) {
+      String secCats = analysis.getSecondaryCategories().stream()
+          .map(Enum::name)
+          .collect(java.util.stream.Collectors.joining(" "));
+      sb.append(" ").append(secCats);
+    }
     return sb.toString();
   }
 }

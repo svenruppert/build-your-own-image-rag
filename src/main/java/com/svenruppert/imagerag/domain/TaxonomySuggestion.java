@@ -169,6 +169,29 @@ public class TaxonomySuggestion {
   }
 
   /**
+   * Factory for remove-secondary-category suggestions.
+   * <p>{@code suggestedCategory} carries the category to remove — this is the field
+   * that {@link com.svenruppert.imagerag.service.impl.TaxonomySuggestionServiceImpl}
+   * reads when applying a {@code REMOVE_SECONDARY_CATEGORY} action.
+   */
+  public static TaxonomySuggestion removeSecondary(UUID imageId,
+                                                   String imageFilename,
+                                                   SourceCategory toRemove,
+                                                   String rationale,
+                                                   String model) {
+    TaxonomySuggestion s = new TaxonomySuggestion();
+    s.type = TaxonomySuggestionType.REMOVE_SECONDARY_CATEGORY;
+    s.targetImageId = imageId;
+    s.targetImageFilename = imageFilename;
+    s.currentCategory = toRemove;   // for display / UI context
+    s.suggestedCategory = toRemove; // applyRemoveSecondary() reads suggestedCategory
+    s.confidence = 1.0;
+    s.rationale = rationale;
+    s.generatedByModel = model;
+    return s;
+  }
+
+  /**
    * Factory for bulk reassign-deprecated suggestions.
    */
   public static TaxonomySuggestion reassignDeprecated(UUID imageId,

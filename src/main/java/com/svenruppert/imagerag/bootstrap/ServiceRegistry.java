@@ -149,6 +149,10 @@ public class ServiceRegistry
     // (covers images ingested before the duplicate-detection feature was added)
     persistenceService.rebuildHashIndex();
 
+    // Normalize category assignments — removes primary-in-secondary duplicates and
+    // deduplicates secondary lists for any records persisted before this check existed.
+    persistenceService.normalizeAllCategoryAssignments();
+
     // Search
     queryUnderstandingService = new QueryUnderstandingServiceImpl(ollamaClient);
     searchService = new SearchServiceImpl(queryUnderstandingService, embeddingService, vectorIndexService, persistenceService, keywordIndexService);

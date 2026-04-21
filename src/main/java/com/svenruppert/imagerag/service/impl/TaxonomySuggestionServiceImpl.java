@@ -1,6 +1,7 @@
 package com.svenruppert.imagerag.service.impl;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.imagerag.domain.CategoryAssignmentNormalizer;
 import com.svenruppert.imagerag.domain.CategoryMetadata;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.TaxonomySuggestion;
@@ -155,6 +156,16 @@ public class TaxonomySuggestionServiceImpl
       return;
     }
     persistenceService.updateSourceCategory(imageId, newCat);
+    // If the new primary was previously a secondary, remove it to keep assignments consistent.
+    Optional<SemanticAnalysis> opt = persistenceService.findAnalysis(imageId);
+    opt.ifPresent(analysis -> {
+      List<SourceCategory> normalized =
+          CategoryAssignmentNormalizer.normalizeSecondaries(newCat, analysis.getSecondaryCategories());
+      if (!normalized.equals(analysis.getSecondaryCategories())) {
+        persistenceService.updateSecondaryCategories(imageId, normalized);
+        logger().debug("Removed {} from secondaries of image {} after reclassify", newCat, imageId);
+      }
+    });
     logger().info("Reclassified image {} → {}", imageId, newCat);
   }
 
@@ -171,6 +182,12 @@ public class TaxonomySuggestionServiceImpl
       return;
     }
     SemanticAnalysis analysis = opt.get();
+    // Never add a secondary that equals the primary — invariant enforcement.
+    if (toAdd.equals(analysis.getSourceCategory())) {
+      logger().info("ADD_SECONDARY: {} is already the primary category for image {} — skipping",
+                    toAdd, imageId);
+      return;
+    }
     List<SourceCategory> secondary = new ArrayList<>(analysis.getSecondaryCategories());
     if (!secondary.contains(toAdd)) {
       secondary.add(toAdd);
@@ -215,7 +232,7 @@ public class TaxonomySuggestionServiceImpl
   }
 
   private void applyMerge(TaxonomySuggestion s) {
-    // MERGE: deprecate current, reassign all images that have current as primary
+    // MERGE: deprecate source, reassign primary + secondary occurrences to target.
     SourceCategory source = s.getCurrentCategory();
     SourceCategory target = s.getSuggestedCategory();
     if (source == null || target == null) {
@@ -231,15 +248,37 @@ public class TaxonomySuggestionServiceImpl
     meta.setNotes("Merged into " + target + " via taxonomy maintenance");
     persistenceService.saveCategoryMetadata(meta);
 
-    // Reassign all images whose primary is the deprecated source
-    int reassigned = 0;
+    int primaryReassigned = 0;
+    int secondaryReassigned = 0;
     for (var asset : persistenceService.findAllImages()) {
       Optional<SemanticAnalysis> analysisOpt = persistenceService.findAnalysis(asset.getId());
-      if (analysisOpt.isPresent() && analysisOpt.get().getSourceCategory() == source) {
+      if (analysisOpt.isEmpty()) continue;
+      SemanticAnalysis analysis = analysisOpt.get();
+
+      // Primary reassignment
+      SourceCategory effectivePrimary = analysis.getSourceCategory();
+      if (effectivePrimary == source) {
         persistenceService.updateSourceCategory(asset.getId(), target);
-        reassigned++;
+        effectivePrimary = target;
+        primaryReassigned++;
+      }
+
+      // Secondary reassignment — replace source with target, then normalize to remove duplicates.
+      List<SourceCategory> secondaries = new ArrayList<>(analysis.getSecondaryCategories());
+      if (secondaries.contains(source)) {
+        secondaries.remove(source);
+        // Only add target as secondary if it's not the (possibly just updated) primary.
+        if (!target.equals(effectivePrimary) && !secondaries.contains(target)) {
+          secondaries.add(target);
+        }
+        // Normalize removes any remaining duplicate of the new primary.
+        List<SourceCategory> normalized =
+            CategoryAssignmentNormalizer.normalizeSecondaries(effectivePrimary, secondaries);
+        persistenceService.updateSecondaryCategories(asset.getId(), normalized);
+        secondaryReassigned++;
       }
     }
-    logger().info("Merged category {} → {}: {} images reassigned", source, target, reassigned);
+    logger().info("Merged category {} → {}: {} primary reassigned, {} secondary reassigned",
+                  source, target, primaryReassigned, secondaryReassigned);
   }
 }

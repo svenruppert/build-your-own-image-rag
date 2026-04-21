@@ -3,6 +3,7 @@ package com.svenruppert.imagerag.domain;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -24,6 +25,10 @@ public record ReprocessingDiff(
     // ── Primary category ────────────────────────────────────────────────────
     SourceCategory previousCategory,
     SourceCategory newCategory,
+
+    // ── Secondary categories ─────────────────────────────────────────────────
+    List<SourceCategory> previousSecondaryCategories,
+    List<SourceCategory> newSecondaryCategories,
 
     // ── Risk / sensitivity ──────────────────────────────────────────────────
     RiskLevel previousRisk,
@@ -52,6 +57,35 @@ public record ReprocessingDiff(
    */
   public boolean categoryChanged() {
     return !Objects.equals(previousCategory, newCategory);
+  }
+
+  /**
+   * Returns {@code true} if the set of secondary categories changed (additions or removals).
+   */
+  public boolean secondaryCategoriesChanged() {
+    List<SourceCategory> prev = previousSecondaryCategories != null ? previousSecondaryCategories : List.of();
+    List<SourceCategory> next = newSecondaryCategories != null ? newSecondaryCategories : List.of();
+    return !new HashSet<>(prev).equals(new HashSet<>(next));
+  }
+
+  /**
+   * Returns categories that were added to secondaries after reprocessing.
+   */
+  public List<SourceCategory> secondaryAdded() {
+    HashSet<SourceCategory> prev = new HashSet<>(
+        previousSecondaryCategories != null ? previousSecondaryCategories : List.of());
+    return (newSecondaryCategories != null ? newSecondaryCategories : List.<SourceCategory>of())
+        .stream().filter(c -> !prev.contains(c)).toList();
+  }
+
+  /**
+   * Returns categories that were removed from secondaries after reprocessing.
+   */
+  public List<SourceCategory> secondaryRemoved() {
+    HashSet<SourceCategory> next = new HashSet<>(
+        newSecondaryCategories != null ? newSecondaryCategories : List.of());
+    return (previousSecondaryCategories != null ? previousSecondaryCategories : List.<SourceCategory>of())
+        .stream().filter(c -> !next.contains(c)).toList();
   }
 
   /**
@@ -94,7 +128,7 @@ public record ReprocessingDiff(
    * Returns {@code true} if at least one tracked field changed between the two runs.
    */
   public boolean anyChanged() {
-    return categoryChanged() || riskChanged() || summaryChanged()
-        || tagsChanged() || ocrChanged() || provenanceChanged();
+    return categoryChanged() || secondaryCategoriesChanged() || riskChanged()
+        || summaryChanged() || tagsChanged() || ocrChanged() || provenanceChanged();
   }
 }

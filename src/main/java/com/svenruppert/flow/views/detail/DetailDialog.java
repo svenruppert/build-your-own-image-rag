@@ -2,6 +2,7 @@ package com.svenruppert.flow.views.detail;
 
 import com.svenruppert.flow.views.shared.MarkdownRenderer;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
+import com.svenruppert.imagerag.domain.CategoryAssignmentNormalizer;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.vaadin.flow.component.button.Button;
@@ -11,6 +12,7 @@ import com.vaadin.flow.component.formlayout.FormLayout;
 import com.vaadin.flow.component.html.*;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
+import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.tabs.TabSheet;
@@ -155,9 +157,39 @@ public class DetailDialog
     FormLayout form = new FormLayout();
     form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
 
-    String catLabel = CategoryRegistry.getUserLabel(analysis.getSourceCategory())
-        + " (" + CategoryRegistry.getGroupLabel(analysis.getSourceCategory()) + ")";
-    form.addFormItem(new Span(catLabel), "Category");
+    // ── Primary category — editable via taxonomy-aware chooser ───────────────
+    Span primaryCatLabel = new Span(
+        CategoryRegistry.getUserLabel(analysis.getSourceCategory())
+            + " (" + CategoryRegistry.getGroupLabel(analysis.getSourceCategory()) + ")");
+    primaryCatLabel.getStyle().set("font-weight", "500");
+
+    Button changePrimaryBtn = new Button("Change");
+    changePrimaryBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
+    changePrimaryBtn.getElement().setAttribute("title", "Change the primary category");
+    changePrimaryBtn.addClickListener(e ->
+        new CategoryTreeChooserDialog(chosen -> {
+          if (chosen.equals(analysis.getSourceCategory())) return;
+          ServiceRegistry.getInstance().getPersistenceService()
+              .updateSourceCategory(analysis.getImageId(), chosen);
+          // Remove chosen from secondaries if it was there — keeps assignments consistent.
+          var normalized = CategoryAssignmentNormalizer.normalizeSecondaries(
+              chosen, analysis.getSecondaryCategories());
+          if (!normalized.equals(analysis.getSecondaryCategories())) {
+            ServiceRegistry.getInstance().getPersistenceService()
+                .updateSecondaryCategories(analysis.getImageId(), normalized);
+            analysis.setSecondaryCategories(normalized);
+          }
+          analysis.setSourceCategory(chosen);
+          primaryCatLabel.setText(
+              CategoryRegistry.getUserLabel(chosen)
+                  + " (" + CategoryRegistry.getGroupLabel(chosen) + ")");
+        }).open());
+
+    HorizontalLayout primaryRow = new HorizontalLayout(primaryCatLabel, changePrimaryBtn);
+    primaryRow.setAlignItems(FlexComponent.Alignment.CENTER);
+    primaryRow.setSpacing(true);
+    form.addFormItem(primaryRow, "Primary Category");
+
     form.addFormItem(new Span(str(analysis.getSeasonHint())), "Season");
     form.addFormItem(new Span(analysis.getSceneType() != null ? analysis.getSceneType() : "\u2014"), "Scene Type");
     form.addFormItem(new Span(bool(analysis.getContainsPerson())), "Contains Person");
@@ -215,10 +247,15 @@ public class DetailDialog
           Span chip = new Span(CategoryRegistry.getUserLabel(alt.getCategory())
                                    + " " + String.format("(%.0f%%)", alt.getScore() * 100));
           chip.getElement().getThemeList().add("badge contrast");
+          chip.getElement().setAttribute("title",
+              "Predicted alternative — not an assigned category");
           altRow.add(chip);
         }
-        layout.add(new Paragraph(getTranslation("detail.analysis.confidence.alternatives") + ":"),
-                   altRow);
+        Paragraph altHeading = new Paragraph(
+            getTranslation("detail.analysis.confidence.alternatives") + " (predicted, not assigned):");
+        altHeading.getStyle().set("font-size", "var(--lumo-font-size-s)")
+            .set("color", "var(--lumo-secondary-text-color)");
+        layout.add(altHeading, altRow);
       }
     }
 

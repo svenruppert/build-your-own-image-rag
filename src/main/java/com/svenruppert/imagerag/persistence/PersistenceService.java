@@ -693,6 +693,33 @@ public class PersistenceService
   }
 
   // -------------------------------------------------------------------------
+  // Category assignment normalization
+  // -------------------------------------------------------------------------
+
+  /**
+   * Normalizes multi-category assignments across all stored analyses.
+   * Removes duplicates in secondary categories and ensures the primary category
+   * is never also listed as a secondary.
+   * <p>Safe to call repeatedly — idempotent.  Intended for startup cleanup.
+   *
+   * @return number of analyses that were actually changed and re-persisted
+   */
+  public int normalizeAllCategoryAssignments() {
+    int changed = 0;
+    for (SemanticAnalysis analysis : root.getAnalyses().values()) {
+      if (analysis == null) continue;
+      if (com.svenruppert.imagerag.domain.CategoryAssignmentNormalizer.normalize(analysis)) {
+        storage.store(analysis);
+        changed++;
+      }
+    }
+    if (changed > 0) {
+      logger().info("Normalized category assignments for {} analysis record(s)", changed);
+    }
+    return changed;
+  }
+
+  // -------------------------------------------------------------------------
   // Schema migration helpers
   // -------------------------------------------------------------------------
 

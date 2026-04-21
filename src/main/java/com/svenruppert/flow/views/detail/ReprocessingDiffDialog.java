@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.detail;
 
+import com.svenruppert.imagerag.domain.CategoryRegistry;
 import com.svenruppert.imagerag.domain.ReprocessingDiff;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.vaadin.flow.component.button.Button;
@@ -14,6 +15,7 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * Dialog that shows a user-readable diff between the before and after state of an
@@ -43,11 +45,32 @@ public class ReprocessingDiffDialog
     } else {
       content.add(new H4(getTranslation("pipeline.diff.summary")));
 
-      // Category
+      // Primary category
       addDiffRow(content, getTranslation("overview.col.category"),
                  labelOf(diff.previousCategory()),
                  labelOf(diff.newCategory()),
                  diff.categoryChanged());
+
+      // Secondary categories — show added/removed sets when changed
+      if (diff.secondaryCategoriesChanged()) {
+        List<SourceCategory> added = diff.secondaryAdded();
+        List<SourceCategory> removed = diff.secondaryRemoved();
+        if (!added.isEmpty()) {
+          addDiffRow(content, "Secondary added",
+                     "—",
+                     added.stream().map(this::labelOf).collect(Collectors.joining(", ")),
+                     true);
+        }
+        if (!removed.isEmpty()) {
+          addDiffRow(content, "Secondary removed",
+                     removed.stream().map(this::labelOf).collect(Collectors.joining(", ")),
+                     "—",
+                     true);
+        }
+      } else {
+        String secLabel = categoryListLabel(diff.previousSecondaryCategories());
+        addDiffRow(content, "Secondary categories", secLabel, secLabel, false);
+      }
 
       // Risk
       addDiffRow(content, getTranslation("pipeline.diff.risk.level"),
@@ -164,8 +187,13 @@ public class ReprocessingDiffDialog
 
   private String labelOf(SourceCategory cat) {
     if (cat == null) return "—";
-    return com.svenruppert.imagerag.domain.CategoryRegistry.getUserLabel(cat)
-        + " (" + com.svenruppert.imagerag.domain.CategoryRegistry.getGroupLabel(cat) + ")";
+    return CategoryRegistry.getUserLabel(cat)
+        + " (" + CategoryRegistry.getGroupLabel(cat) + ")";
+  }
+
+  private String categoryListLabel(List<SourceCategory> cats) {
+    if (cats == null || cats.isEmpty()) return "—";
+    return cats.stream().map(CategoryRegistry::getUserLabel).collect(Collectors.joining(", "));
   }
 
   private String tagString(List<String> tags) {

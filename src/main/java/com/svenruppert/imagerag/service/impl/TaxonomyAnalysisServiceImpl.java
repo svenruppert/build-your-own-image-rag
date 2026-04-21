@@ -225,6 +225,27 @@ public class TaxonomyAnalysisServiceImpl
         }
       }
 
+      // 4. Deprecated categories in secondaries → suggest removal or reassignment.
+      for (SourceCategory secondary : analysis.getSecondaryCategories()) {
+        if (secondary == null || !deprecatedCategories.containsKey(secondary)) continue;
+        CategoryMetadata secMeta = deprecatedCategories.get(secondary);
+        SourceCategory secReplacement = secMeta.getReplacementCategory();
+        if (secReplacement != null && secReplacement != secondary
+            && secReplacement != primary
+            && !analysis.getSecondaryCategories().contains(secReplacement)) {
+          // Replacement is distinct and not already assigned — suggest adding it first.
+          results.add(TaxonomySuggestion.addSecondary(
+              imageId, asset.getOriginalFilename(), secReplacement, 0.9,
+              "Replacement for deprecated secondary category " + secondary, MODEL_NAME));
+        }
+        // Always suggest removing the deprecated secondary.
+        results.add(TaxonomySuggestion.removeSecondary(
+            imageId, asset.getOriginalFilename(), secondary,
+            "Secondary category " + secondary + " is deprecated"
+                + (secReplacement != null ? "; replaced by " + secReplacement : ""),
+            MODEL_NAME));
+      }
+
       progress.incrementAnalyzed();
       notify(progress, cb);
     }

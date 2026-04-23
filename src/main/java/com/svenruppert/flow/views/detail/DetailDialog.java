@@ -1,10 +1,12 @@
 package com.svenruppert.flow.views.detail;
 
+import com.svenruppert.flow.views.shared.ImagePreviewFactory;
 import com.svenruppert.flow.views.shared.MarkdownRenderer;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.CategoryAssignmentNormalizer;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
+import com.svenruppert.imagerag.service.PreviewService;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -16,11 +18,7 @@ import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.tabs.TabSheet;
-import com.vaadin.flow.server.StreamResource;
 
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -31,6 +29,8 @@ public class DetailDialog
 
   private static final DateTimeFormatter DATE_FMT =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
+  private final ViewServices services;
+  private final ImagePreviewFactory previewFactory;
 
   public DetailDialog(ImageAsset asset,
                       SemanticAnalysis analysis,
@@ -41,8 +41,9 @@ public class DetailDialog
     setMaxHeight("90vh");
     setCloseOnOutsideClick(true);
 
-    ServiceRegistry kr = ServiceRegistry.getInstance();
-    Optional<OcrResult> ocrOpt = kr.getPersistenceService().findOcrResult(asset.getId());
+    this.services = ViewServices.current();
+    this.previewFactory = services.imagePreviews();
+    Optional<OcrResult> ocrOpt = services.persistence().findOcrResult(asset.getId());
 
     TabSheet tabs = new TabSheet();
     tabs.setWidthFull();
@@ -94,38 +95,19 @@ public class DetailDialog
     layout.setSpacing(true);
 
     // Thumbnail
-    try {
-      Path imgPath = ServiceRegistry.getInstance()
-          .getImageStorageService().resolvePath(asset.getId());
-      if (Files.exists(imgPath)) {
-        StreamResource res = new StreamResource(
-            asset.getStoredFilename(),
-            () -> {
-              try {
-                return Files.newInputStream(imgPath);
-              } catch (Exception ex) {
-                return InputStream.nullInputStream();
-              }
-            });
-        Image preview = new Image(res, asset.getOriginalFilename());
-        preview.setMaxHeight("240px");
-        preview.setMaxWidth("100%");
-        preview.getStyle()
-            .set("object-fit", "contain")
-            .set("border-radius", "8px")
-            .set("display", "block")
-            .set("margin", "0 auto 8px");
-        Div wrapper = new Div(preview);
-        wrapper.getStyle()
-            .set("text-align", "center")
-            .set("background", "var(--lumo-contrast-5pct)")
-            .set("border-radius", "8px")
-            .set("padding", "8px");
-        layout.add(wrapper);
-      }
-    } catch (Exception ignored) {
-      // Thumbnail is optional
-    }
+    Div wrapper = new Div(previewFactory.image(
+        asset,
+        PreviewService.PreviewSize.DETAIL,
+        "100%",
+        "240px",
+        "contain",
+        null));
+    wrapper.getStyle()
+        .set("text-align", "center")
+        .set("background", "var(--lumo-contrast-5pct)")
+        .set("border-radius", "8px")
+        .set("padding", "8px");
+    layout.add(wrapper);
 
     // File info form
     FormLayout form = new FormLayout();
@@ -169,13 +151,13 @@ public class DetailDialog
     changePrimaryBtn.addClickListener(e ->
         new CategoryTreeChooserDialog(chosen -> {
           if (chosen.equals(analysis.getSourceCategory())) return;
-          ServiceRegistry.getInstance().getPersistenceService()
+          services.persistence()
               .updateSourceCategory(analysis.getImageId(), chosen);
           // Remove chosen from secondaries if it was there — keeps assignments consistent.
           var normalized = CategoryAssignmentNormalizer.normalizeSecondaries(
               chosen, analysis.getSecondaryCategories());
           if (!normalized.equals(analysis.getSecondaryCategories())) {
-            ServiceRegistry.getInstance().getPersistenceService()
+            services.persistence()
                 .updateSecondaryCategories(analysis.getImageId(), normalized);
             analysis.setSecondaryCategories(normalized);
           }
@@ -210,7 +192,7 @@ public class DetailDialog
           var cats = new ArrayList<>(analysis.getSecondaryCategories());
           if (!cats.contains(chosen) && !chosen.equals(analysis.getSourceCategory())) {
             cats.add(chosen);
-            ServiceRegistry.getInstance().getPersistenceService()
+            services.persistence()
                 .updateSecondaryCategories(analysis.getImageId(), cats);
             analysis.setSecondaryCategories(cats);
             refreshSecondaryBadges(secCatsContainer, analysis);
@@ -442,7 +424,7 @@ public class DetailDialog
       removeBtn.addClickListener(e -> {
         var updated = new ArrayList<>(analysis.getSecondaryCategories());
         updated.remove(sc);
-        ServiceRegistry.getInstance().getPersistenceService()
+        services.persistence()
             .updateSecondaryCategories(analysis.getImageId(), updated);
         analysis.setSecondaryCategories(updated);
         refreshSecondaryBadges(container, analysis);
@@ -478,7 +460,7 @@ public class DetailDialog
 
   private void reprocessAndClose(ImageAsset asset) {
     try {
-      ServiceRegistry.getInstance().getReprocessingService().reprocess(asset.getId());
+      services.reprocessing().reprocess(asset.getId());
       Notification n = Notification.show(
           "Reprocessing started for: " + asset.getOriginalFilename()
               + ". Results appear in the Overview once complete.",

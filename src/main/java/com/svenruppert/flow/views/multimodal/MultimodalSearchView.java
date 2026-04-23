@@ -2,8 +2,8 @@ package com.svenruppert.flow.views.multimodal;
 
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.shared.ResultExplainabilityPanel;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.shared.WhyNotFoundDialog;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SearchTuningConfig;
 import com.svenruppert.imagerag.domain.enums.RetrievalMode;
@@ -62,7 +62,7 @@ public class MultimodalSearchView
   // ── Services ─────────────────────────────────────────────────────────────
   private final SearchService searchService;
   private final PersistenceService persistenceService;
-  private final SearchStrategyAutopilot autopilot = new SearchStrategyAutopilot();
+  private final SearchStrategyAutopilot autopilot;
 
   // ── Signal builder state ─────────────────────────────────────────────────
   private final List<MultimodalSignal> signals = new ArrayList<>();
@@ -98,9 +98,10 @@ public class MultimodalSearchView
   // ── Constructor ──────────────────────────────────────────────────────────
 
   public MultimodalSearchView() {
-    ServiceRegistry reg = ServiceRegistry.getInstance();
-    this.searchService = reg.getSearchService();
-    this.persistenceService = reg.getPersistenceService();
+    ViewServices services = ViewServices.current();
+    this.searchService = services.search();
+    this.persistenceService = services.persistence();
+    this.autopilot = services.searchStrategyAutopilot();
 
     setSizeFull();
     setPadding(true);

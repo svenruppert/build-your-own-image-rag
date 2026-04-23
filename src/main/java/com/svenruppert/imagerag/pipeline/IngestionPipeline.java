@@ -4,6 +4,7 @@ import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.dto.ExtractedMetadata;
+import com.svenruppert.imagerag.dto.KeywordIndexDocument;
 import com.svenruppert.imagerag.dto.StoredImage;
 import com.svenruppert.imagerag.dto.VisionAnalysisResponse;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
@@ -442,19 +443,8 @@ public class IngestionPipeline
       // Step 8: Keyword indexing (BM25)
       checkPauseOrCancelled();
       job.transition(JobStep.KEYWORD_INDEXING);
-      String locText = locationSummary != null ? locationSummary.toHumanReadable() : null;
-      String ocrText = ocrResult != null ? ocrResult.getExtractedText() : null;
-      String catLabel = semanticAnalysis.getSourceCategory() != null
-          ? semanticAnalysis.getSourceCategory().name() : null;
-      if (semanticAnalysis.getSecondaryCategories() != null
-          && !semanticAnalysis.getSecondaryCategories().isEmpty()) {
-        String secondaryCats = semanticAnalysis.getSecondaryCategories().stream()
-            .map(Enum::name)
-            .collect(java.util.stream.Collectors.joining(" "));
-        catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
-      }
-      keywordIndexService.index(imageId, asset.getOriginalFilename(), semanticAnalysis.getSummary(),
-                                semanticAnalysis.getTags(), catLabel, locText, ocrText);
+      keywordIndexService.index(KeywordIndexDocument.from(
+          asset, semanticAnalysis, locationSummary, ocrResult));
 
       job.complete(imageId);
       logger().info("[reprocess][{}] COMPLETED", asset.getOriginalFilename());
@@ -642,19 +632,8 @@ public class IngestionPipeline
       // Step 9: BM25 keyword index
       checkPauseOrCancelled();
       job.transition(JobStep.KEYWORD_INDEXING);
-      String locText = locationSummary != null ? locationSummary.toHumanReadable() : null;
-      String ocrText = ocrResult != null ? ocrResult.getExtractedText() : null;
-      String catLabel = semanticAnalysis.getSourceCategory() != null
-          ? semanticAnalysis.getSourceCategory().name() : null;
-      if (semanticAnalysis.getSecondaryCategories() != null
-          && !semanticAnalysis.getSecondaryCategories().isEmpty()) {
-        String secondaryCats = semanticAnalysis.getSecondaryCategories().stream()
-            .map(Enum::name)
-            .collect(java.util.stream.Collectors.joining(" "));
-        catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
-      }
-      keywordIndexService.index(imageId, stored.originalFilename(), semanticAnalysis.getSummary(),
-                                semanticAnalysis.getTags(), catLabel, locText, ocrText);
+      keywordIndexService.index(KeywordIndexDocument.from(
+          asset, semanticAnalysis, locationSummary, ocrResult));
 
       // Done
       job.complete(imageId);

@@ -1,5 +1,6 @@
 package com.svenruppert.imagerag.service;
 
+import com.svenruppert.imagerag.dto.KeywordIndexDocument;
 import com.svenruppert.imagerag.dto.KeywordSearchHit;
 
 import java.util.List;
@@ -16,6 +17,14 @@ public interface KeywordIndexService {
    */
   void index(UUID imageId, String filename, String summary, List<String> tags,
              String categoryLabel, String locationText, String ocrText);
+
+  default void index(KeywordIndexDocument document) {
+    if (document == null) {
+      return;
+    }
+    index(document.imageId(), document.filename(), document.summary(), document.tags(),
+          document.categoryLabel(), document.locationText(), document.ocrText());
+  }
 
   /**
    * Remove an image from the keyword index.

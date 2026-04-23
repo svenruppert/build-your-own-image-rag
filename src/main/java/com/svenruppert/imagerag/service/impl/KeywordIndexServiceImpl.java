@@ -5,6 +5,7 @@ import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.LocationSummary;
 import com.svenruppert.imagerag.domain.OcrResult;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
+import com.svenruppert.imagerag.dto.KeywordIndexDocument;
 import com.svenruppert.imagerag.dto.KeywordSearchHit;
 import com.svenruppert.imagerag.service.KeywordIndexService;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
@@ -159,16 +160,7 @@ public class KeywordIndexServiceImpl
         LocationSummary location = findLocation.apply(asset.getId()).orElse(null);
         OcrResult ocr = findOcr.apply(asset.getId()).orElse(null);
 
-        String summary = analysis != null ? analysis.getSummary() : null;
-        List<String> tags = analysis != null && analysis.getTags() != null
-            ? analysis.getTags() : List.of();
-        String catLabel = analysis != null && analysis.getSourceCategory() != null
-            ? analysis.getSourceCategory().name() : null;
-        String locText = location != null ? location.toHumanReadable() : null;
-        String ocrText = ocr != null ? ocr.getExtractedText() : null;
-
-        index(asset.getId(), asset.getOriginalFilename(), summary, tags,
-              catLabel, locText, ocrText);
+        index(KeywordIndexDocument.from(asset, analysis, location, ocr));
         count++;
       }
       logger().info("Lucene index rebuilt: {} documents", count);

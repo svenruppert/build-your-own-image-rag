@@ -1,6 +1,5 @@
 package com.svenruppert.flow.views.shared;
 
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SearchTuningConfig;
 import com.svenruppert.imagerag.dto.WhyNotFoundAnalysis;
@@ -33,6 +32,7 @@ import java.util.UUID;
 public class WhyNotFoundDialog
     extends Dialog {
 
+  private final ViewServices services;
   private final WhyNotFoundService whyNotFoundService;
   private final SearchTuningConfig config;
 
@@ -43,7 +43,8 @@ public class WhyNotFoundDialog
   // ── Constructor ──────────────────────────────────────────────────────────
 
   public WhyNotFoundDialog(SearchTuningConfig config) {
-    this.whyNotFoundService = ServiceRegistry.getInstance().getWhyNotFoundService();
+    this.services = ViewServices.current();
+    this.whyNotFoundService = services.whyNotFound();
     this.config = config;
 
     setHeaderTitle(getTranslation("wnf.title"));
@@ -251,7 +252,7 @@ public class WhyNotFoundDialog
   private UUID resolveByFilenamePrefix(String prefix) {
     if (prefix == null || prefix.isBlank()) return null;
     String lower = prefix.toLowerCase();
-    return ServiceRegistry.getInstance().getPersistenceService().findAllImages().stream()
+    return services.persistence().findAllImages().stream()
         .filter(a -> a.getOriginalFilename() != null
             && a.getOriginalFilename().toLowerCase().contains(lower))
         .map(ImageAsset::getId)

@@ -3,7 +3,7 @@ package com.svenruppert.flow.views.pipeline;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
 import com.svenruppert.flow.views.detail.ReprocessingDiffDialog;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.LocationSummary;
 import com.svenruppert.imagerag.domain.ProcessingSettings;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
@@ -86,8 +86,11 @@ public class PipelineView
   // ── Filter state ──────────────────────────────────────────────────────────
   private JobStep filterStep = null;
   private JobType filterType = null;
+  private final ViewServices services;
 
   public PipelineView() {
+    this.services = ViewServices.current();
+
     setSizeFull();
     setPadding(true);
     setSpacing(true);
@@ -157,7 +160,7 @@ public class PipelineView
   // -------------------------------------------------------------------------
 
   private void togglePause() {
-    IngestionPipeline pipeline = ServiceRegistry.getInstance().getIngestionPipeline();
+    IngestionPipeline pipeline = services.ingestionPipeline();
     if (pipeline.isPaused()) {
       pipeline.resume();
       pauseBtn.setText(getTranslation("pipeline.pause"));
@@ -228,7 +231,7 @@ public class PipelineView
     ConfirmDialog dlg = new ConfirmDialog();
     dlg.setHeader(getTranslation("pipeline.rebuild.vector"));
     dlg.setText(getTranslation("pipeline.rebuild.vector.confirm",
-                               ServiceRegistry.getInstance().getVectorBackendType().name()));
+                               services.vectorBackendType().name()));
     dlg.setCancelable(true);
     dlg.setConfirmText("Rebuild");
     dlg.addConfirmListener(e -> rebuildVectorIndex());
@@ -238,7 +241,7 @@ public class PipelineView
   private void rebuildVectorIndex() {
     Thread.ofVirtual().start(() -> {
       try {
-        ServiceRegistry.getInstance().rebuildVectorIndex();
+        services.rebuildVectorIndex();
         getUI().ifPresent(ui -> ui.access(() ->
                                               Notification.show(getTranslation("pipeline.rebuild.vector.started"),
                                                                 4000, Notification.Position.BOTTOM_END)
@@ -269,13 +272,7 @@ public class PipelineView
   private void rebuildKeywordIndex() {
     Thread.ofVirtual().start(() -> {
       try {
-        var kr = ServiceRegistry.getInstance().getKeywordIndexService();
-        var ps = ServiceRegistry.getInstance().getPersistenceService();
-        kr.rebuildAll(
-            ps::findAllImages,
-            ps::findAnalysis,
-            ps::findLocation,
-            ps::findOcrResult);
+        services.rebuildKeywordIndex();
         getUI().ifPresent(ui -> ui.access(() ->
                                               Notification.show(getTranslation("pipeline.rebuild.started"),
                                                                 3000, Notification.Position.BOTTOM_END)
@@ -294,7 +291,7 @@ public class PipelineView
   // -------------------------------------------------------------------------
 
   private HorizontalLayout buildParallelismSelector() {
-    ProcessingSettings settings = ServiceRegistry.getInstance().getProcessingSettings();
+    ProcessingSettings settings = services.processingSettings();
 
     Select<Integer> parallelismSelect = new Select<>();
     parallelismSelect.setLabel(getTranslation("pipeline.parallelism.label"));
@@ -305,7 +302,7 @@ public class PipelineView
     parallelismSelect.addValueChangeListener(e -> {
       if (e.getValue() == null) return;
       settings.setIngestionParallelism(e.getValue());
-      ServiceRegistry.getInstance().getIngestionPipeline().updateParallelism(e.getValue());
+      services.ingestionPipeline().updateParallelism(e.getValue());
       Notification n = Notification.show(
           getTranslation("pipeline.parallelism.updated", e.getValue()),
           3000, Notification.Position.BOTTOM_END);
@@ -329,7 +326,7 @@ public class PipelineView
   // -------------------------------------------------------------------------
 
   private HorizontalLayout buildSearchParallelismSelector() {
-    ProcessingSettings settings = ServiceRegistry.getInstance().getProcessingSettings();
+    ProcessingSettings settings = services.processingSettings();
 
     Select<Integer> searchSelect = new Select<>();
     searchSelect.setLabel(getTranslation("pipeline.search.parallelism.label"));
@@ -342,7 +339,7 @@ public class PipelineView
         return;
       }
       // Resize the shared search executor — makes the setting immediately effective
-      ServiceRegistry.getInstance().updateSearchParallelism(e.getValue());
+      services.updateSearchParallelism(e.getValue());
       Notification n = Notification.show(
           getTranslation("pipeline.search.parallelism.updated", e.getValue()),
           3000, Notification.Position.BOTTOM_END);
@@ -636,7 +633,7 @@ public class PipelineView
         promoteBtn.getElement().setAttribute("title",
                                              "Move this job to the front of the queue so it executes next");
         promoteBtn.addClickListener(e -> {
-          ServiceRegistry.getInstance().getIngestionPipeline().promote(job);
+          services.ingestionPipeline().promote(job);
           Notification.show(getTranslation("pipeline.promote.done", job.getFilename()),
                             2500, Notification.Position.BOTTOM_END)
               .addThemeVariants(NotificationVariant.LUMO_PRIMARY);
@@ -653,7 +650,7 @@ public class PipelineView
         cancelBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR,
                                    ButtonVariant.LUMO_TERTIARY);
         cancelBtn.addClickListener(e ->
-                                       ServiceRegistry.getInstance().getIngestionPipeline().cancel(job));
+                                       services.ingestionPipeline().cancel(job));
         return cancelBtn;
       }
       return new Span();
@@ -677,7 +674,7 @@ public class PipelineView
 
   private void retryJob(IngestionJob job) {
     try {
-      ServiceRegistry.getInstance().getIngestionPipeline().retry(job);
+      services.ingestionPipeline().retry(job);
       Notification.show(getTranslation("pipeline.retry.started", job.getFilename()),
                         3000, Notification.Position.BOTTOM_END)
           .addThemeVariants(NotificationVariant.LUMO_SUCCESS);
@@ -693,8 +690,8 @@ public class PipelineView
   // -------------------------------------------------------------------------
 
   private void refreshGrid() {
-    List<IngestionJob> allJobs = ServiceRegistry.getInstance()
-        .getIngestionPipeline()
+    List<IngestionJob> allJobs = services
+        .ingestionPipeline()
         .getAllJobs();
 
     // Apply filters
@@ -731,7 +728,7 @@ public class PipelineView
    */
   private void openDuplicateDialog(UUID existingId) {
     if (existingId == null) return;
-    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    PersistenceService ps = services.persistence();
     ps.findImage(existingId).ifPresent(asset -> {
       SemanticAnalysis analysis = ps.findAnalysis(existingId).orElse(null);
       SensitivityAssessment assessment = ps.findAssessment(existingId).orElse(null);

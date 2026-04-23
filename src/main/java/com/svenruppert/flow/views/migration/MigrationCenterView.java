@@ -2,7 +2,7 @@ package com.svenruppert.flow.views.migration;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.PromptTemplateVersion;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
@@ -70,7 +70,7 @@ public class MigrationCenterView
   // ── Services ──────────────────────────────────────────────────────────────
   private final PromptTemplateService promptService;
   private final OllamaConfig ollamaConfig;
-  private final ServiceRegistry registry;
+  private final ViewServices services;
 
   // ── Prompt editor state ───────────────────────────────────────────────────
   private final Select<PromptTemplateVersion> visionSelect = new Select<>();
@@ -89,9 +89,9 @@ public class MigrationCenterView
   private volatile boolean rebuilding = false;
 
   public MigrationCenterView() {
-    this.registry = ServiceRegistry.getInstance();
-    this.promptService = registry.getPromptTemplateService();
-    this.ollamaConfig = registry.getOllamaConfig();
+    this.services = ViewServices.current();
+    this.promptService = services.promptTemplates();
+    this.ollamaConfig = services.ollamaConfig();
 
     setSpacing(false);
     setPadding(true);
@@ -229,7 +229,7 @@ public class MigrationCenterView
                       ollamaConfig.baseUrl()));
 
     tab.add(sectionHeading(getTranslation("migration.config.backend")));
-    VectorBackendType backend = registry.getVectorBackendType();
+    VectorBackendType backend = services.vectorBackendType();
     tab.add(configRow(getTranslation("migration.config.vector.backend"),
                       backend.name()));
 
@@ -248,8 +248,8 @@ public class MigrationCenterView
 
     // Image / index statistics
     tab.add(sectionHeading(getTranslation("migration.config.stats")));
-    long totalImages = registry.getPersistenceService().findAllImages().size();
-    long indexedImages = registry.getPersistenceService().findAllIndexedImageIds().size();
+    long totalImages = services.persistence().findAllImages().size();
+    long indexedImages = services.persistence().findAllIndexedImageIds().size();
     tab.add(configRow(getTranslation("migration.config.total.images"), String.valueOf(totalImages)));
     tab.add(configRow(getTranslation("migration.config.indexed.images"), String.valueOf(indexedImages)));
 
@@ -403,7 +403,7 @@ public class MigrationCenterView
         getTranslation("migration.rebuild.vector.description"),
         getTranslation("migration.rebuild.vector.button"),
         () -> {
-          long count = registry.getPersistenceService().findAllIndexedImageIds().size();
+          long count = services.persistence().findAllIndexedImageIds().size();
           return getTranslation("migration.rebuild.vector.confirm")
               + "  " + getTranslation("migration.rebuild.affected.images", count);
         },
@@ -414,7 +414,7 @@ public class MigrationCenterView
         getTranslation("migration.rebuild.keyword.description"),
         getTranslation("migration.rebuild.keyword.button"),
         () -> {
-          long count = registry.getPersistenceService().findAllImages().size();
+          long count = services.persistence().findAllImages().size();
           return getTranslation("migration.rebuild.keyword.confirm")
               + "  " + getTranslation("migration.rebuild.affected.images", count);
         },
@@ -663,7 +663,7 @@ public class MigrationCenterView
     } catch (IllegalArgumentException ignored) {
     }
     String lower = idStr.toLowerCase();
-    return registry.getPersistenceService().findAllImages().stream()
+    return services.persistence().findAllImages().stream()
         .filter(a -> a.getOriginalFilename() != null
             && a.getOriginalFilename().toLowerCase().contains(lower))
         .map(ImageAsset::getId)
@@ -680,19 +680,19 @@ public class MigrationCenterView
    * </ul>
    */
   private String executePromptTest(String promptKey, UUID imageId, String draftContent) {
-    OllamaClient ollama = registry.getOllamaClient();
+    OllamaClient ollama = services.ollamaClient();
 
     if (VisionAnalysisServiceImpl.PROMPT_KEY.equals(promptKey)) {
       // Vision test: run draft against the actual stored image file
-      var asset = registry.getPersistenceService().findImage(imageId).orElse(null);
+      var asset = services.persistence().findImage(imageId).orElse(null);
       if (asset == null) return getTranslation("migration.test.error.image.not.found");
-      var imagePath = registry.getImageStorageService().resolvePath(asset.getId());
+      var imagePath = services.imageStorage().resolvePath(asset.getId());
       if (!Files.exists(imagePath)) return getTranslation("migration.test.error.file.not.found");
       return ollama.analyzeImageWithVision(imagePath, draftContent)
           .orElse(getTranslation("migration.test.no.result"));
     } else {
       // Semantic test: use the existing vision description as input to the draft prompt
-      var analysis = registry.getPersistenceService().findAnalysis(imageId).orElse(null);
+      var analysis = services.persistence().findAnalysis(imageId).orElse(null);
       String description = (analysis != null && analysis.getSummary() != null)
           ? analysis.getSummary()
           : getTranslation("migration.test.no.description");
@@ -801,7 +801,7 @@ public class MigrationCenterView
 
     Thread.ofVirtual().name("migration-vector-rebuild").start(() -> {
       try {
-        registry.rebuildVectorIndex();
+        services.rebuildVectorIndex();
         ui.access(() -> {
           rebuildProgress.setVisible(false);
           rebuildStatus.setText(getTranslation("migration.rebuild.vector.done"));
@@ -839,7 +839,7 @@ public class MigrationCenterView
 
     Thread.ofVirtual().name("migration-keyword-rebuild").start(() -> {
       try {
-        registry.rebuildKeywordIndex();
+        services.rebuildKeywordIndex();
         ui.access(() -> {
           rebuildProgress.setVisible(false);
           rebuildStatus.setText(getTranslation("migration.rebuild.keyword.done"));

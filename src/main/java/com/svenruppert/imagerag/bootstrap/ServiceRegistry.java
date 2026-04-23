@@ -3,6 +3,7 @@ package com.svenruppert.imagerag.bootstrap;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.ProcessingSettings;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
+import com.svenruppert.imagerag.dto.KeywordIndexDocument;
 import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
 import com.svenruppert.imagerag.persistence.PersistenceService;
@@ -14,7 +15,6 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
-import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
@@ -394,17 +394,7 @@ public class ServiceRegistry
         var analysis = persistenceService.findAnalysis(asset.getId()).orElse(null);
         var location = persistenceService.findLocation(asset.getId()).orElse(null);
         var ocr = persistenceService.findOcrResult(asset.getId()).orElse(null);
-        String summary = analysis != null ? analysis.getSummary() : null;
-        List<String> tags = analysis != null && analysis.getTags() != null ? analysis.getTags() : List.of();
-        String catLabel = analysis != null && analysis.getSourceCategory() != null ? analysis.getSourceCategory().name() : null;
-        // Include secondary categories so keyword search can find images via any category.
-        if (analysis != null && analysis.getSecondaryCategories() != null && !analysis.getSecondaryCategories().isEmpty()) {
-          String secondaryCats = analysis.getSecondaryCategories().stream().map(Enum::name).collect(java.util.stream.Collectors.joining(" "));
-          catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
-        }
-        String locText = location != null ? location.toHumanReadable() : null;
-        String ocrText = ocr != null ? ocr.getExtractedText() : null;
-        keywordIndexService.index(asset.getId(), asset.getOriginalFilename(), summary, tags, catLabel, locText, ocrText);
+        keywordIndexService.index(KeywordIndexDocument.from(asset, analysis, location, ocr));
         indexed++;
       } catch (Exception e) {
         logger().warn("Could not restore keyword index for image {}: {}", asset.getId(), e.getMessage());
@@ -505,16 +495,7 @@ public class ServiceRegistry
         var analysis = persistenceService.findAnalysis(imageId).orElse(null);
         var location = persistenceService.findLocation(imageId).orElse(null);
         var ocr = persistenceService.findOcrResult(imageId).orElse(null);
-        String summary = analysis != null ? analysis.getSummary() : null;
-        List<String> tags = analysis != null && analysis.getTags() != null ? analysis.getTags() : List.of();
-        String catLabel = analysis != null && analysis.getSourceCategory() != null ? analysis.getSourceCategory().name() : null;
-        if (analysis != null && analysis.getSecondaryCategories() != null && !analysis.getSecondaryCategories().isEmpty()) {
-          String secondaryCats = analysis.getSecondaryCategories().stream().map(Enum::name).collect(java.util.stream.Collectors.joining(" "));
-          catLabel = catLabel != null ? catLabel + " " + secondaryCats : secondaryCats;
-        }
-        String locText = location != null ? location.toHumanReadable() : null;
-        String ocrText = ocr != null ? ocr.getExtractedText() : null;
-        keywordIndexService.index(imageId, asset.getOriginalFilename(), summary, tags, catLabel, locText, ocrText);
+        keywordIndexService.index(KeywordIndexDocument.from(asset, analysis, location, ocr));
         logger().info("Re-indexed keyword entry for restored image imageId={}", imageId);
       } catch (Exception e) {
         logger().warn("Could not re-index keyword entry for restored image {}: {}", imageId, e.getMessage());

@@ -1,7 +1,8 @@
 package com.svenruppert.flow.views.taxonomy;
 
 import com.svenruppert.flow.MainLayout;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
+import com.svenruppert.flow.views.shared.ImagePreviewFactory;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.CategoryGroup;
 import com.svenruppert.imagerag.domain.enums.CategoryLifecycleState;
@@ -32,11 +33,7 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
-import com.vaadin.flow.server.StreamResource;
 
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -81,6 +78,7 @@ public class TaxonomyMaintenanceView
   private final TaxonomySuggestionService suggestionService;
   private final PersistenceService persistenceService;
   private final ClusterDiscoveryService clusterDiscoveryService;
+  private final ImagePreviewFactory previewFactory;
   // ── Inspector (left column) ───────────────────────────────────────────────
   private final TaxonomyAnalysisInspectorComponent inspector =
       new TaxonomyAnalysisInspectorComponent();
@@ -130,11 +128,12 @@ public class TaxonomyMaintenanceView
   private volatile boolean clusterRunning = false;
 
   public TaxonomyMaintenanceView() {
-    ServiceRegistry sr = ServiceRegistry.getInstance();
-    this.analysisService = sr.getTaxonomyAnalysisService();
-    this.suggestionService = sr.getTaxonomySuggestionService();
-    this.persistenceService = sr.getPersistenceService();
-    this.clusterDiscoveryService = sr.getClusterDiscoveryService();
+    ViewServices services = ViewServices.current();
+    this.analysisService = services.taxonomyAnalysis();
+    this.suggestionService = services.taxonomySuggestions();
+    this.persistenceService = services.persistence();
+    this.clusterDiscoveryService = services.clusterDiscovery();
+    this.previewFactory = services.imagePreviews();
 
     setSpacing(false);
     setPadding(true);
@@ -605,7 +604,7 @@ public class TaxonomyMaintenanceView
 
         Button dismissBtn = new Button(getTranslation("cluster.dismiss"), e -> {
           s.dismiss();
-          ServiceRegistry.getInstance().getPersistenceService().saveClusterSuggestion(s);
+          persistenceService.saveClusterSuggestion(s);
           refreshClusterGrid();
           Notification.show(getTranslation("cluster.dismissed", s.getClusterLabel()),
                             2000, Notification.Position.BOTTOM_START);
@@ -644,8 +643,7 @@ public class TaxonomyMaintenanceView
             msg -> ui.access(() -> clusterStatus.setText(msg)));
 
         // Persist newly discovered suggestions
-        PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
-        suggestions.forEach(ps::saveClusterSuggestion);
+        suggestions.forEach(persistenceService::saveClusterSuggestion);
 
         ui.access(() -> {
           clusterProgress.setVisible(false);
@@ -670,7 +668,7 @@ public class TaxonomyMaintenanceView
 
   private void refreshClusterGrid() {
     List<CategoryClusterSuggestion> suggestions =
-        ServiceRegistry.getInstance().getPersistenceService().findAllClusterSuggestions();
+        persistenceService.findAllClusterSuggestions();
     clusterGrid.setItems(suggestions);
   }
 
@@ -708,15 +706,11 @@ public class TaxonomyMaintenanceView
         .set("grid-template-columns", "repeat(auto-fill, minmax(110px, 1fr))")
         .set("gap", "0.5rem");
 
-    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
-    ImageStorageService storage = ServiceRegistry.getInstance().getImageStorageService();
-    PreviewService previews = ServiceRegistry.getInstance().getPreviewService();
-
     List<UUID> ids = s.getImageIds();
     // Cap at 40 thumbnails to keep the dialog manageable
     List<UUID> shown = ids.size() > 40 ? ids.subList(0, 40) : ids;
     for (UUID imgId : shown) {
-      ps.findImage(imgId).ifPresent(asset -> {
+      persistenceService.findImage(imgId).ifPresent(asset -> {
         Div cell = new Div();
         cell.getStyle()
             .set("border", "1px solid var(--lumo-contrast-10pct)")
@@ -728,42 +722,15 @@ public class TaxonomyMaintenanceView
             .set("align-items", "center")
             .set("justify-content", "center");
 
-        try {
-          Path imagePath = storage.resolvePath(asset.getId());
-          if (Files.exists(imagePath)) {
-            StreamResource res = previews.getTilePreview(
-                asset.getId(), imagePath, asset.getStoredFilename());
-            if (res == null) {
-              res = new StreamResource(asset.getStoredFilename(),
-                                       () -> {
-                                         try {
-                                           return Files.newInputStream(imagePath);
-                                         } catch (Exception ex) {
-                                           return InputStream.nullInputStream();
-                                         }
-                                       });
-            }
-            String altText = asset.getOriginalFilename() != null
-                ? asset.getOriginalFilename() : imgId.toString();
-            Image img = new Image(res, altText);
-            img.setWidth("100%");
-            img.setHeight("100%");
-            img.getStyle().set("object-fit", "cover").set("display", "block");
-            cell.add(img);
-          } else {
-            String name = asset.getOriginalFilename() != null
-                ? asset.getOriginalFilename() : "?";
-            Span placeholder = new Span(name.length() > 12 ? name.substring(0, 10) + "\u2026" : name);
-            placeholder.getStyle()
-                .set("font-size", "var(--lumo-font-size-xxs)")
-                .set("color", "var(--lumo-secondary-text-color)")
-                .set("text-align", "center")
-                .set("padding", "0.25rem");
-            cell.add(placeholder);
-          }
-        } catch (Exception ex) {
-          cell.add(new Span("?"));
-        }
+        String altText = asset.getOriginalFilename() != null
+            ? asset.getOriginalFilename() : imgId.toString();
+        cell.add(previewFactory.image(
+            asset,
+            PreviewService.PreviewSize.TILE,
+            "100%",
+            "100%",
+            "cover",
+            altText));
         thumbGrid.add(cell);
       });
     }
@@ -850,7 +817,7 @@ public class TaxonomyMaintenanceView
     confirmBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_SUCCESS);
     confirmBtn.addClickListener(e -> {
       s.accept();
-      ServiceRegistry.getInstance().getPersistenceService().saveClusterSuggestion(s);
+      persistenceService.saveClusterSuggestion(s);
       dlg.close();
       refreshClusterGrid();
       Notification n = Notification.show(

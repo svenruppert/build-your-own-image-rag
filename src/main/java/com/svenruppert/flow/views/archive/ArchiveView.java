@@ -3,13 +3,13 @@ package com.svenruppert.flow.views.archive;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
+import com.svenruppert.flow.views.shared.ImagePreviewFactory;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.CategoryRegistry;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.SensitivityAssessment;
 import com.svenruppert.imagerag.persistence.PersistenceService;
-import com.svenruppert.imagerag.service.PreviewService;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
@@ -17,7 +17,6 @@ import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.grid.GridVariant;
 import com.vaadin.flow.component.html.H2;
-import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
@@ -28,10 +27,7 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
-import com.vaadin.flow.server.StreamResource;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -69,8 +65,13 @@ public class ArchiveView
   private final Span selectedCountLabel = new Span();
 
   private List<ImageAsset> archivedImages = List.of();
+  private final ViewServices services;
+  private final ImagePreviewFactory previewFactory;
 
   public ArchiveView() {
+    this.services = ViewServices.current();
+    this.previewFactory = services.imagePreviews();
+
     setWidthFull();
     setPadding(true);
     setSpacing(true);
@@ -134,7 +135,7 @@ public class ArchiveView
           .set("cursor", "pointer");
       name.getElement().setAttribute("title", asset.getOriginalFilename());
       name.addClickListener(e -> {
-        PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+        PersistenceService ps = services.persistence();
         SemanticAnalysis analysis = ps.findAnalysis(asset.getId()).orElse(null);
         SensitivityAssessment assessment = ps.findAssessment(asset.getId()).orElse(null);
         com.svenruppert.imagerag.domain.LocationSummary location =
@@ -243,8 +244,8 @@ public class ArchiveView
 
   private void restoreImage(ImageAsset asset) {
     try {
-      ServiceRegistry.getInstance().restoreImage(asset.getId());
-      ServiceRegistry.getInstance().getAuditService()
+      services.restoreImage(asset.getId());
+      services.audit()
           .log("RESTORE", asset.getId(), asset.getOriginalFilename(),
                "Restored from archive view");
       Notification n = Notification.show(
@@ -292,8 +293,8 @@ public class ArchiveView
 
   private void permanentlyDeleteImage(ImageAsset asset) {
     try {
-      ServiceRegistry.getInstance().deleteImage(asset.getId());
-      ServiceRegistry.getInstance().getAuditService()
+      services.deleteImage(asset.getId());
+      services.audit()
           .log("PERMANENT_DELETE", asset.getId(), asset.getOriginalFilename(),
                "Permanently deleted from archive view");
       Notification n = Notification.show(
@@ -315,8 +316,8 @@ public class ArchiveView
     int succeeded = 0;
     for (ImageAsset asset : selected) {
       try {
-        ServiceRegistry.getInstance().restoreImage(asset.getId());
-        ServiceRegistry.getInstance().getAuditService()
+        services.restoreImage(asset.getId());
+        services.audit()
             .log("RESTORE", asset.getId(), asset.getOriginalFilename(),
                  "Batch restored from archive view");
         succeeded++;
@@ -366,8 +367,8 @@ public class ArchiveView
     int succeeded = 0;
     for (ImageAsset asset : toDelete) {
       try {
-        ServiceRegistry.getInstance().deleteImage(asset.getId());
-        ServiceRegistry.getInstance().getAuditService()
+        services.deleteImage(asset.getId());
+        services.audit()
             .log("PERMANENT_DELETE", asset.getId(), asset.getOriginalFilename(),
                  "Batch permanently deleted from archive view");
         succeeded++;
@@ -385,7 +386,7 @@ public class ArchiveView
   // ── Data ──────────────────────────────────────────────────────────────────
 
   private void loadData() {
-    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    PersistenceService ps = services.persistence();
     archivedImages = ps.findArchivedImages();
     grid.setItems(archivedImages);
     grid.deselectAll();
@@ -396,24 +397,11 @@ public class ArchiveView
   // ── Cell builders ─────────────────────────────────────────────────────────
 
   private Component buildPreviewCell(ImageAsset asset) {
-    ServiceRegistry sr = ServiceRegistry.getInstance();
-    try {
-      Path imgPath = sr.getImageStorageService().resolvePath(asset.getId());
-      if (!Files.exists(imgPath)) return new Span("—");
-      StreamResource res = sr.getPreviewService().getPreview(
-          asset.getId(), imgPath, asset.getStoredFilename(), PreviewService.PreviewSize.TABLE);
-      if (res == null) return new Span("—");
-      Image img = new Image(res, asset.getOriginalFilename());
-      img.setHeight("44px");
-      img.getStyle().set("object-fit", "contain").set("border-radius", "4px");
-      return img;
-    } catch (Exception e) {
-      return new Span("—");
-    }
+    return previewFactory.table(asset, "44px");
   }
 
   private Component buildCategoryCell(ImageAsset asset) {
-    return ServiceRegistry.getInstance().getPersistenceService()
+    return services.persistence()
         .findAnalysis(asset.getId())
         .map(SemanticAnalysis::getSourceCategory)
         .map(cat -> {
@@ -426,7 +414,7 @@ public class ArchiveView
   }
 
   private Component buildRiskCell(ImageAsset asset) {
-    return ServiceRegistry.getInstance().getPersistenceService()
+    return services.persistence()
         .findAssessment(asset.getId())
         .map(SensitivityAssessment::getRiskLevel)
         .map(risk -> {

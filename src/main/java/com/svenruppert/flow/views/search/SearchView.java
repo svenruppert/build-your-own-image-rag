@@ -3,8 +3,9 @@ package com.svenruppert.flow.views.search;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
+import com.svenruppert.flow.views.shared.ImagePreviewFactory;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.shared.ViewModeToggle;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.CategoryGroup;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
@@ -12,7 +13,6 @@ import com.svenruppert.imagerag.domain.enums.SearchMode;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
 import com.svenruppert.imagerag.dto.SearchResult;
 import com.svenruppert.imagerag.persistence.PersistenceService;
-import com.svenruppert.imagerag.service.PreviewService;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.button.Button;
@@ -34,9 +34,6 @@ import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.server.StreamResource;
 
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -161,12 +158,17 @@ public class SearchView
   // ── Runtime state ─────────────────────────────────────────────────────────
   private SearchPlan currentPlan = null;
   private volatile SearchRunState currentSearch;
+  private final ViewServices services;
+  private final ImagePreviewFactory previewFactory;
 
   // ── Push-driven UI refresh scheduler (replaces former client-side polling) ──
   private ScheduledExecutorService progressScheduler;
   private ScheduledFuture<?> progressTask;
 
   public SearchView() {
+    this.services = ViewServices.current();
+    this.previewFactory = services.imagePreviews();
+
     // Natural page scroll — do NOT call setSizeFull() so the page can grow with content.
     setWidthFull();
     setPadding(true);
@@ -310,7 +312,7 @@ public class SearchView
 
   private void refreshRecentChips() {
     recentSearchBar.removeAll();
-    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    PersistenceService ps = services.persistence();
     List<RecentSearchEntry> recent = ps.getRecentSearches();
     if (recent.isEmpty()) {
       recentSearchBar.setVisible(false);
@@ -369,7 +371,7 @@ public class SearchView
   // -------------------------------------------------------------------------
 
   private void openHistoryDialog() {
-    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    PersistenceService ps = services.persistence();
     new SearchHistoryDialog(
         ps,
         entry -> {
@@ -580,10 +582,10 @@ public class SearchView
     startProgressPush();
 
     if (prebuiltPlan != null) {
-      ServiceRegistry.getInstance().getSearchExecutor()
+      services.searchExecutor()
           .submit(() -> runSearchWithPlan(state, prebuiltPlan));
     } else {
-      ServiceRegistry.getInstance().getSearchExecutor()
+      services.searchExecutor()
           .submit(() -> runSearch(state, query));
     }
   }
@@ -631,8 +633,8 @@ public class SearchView
       state.status = "search.status.analyzing";
       state.stepProgress = 1;  // LLM analysis started
       logger().info("Starting query understanding for: {}", query);
-      SearchPlan plan = ServiceRegistry.getInstance()
-          .getQueryUnderstandingService()
+      SearchPlan plan = services
+          .queryUnderstanding()
           .understand(query);
       state.plan = plan;
       state.stepProgress = 2;  // LLM analysis done
@@ -650,8 +652,8 @@ public class SearchView
 
       state.status = "search.status.vector";
       state.stepProgress = 3;  // search execution started
-      SearchResult sr = ServiceRegistry.getInstance()
-          .getSearchService()
+      SearchResult sr = services
+          .search()
           .search(plan);
       state.results = sr.items();
       state.vectorCandidates = sr.vectorCandidates();
@@ -682,8 +684,8 @@ public class SearchView
       state.stepProgress = 2;  // plan is already available (user edited it)
       logger().info("Refine search with edited plan: embedding='{}'", plan.getEmbeddingText());
       state.stepProgress = 3;
-      SearchResult sr = ServiceRegistry.getInstance()
-          .getSearchService()
+      SearchResult sr = services
+          .search()
           .search(plan);
       state.results = sr.items();
       state.vectorCandidates = sr.vectorCandidates();
@@ -760,7 +762,7 @@ public class SearchView
     // Only fresh searches (not refinements) are stored; originalQuery is null for refine.
     if (s.originalQuery != null && !s.originalQuery.isBlank()) {
       String finalQuery = s.plan != null ? s.plan.getEmbeddingText() : null;
-      ServiceRegistry.getInstance().getPersistenceService()
+      services.persistence()
           .addRecentSearch(s.originalQuery, finalQuery, s.mode);
       refreshRecentChips();
     }
@@ -1162,37 +1164,9 @@ public class SearchView
   }
 
   private com.vaadin.flow.component.Component buildResultThumb(SearchResultItem r, String height) {
-    try {
-      PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
-      ImageAsset asset = ps.findImage(r.getImageId()).orElse(null);
-      if (asset == null) return new Span("\u2014");
-
-      PreviewService previews = ServiceRegistry.getInstance().getPreviewService();
-      Path originalPath = ServiceRegistry.getInstance()
-          .getImageStorageService().resolvePath(asset.getId());
-      if (!Files.exists(originalPath)) return new Span("\u2014");
-
-      StreamResource res = previews.getTilePreview(asset.getId(), originalPath,
-                                                   asset.getStoredFilename());
-      if (res == null) {
-        res = new StreamResource(asset.getStoredFilename(), () -> {
-          try {
-            return Files.newInputStream(originalPath);
-          } catch (Exception ex) {
-            return InputStream.nullInputStream();
-          }
-        });
-      }
-
-      Image thumb = new Image(res, asset.getOriginalFilename());
-      thumb.setHeight(height);
-      thumb.setWidth("100%");
-      thumb.getStyle().set("object-fit", "cover").set("border-radius", "4px");
-      return thumb;
-    } catch (Exception e) {
-      logger().debug("Could not load thumbnail for search result {}", r.getImageId(), e);
-    }
-    return new Span("\u2014");
+    PersistenceService ps = services.persistence();
+    ImageAsset asset = ps.findImage(r.getImageId()).orElse(null);
+    return previewFactory.tile(asset, height);
   }
 
   // -------------------------------------------------------------------------
@@ -1200,7 +1174,7 @@ public class SearchView
   // -------------------------------------------------------------------------
 
   private void openDetailDialog(SearchResultItem result) {
-    PersistenceService ps = ServiceRegistry.getInstance().getPersistenceService();
+    PersistenceService ps = services.persistence();
     ImageAsset asset = ps.findImage(result.getImageId()).orElse(null);
     if (asset == null) {
       Notification.show(getTranslation("search.image.notfound"), 3000, Notification.Position.MIDDLE);
@@ -1274,7 +1248,7 @@ public class SearchView
       if (currentPlan != null) {
         view.setEmbeddingText(currentPlan.getEmbeddingText());
       }
-      ServiceRegistry.getInstance().getPersistenceService().saveSavedSearchView(view);
+      services.persistence().saveSavedSearchView(view);
       Notification.show("Search saved: " + name, 3000, Notification.Position.BOTTOM_END)
           .addThemeVariants(NotificationVariant.LUMO_SUCCESS);
       dlg.close();
@@ -1310,8 +1284,8 @@ public class SearchView
       loadBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_PRIMARY);
 
       Button delBtn = new Button(getTranslation("search.saved.delete"), e -> {
-        ServiceRegistry.getInstance().getPersistenceService().deleteSavedSearchView(view.getId());
-        savedGrid.setItems(ServiceRegistry.getInstance().getPersistenceService().getSavedSearchViews());
+        services.persistence().deleteSavedSearchView(view.getId());
+        savedGrid.setItems(services.persistence().getSavedSearchViews());
       });
       delBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR,
                               ButtonVariant.LUMO_TERTIARY);
@@ -1322,7 +1296,7 @@ public class SearchView
       return actions;
     }).setHeader("").setWidth("200px").setFlexGrow(0);
 
-    savedGrid.setItems(ServiceRegistry.getInstance().getPersistenceService().getSavedSearchViews());
+    savedGrid.setItems(services.persistence().getSavedSearchViews());
     savedGrid.setHeight("300px");
     dlg.add(savedGrid);
 

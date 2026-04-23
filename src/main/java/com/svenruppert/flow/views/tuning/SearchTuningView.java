@@ -2,8 +2,9 @@ package com.svenruppert.flow.views.tuning;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
+import com.svenruppert.flow.views.shared.ImagePreviewFactory;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.shared.WhyNotFoundDialog;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.FeedbackType;
 import com.svenruppert.imagerag.domain.enums.QueryIntentType;
@@ -11,7 +12,6 @@ import com.svenruppert.imagerag.domain.enums.RetrievalMode;
 import com.svenruppert.imagerag.domain.enums.SimilarityFunction;
 import com.svenruppert.imagerag.dto.*;
 import com.svenruppert.imagerag.persistence.PersistenceService;
-import com.svenruppert.imagerag.service.ImageStorageService;
 import com.svenruppert.imagerag.service.PreviewService;
 import com.svenruppert.imagerag.service.SearchService;
 import com.svenruppert.imagerag.service.SearchStrategyAutopilot;
@@ -37,11 +37,7 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.Route;
-import com.vaadin.flow.server.StreamResource;
 
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 
@@ -79,6 +75,7 @@ public class SearchTuningView
   private final SearchService searchService;
   private final PersistenceService persistenceService;
   private final SearchStrategyAutopilot autopilot;
+  private final ImagePreviewFactory previewFactory;
 
   // ── Query input ───────────────────────────────────────────────────────────
   private final TextArea queryField = new TextArea();
@@ -122,9 +119,11 @@ public class SearchTuningView
   private TuningRun currentRun = null;  private final FeedbackSessionPanel feedbackPanel = new FeedbackSessionPanel(this::removeFeedback);
   private TuningRun previousRun = null;
   public SearchTuningView() {
-    this.searchService = ServiceRegistry.getInstance().getSearchService();
-    this.persistenceService = ServiceRegistry.getInstance().getPersistenceService();
-    this.autopilot = ServiceRegistry.getInstance().getSearchStrategyAutopilot();
+    ViewServices services = ViewServices.current();
+    this.searchService = services.search();
+    this.persistenceService = services.persistence();
+    this.autopilot = services.searchStrategyAutopilot();
+    this.previewFactory = services.imagePreviews();
 
     // ── Labels that need getTranslation() (not available in field initializers) ──
     runBtn.setText(getTranslation("tuning.run"));
@@ -935,36 +934,17 @@ public class SearchTuningView
   // ── Thumbnail ─────────────────────────────────────────────────────────────
 
   private Component buildThumbnail(SearchResultItem item) {
-    try {
-      ImageStorageService storage = ServiceRegistry.getInstance().getImageStorageService();
-      PreviewService previews = ServiceRegistry.getInstance().getPreviewService();
-      ImageAsset asset = persistenceService.findImage(item.getImageId()).orElse(null);
-      if (asset == null) return thumbPlaceholder();
-
-      Path originalPath = storage.resolvePath(asset.getId());
-      if (!Files.exists(originalPath)) return thumbPlaceholder();
-
-      StreamResource res = previews.getTilePreview(
-          asset.getId(), originalPath, asset.getStoredFilename());
-      if (res == null) {
-        res = new StreamResource(asset.getStoredFilename(), () -> {
-          try {
-            return Files.newInputStream(originalPath);
-          } catch (Exception ex) {
-            return InputStream.nullInputStream();
-          }
-        });
-      }
-      Image img = new Image(res,
-                            item.getTitle() != null ? item.getTitle() : getTranslation("tuning.image.alt"));
-      img.setWidth("100%");
-      img.setHeight("100%");
-      img.getStyle().set("object-fit", "cover").set("display", "block");
-      return img;
-    } catch (Exception e) {
-      logger().debug("Could not load thumbnail for tuning result {}", item.getImageId(), e);
+    ImageAsset asset = persistenceService.findImage(item.getImageId()).orElse(null);
+    if (asset == null) {
+      return thumbPlaceholder();
     }
-    return thumbPlaceholder();
+    return previewFactory.image(
+        asset,
+        PreviewService.PreviewSize.TILE,
+        "100%",
+        "100%",
+        "cover",
+        item.getTitle() != null ? item.getTitle() : getTranslation("tuning.image.alt"));
   }
 
   private Div buildScoreBreakdown(ScoreBreakdown bd, TuningSearchResult tsr) {

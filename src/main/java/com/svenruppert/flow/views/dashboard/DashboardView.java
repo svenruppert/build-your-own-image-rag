@@ -8,10 +8,10 @@ import com.svenruppert.flow.views.multimodal.MultimodalSearchView;
 import com.svenruppert.flow.views.overview.OverviewView;
 import com.svenruppert.flow.views.pipeline.PipelineView;
 import com.svenruppert.flow.views.search.SearchView;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.taxonomy.TaxonomyMaintenanceView;
 import com.svenruppert.flow.views.tuning.SearchTuningView;
 import com.svenruppert.flow.views.upload.UploadView;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.enums.SuggestionStatus;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
@@ -64,8 +64,11 @@ public class DashboardView
    * Low-confidence threshold — primary score below this triggers a flag.
    */
   private static final double LOW_CONFIDENCE_THRESHOLD = 0.6;
+  private final ViewServices services;
 
   public DashboardView() {
+    this.services = ViewServices.current();
+
     setPadding(true);
     setSpacing(true);
     setWidthFull();
@@ -120,10 +123,9 @@ public class DashboardView
   // ── 2. Session status chips ───────────────────────────────────────────────
 
   private Component buildStatusSection() {
-    ServiceRegistry sr = ServiceRegistry.getInstance();
-    PersistenceService ps = sr.getPersistenceService();
-    OllamaConfig cfg = sr.getOllamaConfig();
-    IngestionPipeline pipeline = sr.getIngestionPipeline();
+    PersistenceService ps = services.persistence();
+    OllamaConfig cfg = services.ollamaConfig();
+    IngestionPipeline pipeline = services.ingestionPipeline();
 
     int activeImages = ps.findAllImages().size();
     int archivedImages = ps.findArchivedImages().size();
@@ -212,10 +214,9 @@ public class DashboardView
   // ── 3. Lab state insights ─────────────────────────────────────────────────
 
   private Component buildLabStateSection() {
-    ServiceRegistry sr = ServiceRegistry.getInstance();
-    PersistenceService ps = sr.getPersistenceService();
-    OllamaConfig cfg = sr.getOllamaConfig();
-    IngestionPipeline pipeline = sr.getIngestionPipeline();
+    PersistenceService ps = services.persistence();
+    OllamaConfig cfg = services.ollamaConfig();
+    IngestionPipeline pipeline = services.ingestionPipeline();
 
     H2 heading = new H2(getTranslation("dashboard.lab.title"));
     heading.getStyle().set("margin", "0 0 var(--lumo-space-s) 0");

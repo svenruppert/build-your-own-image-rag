@@ -1,6 +1,7 @@
 package com.svenruppert.flow.views.detail;
 
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
+import com.svenruppert.flow.views.shared.ImagePreviewFactory;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.service.PreviewService;
@@ -9,15 +10,10 @@ import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H4;
-import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
-import com.vaadin.flow.server.StreamResource;
 
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -36,19 +32,20 @@ public class ComparisonDialog
     setMaxHeight("90vh");
     setCloseOnOutsideClick(true);
 
-    ServiceRegistry sr = ServiceRegistry.getInstance();
+    ViewServices services = ViewServices.current();
+    ImagePreviewFactory previewFactory = services.imagePreviews();
 
-    SemanticAnalysis leftAnalysis = sr.getPersistenceService().findAnalysis(left.getId()).orElse(null);
-    SemanticAnalysis rightAnalysis = sr.getPersistenceService().findAnalysis(right.getId()).orElse(null);
-    SensitivityAssessment leftAssess = sr.getPersistenceService().findAssessment(left.getId()).orElse(null);
-    SensitivityAssessment rightAssess = sr.getPersistenceService().findAssessment(right.getId()).orElse(null);
-    LocationSummary leftLoc = sr.getPersistenceService().findLocation(left.getId()).orElse(null);
-    LocationSummary rightLoc = sr.getPersistenceService().findLocation(right.getId()).orElse(null);
+    SemanticAnalysis leftAnalysis = services.persistence().findAnalysis(left.getId()).orElse(null);
+    SemanticAnalysis rightAnalysis = services.persistence().findAnalysis(right.getId()).orElse(null);
+    SensitivityAssessment leftAssess = services.persistence().findAssessment(left.getId()).orElse(null);
+    SensitivityAssessment rightAssess = services.persistence().findAssessment(right.getId()).orElse(null);
+    LocationSummary leftLoc = services.persistence().findLocation(left.getId()).orElse(null);
+    LocationSummary rightLoc = services.persistence().findLocation(right.getId()).orElse(null);
 
     HorizontalLayout columns = new HorizontalLayout(
-        buildColumn(left, leftAnalysis, leftAssess, leftLoc, sr),
+        buildColumn(left, leftAnalysis, leftAssess, leftLoc, previewFactory),
         buildDivider(),
-        buildColumn(right, rightAnalysis, rightAssess, rightLoc, sr)
+        buildColumn(right, rightAnalysis, rightAssess, rightLoc, previewFactory)
     );
     columns.setWidthFull();
     columns.setSpacing(false);
@@ -66,7 +63,7 @@ public class ComparisonDialog
                                      SemanticAnalysis analysis,
                                      SensitivityAssessment assessment,
                                      LocationSummary location,
-                                     ServiceRegistry sr) {
+                                     ImagePreviewFactory previewFactory) {
     VerticalLayout col = new VerticalLayout();
     col.setWidth("50%");
     col.setPadding(true);
@@ -83,7 +80,7 @@ public class ComparisonDialog
     col.add(filename);
 
     // ── Preview ────────────────────────────────────────────────────────────
-    col.add(buildPreview(asset, sr));
+    col.add(buildPreview(asset, previewFactory));
 
     // ── Primary category ───────────────────────────────────────────────────
     if (analysis != null && analysis.getSourceCategory() != null) {
@@ -182,7 +179,7 @@ public class ComparisonDialog
 
   // ── Preview ────────────────────────────────────────────────────────────────
 
-  private Div buildPreview(ImageAsset asset, ServiceRegistry sr) {
+  private Div buildPreview(ImageAsset asset, ImagePreviewFactory previewFactory) {
     Div wrapper = new Div();
     wrapper.getStyle()
         .set("background", "var(--lumo-contrast-5pct)")
@@ -192,32 +189,13 @@ public class ComparisonDialog
         .set("align-items", "center")
         .set("justify-content", "center")
         .set("height", "220px");
-    try {
-      Path imgPath = sr.getImageStorageService().resolvePath(asset.getId());
-      if (!Files.exists(imgPath)) {
-        wrapper.add(new Span("—"));
-        return wrapper;
-      }
-      PreviewService previews = sr.getPreviewService();
-      StreamResource res = previews.getPreview(
-          asset.getId(), imgPath, asset.getStoredFilename(), PreviewService.PreviewSize.DETAIL);
-      if (res == null) {
-        res = new StreamResource(asset.getStoredFilename(), () -> {
-          try {
-            return Files.newInputStream(imgPath);
-          } catch (Exception ex) {
-            return InputStream.nullInputStream();
-          }
-        });
-      }
-      Image img = new Image(res, asset.getOriginalFilename());
-      img.setMaxHeight("220px");
-      img.setMaxWidth("100%");
-      img.getStyle().set("object-fit", "contain");
-      wrapper.add(img);
-    } catch (Exception e) {
-      wrapper.add(new Span("—"));
-    }
+    wrapper.add(previewFactory.image(
+        asset,
+        PreviewService.PreviewSize.DETAIL,
+        "100%",
+        "220px",
+        "contain",
+        null));
     return wrapper;
   }
 

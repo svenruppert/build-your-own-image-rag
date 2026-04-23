@@ -3,7 +3,7 @@ package com.svenruppert.flow.views.upload;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.pipeline.PipelineView;
-import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
+import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.pipeline.IngestionJob;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
@@ -29,8 +29,11 @@ public class UploadView
     implements HasLogger {
 
   public static final String PATH = "upload";
+  private final ViewServices services;
 
   public UploadView() {
+    this.services = ViewServices.current();
+
     setWidthFull();
     setPadding(true);
     setSpacing(true);
@@ -85,8 +88,8 @@ public class UploadView
    */
   private void submitToQueue(String filename, String mimeType, Path tempFile) {
     try {
-      IngestionJob job = ServiceRegistry.getInstance()
-          .getIngestionPipeline()
+      IngestionJob job = services
+          .ingestionPipeline()
           .submitFromPath(tempFile, filename, mimeType);
 
       Notification n = Notification.show(

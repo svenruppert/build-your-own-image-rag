@@ -1,6 +1,7 @@
 package com.svenruppert.imagerag.service.impl;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.dependencies.core.net.HttpStatus;
 import com.svenruppert.imagerag.domain.LocationSummary;
 import com.svenruppert.imagerag.service.ReverseGeocodingService;
 import tools.jackson.databind.JsonNode;
@@ -55,7 +56,7 @@ public class ReverseGeocodingServiceImpl
 
       HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-      if (response.statusCode() != 200) {
+      if (response.statusCode() != HttpStatus.OK.code()) {
         logger().warn("Nominatim returned HTTP {}", response.statusCode());
         return fallback(latitude, longitude);
       }

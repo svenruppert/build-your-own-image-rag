@@ -1,6 +1,7 @@
 package com.svenruppert.flow.views.upload;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.dependencies.core.net.MediaType;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.pipeline.PipelineView;
 import com.svenruppert.flow.views.shared.ViewServices;
@@ -49,7 +50,9 @@ public class UploadView
     // which reads it lazily at processing time.
     MultiFileBuffer buffer = new MultiFileBuffer();
     Upload upload = new Upload(buffer);
-    upload.setAcceptedFileTypes("image/jpeg", "image/png", "image/webp", "image/gif", "image/bmp");
+    // MediaType has no IMAGE_BMP constant yet, so that one stays a literal.
+    upload.setAcceptedFileTypes(MediaType.IMAGE_JPEG.mime(), MediaType.IMAGE_PNG.mime(),
+        MediaType.IMAGE_WEBP.mime(), MediaType.IMAGE_GIF.mime(), "image/bmp");
     upload.setMaxFiles(200);
     upload.setMaxFileSize(50 * 1024 * 1024); // 50 MB per file
     upload.setWidthFull();

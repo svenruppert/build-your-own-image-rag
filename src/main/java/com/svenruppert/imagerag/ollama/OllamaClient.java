@@ -1,6 +1,8 @@
 package com.svenruppert.imagerag.ollama;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.dependencies.core.net.HttpStatus;
+import com.svenruppert.dependencies.core.net.MediaType;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -150,7 +152,7 @@ public class OllamaClient
           .GET()
           .build();
       HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-      return response.statusCode() == 200;
+      return response.statusCode() == HttpStatus.OK.code();
     } catch (Exception e) {
       logger().warn("Ollama not reachable at {}: {}", config.baseUrl(), e.getMessage());
       return false;
@@ -162,14 +164,15 @@ public class OllamaClient
     HttpRequest request = HttpRequest.newBuilder()
         .uri(URI.create(url))
         .timeout(Duration.ofSeconds(config.getTimeoutSeconds()))
-        .header("Content-Type", "application/json")
+        .header("Content-Type", MediaType.APPLICATION_JSON.mime())
         .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
         .build();
 
     HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
-    if (response.statusCode() != 200) {
-      throw new IOException("Ollama returned HTTP " + response.statusCode() + ": " + response.body());
+    if (response.statusCode() != HttpStatus.OK.code()) {
+      throw new IOException("Ollama returned HTTP "
+          + HttpStatus.fromCode(response.statusCode()) + ": " + response.body());
     }
     return response.body();
   }

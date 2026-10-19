@@ -1,5 +1,6 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.PromptTemplateVersion;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.PromptTemplateService;
@@ -8,7 +9,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.logging.Logger;
 
 /**
  * Manages versioned prompt templates backed by {@link PersistenceService}.
@@ -16,9 +16,7 @@ import java.util.logging.Logger;
  * synchronised at the EclipseStore level.
  */
 public class PromptTemplateServiceImpl
-    implements PromptTemplateService {
-
-  private static final Logger LOG = Logger.getLogger(PromptTemplateServiceImpl.class.getName());
+    implements PromptTemplateService, HasLogger {
 
   private final PersistenceService persistenceService;
 
@@ -58,7 +56,7 @@ public class PromptTemplateServiceImpl
     PromptTemplateVersion draft = PromptTemplateVersion.create(
         promptKey, version, content, description, previousId);
     persistenceService.savePromptVersion(draft);
-    LOG.info("Saved prompt draft: key=" + promptKey + " version=" + version);
+    logger().info("Saved prompt draft: key={} version={}", promptKey, version);
     return draft;
   }
 
@@ -75,7 +73,7 @@ public class PromptTemplateServiceImpl
 
     target.activate();
     persistenceService.savePromptVersion(target);
-    LOG.info("Activated prompt version: key=" + target.getPromptKey() + " version=" + target.getVersion());
+    logger().info("Activated prompt version: key={} version={}", target.getPromptKey(), target.getVersion());
     return target;
   }
 
@@ -97,7 +95,7 @@ public class PromptTemplateServiceImpl
           "Cannot delete the last remaining version for prompt key '" + v.getPromptKey() + "'.");
     }
     persistenceService.deletePromptVersion(versionId);
-    LOG.info("Deleted prompt version: " + versionId);
+    logger().info("Deleted prompt version: {}", versionId);
   }
 
   @Override
@@ -108,7 +106,7 @@ public class PromptTemplateServiceImpl
     PromptTemplateVersion builtin = PromptTemplateVersion.createBuiltIn(
         promptKey, builtInVersion, content);
     persistenceService.savePromptVersion(builtin);
-    LOG.info("Imported built-in prompt: key=" + promptKey + " version=" + builtInVersion);
+    logger().info("Imported built-in prompt: key={} version={}", promptKey, builtInVersion);
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────

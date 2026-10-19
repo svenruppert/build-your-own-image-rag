@@ -244,5 +244,5 @@ runtime data directories listed above.
 
 ## License
 
-This project is licensed under the Apache License, Version 2.0. See
-`LICENSE` for details.
+This project is licensed under the European Union Public Licence 1.2
+(EUPL-1.2). See `LICENSE` for details.

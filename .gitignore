@@ -42,3 +42,24 @@ build/
 /src/main/frontend/generated/
 /src/main/bundles/
 /_data_keyword_index/
+
+### Vaadin-generated frontend artifacts ###
+/node_modules/
+/vite.generated.ts
+/vite.config.ts
+/tsconfig.json
+/types.d.ts
+
+### Local archives (kept on disk, never versioned) ###
+/Archiv*.zip
+/_weg/
+
+### Zipped copies of the versioned slide sources ###
+/_slides/*.zip
+
+### Editor and agent state ###
+/.idea/
+/.claude/
+
+### Auto-generated pnpm configuration ###
+/.npmrc

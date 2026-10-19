@@ -23,7 +23,8 @@ public class AppServlet
     logger().info("servletInitialized .. started");
     VaadinServletService service = getService();
     service.addSessionInitListener(e -> {
-      e.getSession().setErrorHandler(err -> err.getThrowable().printStackTrace());
+      e.getSession().setErrorHandler(
+          err -> logger().error("unhandled session error", err.getThrowable()));
     });
     //service.addSessionInitListener();
   }

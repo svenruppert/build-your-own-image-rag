@@ -8,7 +8,7 @@
     <parent>
         <groupId>com.svenruppert</groupId>
         <artifactId>dependencies</artifactId>
-        <version>06.00.16</version>
+        <version>06.02.05</version>
     </parent>
 
     <artifactId>build-your-own-image-rag</artifactId>
@@ -80,10 +80,9 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <pitest-prod-classes>com.svenruppert.*</pitest-prod-classes>
-        <pitest-test-classes>junit.com.svenruppert.*</pitest-test-classes>
+        <pitest-test-classes>com.svenruppert.imagerag.*</pitest-test-classes>
 
         <!--TDD jUnit5-->
-        <junit-platform-maven-plugin.timeout>300</junit-platform-maven-plugin.timeout>
 
         <!--        Vaadin Flow Properties-->
         <failOnMissingWebXml>false</failOnMissingWebXml>
@@ -126,25 +125,6 @@
         </repository>
     </repositories>
 
-    <pluginRepositories>
-        <!-- The order of definitions matters. Explicitly defining central here to make sure it has the highest priority. -->
-        <pluginRepository>
-            <id>central</id>
-            <url>https://repo.maven.apache.org/maven2</url>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-        </pluginRepository>
-        <pluginRepository>
-            <id>vaadin-prereleases</id>
-            <url>
-                https://maven.vaadin.com/vaadin-prereleases/
-            </url>
-            <snapshots>
-                <enabled>true</enabled>
-            </snapshots>
-        </pluginRepository>
-    </pluginRepositories>
 
     <dependencyManagement>
         <dependencies>
@@ -416,10 +396,6 @@
                 <artifactId>maven-resources-plugin</artifactId>
             </plugin>
 
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-repository-plugin</artifactId>
-            </plugin>
 
             <!--Enable mutation testing-->
             <plugin>
@@ -451,6 +427,10 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
+                <!--
+                    failIfNoTests stays at the parent default (false) until this
+                    project has its first test. Flip it to true with that commit.
+                -->
             </plugin>
             <plugin>
                 <groupId>org.cyclonedx</groupId>
@@ -478,6 +458,24 @@
                     <outputFormat>all</outputFormat>
                     <outputName>CycloneDX-SBom</outputName>
                 </configuration>
+            </plugin>
+        
+            <!--
+                The parent POM (06.02.0x) binds license-maven-plugin to
+                process-sources and would stamp EUPL-1.2 headers into every
+                source file. Disable that execution here, as
+                core-vaadin-project-template does: adding file headers is a
+                separate decision, not a side effect of a parent bump.
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>license-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>first</id>
+                        <phase>none</phase>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

@@ -1,0 +1,8 @@
+flowchart TD
+    A[User Query] --> B[Normalize]
+    B --> C[Embed Query]
+    C --> D[Similarity Search]
+    D --> E[Context Assembly]
+    E --> F[Prompt]
+    F --> G[LLM]
+    G --> H[Answer]

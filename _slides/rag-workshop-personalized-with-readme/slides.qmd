@@ -1,0 +1,22 @@
+---
+title: "Building Secure, Self-Hosted RAG Systems in Java"
+subtitle: "Workshop Demo Deck with Personalized Participant Copies"
+author: "Sven Ruppert"
+date: "April 2026"
+title-short: "Build Your Own RAG in Java"
+author-short: "Sven Ruppert"
+---
+
+{{< include slides/01-title/page.md >}}
+{{< include slides/02-agenda/page.md >}}
+{{< include slides/03-why-self-hosted/page.md >}}
+{{< include slides/04-objectives/page.md >}}
+{{< include slides/05-architecture/page.md >}}
+{{< include slides/06-ingestion/page.md >}}
+{{< include slides/07-embeddings/page.md >}}
+{{< include slides/08-retrieval/page.md >}}
+{{< include slides/09-security/page.md >}}
+{{< include slides/10-personalization/page.md >}}
+{{< include slides/11-hands-on/page.md >}}
+{{< include slides/12-roadmap/page.md >}}
+{{< include slides/13-closing/page.md >}}

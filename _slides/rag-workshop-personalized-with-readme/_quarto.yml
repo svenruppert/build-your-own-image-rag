@@ -1,0 +1,17 @@
+project:
+  type: default
+  pre-render:
+    - scripts/render-mermaid.sh
+
+format:
+  beamer:
+    pdf-engine: xelatex
+    include-in-header: custom.tex
+    aspectratio: 169
+    incremental: true
+    mermaid-format: png
+    theme: default
+    slide-level: 2
+
+execute:
+  echo: false

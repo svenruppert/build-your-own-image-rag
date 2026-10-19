@@ -1,0 +1,11 @@
+flowchart TD
+    A[Documents and Images] --> B[Ingestion Pipeline]
+    B --> C[Chunking and Metadata]
+    C --> D[Embedding Model]
+    D --> E[(Vector Store)]
+    Q[User Query] --> R[Query Processing]
+    R --> S[Embedding]
+    S --> E
+    E --> T[Retrieved Context]
+    T --> U[LLM via Ollama]
+    U --> V[Vaadin UI]

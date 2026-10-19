@@ -1,0 +1,46 @@
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Heros}
+\setsansfont{TeX Gyre Heros}
+\setmonofont{DejaVu Sans Mono}
+
+\usepackage{xcolor}
+\usepackage{tikz}
+\usepackage{etoolbox}
+\usepackage{tcolorbox}
+\usepackage{graphicx}
+
+\definecolor{vaadinBlue}{HTML}{0B72E7}
+\definecolor{vaadinText}{HTML}{1F2937}
+\definecolor{vaadinSurface}{HTML}{F8FAFC}
+
+\setbeamercolor{normal text}{fg=vaadinText,bg=white}
+\setbeamercolor{structure}{fg=vaadinBlue}
+\setbeamercolor{frametitle}{fg=vaadinText,bg=white}
+\setbeamercolor{title}{fg=vaadinText}
+\setbeamercolor{block title}{fg=white,bg=vaadinBlue}
+\setbeamercolor{block body}{fg=vaadinText,bg=vaadinSurface}
+
+\AtBeginEnvironment{Highlighting}{\scriptsize}
+
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{itemize item}{\color{vaadinBlue}$\blacktriangleright$}
+
+\providecommand{\participantfirstname}{Participant}
+\providecommand{\participantlastname}{}
+\providecommand{\participantfullname}{Participant}
+\providecommand{\participantemail}{participant@example.com}
+\providecommand{\participantcompany}{}
+\providecommand{\participantcompanyline}{}
+\providecommand{\participantdisclaimer}{This personalized workshop copy may not be redistributed.}
+
+\setbeamertemplate{footline}{
+  \leavevmode%
+  \hbox{%
+    \begin{beamercolorbox}[wd=.70\paperwidth,ht=2.8ex,dp=1ex,leftskip=.8em]{author in head/foot}%
+      \usebeamerfont{author in head/foot}\tiny \insertshorttitle
+    \end{beamercolorbox}%
+    \begin{beamercolorbox}[wd=.30\paperwidth,ht=2.8ex,dp=1ex,rightskip=.8em plus1fil]{title in head/foot}%
+      \usebeamerfont{title in head/foot}\tiny \participantemail{} \hfill \insertframenumber
+    \end{beamercolorbox}%
+  }%
+}

@@ -1,5 +1,6 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.CategoryLifecycleState;
@@ -365,13 +366,10 @@ public class TaxonomyAnalysisServiceImpl
           analysis.getSummary().replace("\"", "'"),
           analysis.getSourceCategory());
 
-      Optional<String> jsonResponse = ollamaClient.generateJson(prompt);
-      if (jsonResponse.isEmpty()) return null;
-
-      String cleaned = jsonResponse.get().trim();
-      if (cleaned.startsWith("```")) {
-        cleaned = cleaned.replaceFirst("```[a-zA-Z]*\\n?", "").replaceAll("```$", "").trim();
+      if (!(ollamaClient.generateJson(prompt) instanceof Result.Success<String, String>(String json))) {
+        return null;
       }
+      String cleaned = OllamaClient.stripCodeFence(json);
 
       JsonNode node = objectMapper.readTree(cleaned);
       double primaryConf = node.path("primaryConfidence").asDouble(0.5);

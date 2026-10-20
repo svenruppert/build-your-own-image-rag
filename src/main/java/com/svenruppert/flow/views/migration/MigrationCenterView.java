@@ -689,7 +689,7 @@ public class MigrationCenterView
       var imagePath = services.imageStorage().resolvePath(asset.getId());
       if (!Files.exists(imagePath)) return getTranslation("migration.test.error.file.not.found");
       return ollama.analyzeImageWithVision(imagePath, draftContent)
-          .orElse(getTranslation("migration.test.no.result"));
+          .getOrElse(getTranslation("migration.test.no.result"));
     } else {
       // Semantic test: use the existing vision description as input to the draft prompt
       var analysis = services.persistence().findAnalysis(imageId).orElse(null);
@@ -698,7 +698,7 @@ public class MigrationCenterView
           : getTranslation("migration.test.no.description");
       String formatted = draftContent.formatted(sanitizeForPrompt(description));
       return ollama.generateJson(formatted)
-          .orElse(getTranslation("migration.test.no.result"));
+          .getOrElse(getTranslation("migration.test.no.result"));
     }
   }
 

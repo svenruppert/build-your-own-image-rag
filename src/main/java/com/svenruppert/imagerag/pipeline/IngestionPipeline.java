@@ -17,6 +17,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
@@ -116,10 +117,10 @@ public class IngestionPipeline
   private static String computeSha256(byte[] data) {
     try {
       MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] hash = digest.digest(data);
-      return HexFormat.of().formatHex(hash);
-    } catch (Exception e) {
-      return null; // hash unavailable; duplicate check skipped
+      return HexFormat.of().formatHex(digest.digest(data));
+    } catch (NoSuchAlgorithmException e) {
+      // Every Java platform is required to provide SHA-256.
+      throw new IllegalStateException("SHA-256 not available", e);
     }
   }
 

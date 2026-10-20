@@ -63,7 +63,7 @@ public class PreviewServiceImpl
     }
 
     // Build a StreamResource backed by the cached JPEG
-    final String resourceId = imageId + "_" + size.getSuffix() + ".jpg";
+    final String resourceId = previewPath.getFileName().toString();
     return new StreamResource(resourceId, () -> {
       try {
         return Files.newInputStream(previewPath);

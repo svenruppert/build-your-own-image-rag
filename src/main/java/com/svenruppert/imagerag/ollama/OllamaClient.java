@@ -3,6 +3,8 @@ package com.svenruppert.imagerag.ollama;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.dependencies.core.net.HttpStatus;
 import com.svenruppert.dependencies.core.net.MediaType;
+import com.svenruppert.functional.result.Result;
+import com.svenruppert.functional.result.functions.CheckedSupplier;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
@@ -17,7 +19,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
-import java.util.Optional;
 
 public class OllamaClient
     implements HasLogger {
@@ -41,104 +42,85 @@ public class OllamaClient
 
   /**
    * Sends an image to Ollama for vision-based semantic description.
-   * Returns the raw text description, or empty on failure.
+   * Returns the raw text description, or a failure carrying the reason.
    */
-  public Optional<String> analyzeImageWithVision(Path imagePath, String prompt) {
-    try {
-      long size = Files.size(imagePath);
-      if (size > MAX_VISION_IMAGE_BYTES) {
-        logger().warn("Refusing vision analysis for {}: size {} exceeds limit {}",
-                      imagePath.getFileName(), size, MAX_VISION_IMAGE_BYTES);
-        return Optional.empty();
-      }
-      byte[] imageBytes = Files.readAllBytes(imagePath);
-      String base64Image = Base64.getEncoder().encodeToString(imageBytes);
-
-      ObjectNode body = objectMapper.createObjectNode();
-      body.put("model", config.getVisionModel());
-      body.put("prompt", prompt);
-      body.put("stream", false);
-
-      ArrayNode images = body.putArray("images");
-      images.add(base64Image);
-
-      String responseJson = postJson(config.baseUrl() + "/api/generate", body.toString());
-      JsonNode response = objectMapper.readTree(responseJson);
-      String text = response.path("response").asText("").trim();
-
-      if (text.isEmpty()) {
-        logger().warn("Empty vision response from Ollama for {}", imagePath.getFileName());
-        return Optional.empty();
-      }
-      return Optional.of(text);
-
-    } catch (Exception e) {
-      logger().error("Vision analysis failed for {}: {}", imagePath.getFileName(), e.getMessage());
-      return Optional.empty();
-    }
+  public Result<String, String> analyzeImageWithVision(Path imagePath, String prompt) {
+    CheckedSupplier<Long> size = () -> Files.size(imagePath);
+    return size.get()
+        .mapError(OllamaClient::describe)
+        .flatMap(bytes -> bytes <= MAX_VISION_IMAGE_BYTES
+            ? Result.<Long, String>success(bytes)
+            : Result.<Long, String>failure(
+                "size " + bytes + " exceeds limit " + MAX_VISION_IMAGE_BYTES))
+        .flatMap(ignored -> generate(() -> {
+          ObjectNode body = objectMapper.createObjectNode();
+          body.put("model", config.getVisionModel());
+          body.put("prompt", prompt);
+          body.put("stream", false);
+          ArrayNode images = body.putArray("images");
+          images.add(Base64.getEncoder().encodeToString(Files.readAllBytes(imagePath)));
+          return body;
+        }))
+        .peekFailure(reason -> logger().error("Vision analysis failed for {}: {}",
+                                              imagePath.getFileName(), reason));
   }
 
   /**
    * Sends a text prompt to Ollama and expects a JSON response.
-   * Returns the raw JSON string, or empty on failure.
+   * Returns the raw JSON string, or a failure carrying the reason.
    */
-  public Optional<String> generateJson(String prompt) {
-    try {
+  public Result<String, String> generateJson(String prompt) {
+    return generate(() -> {
       ObjectNode body = objectMapper.createObjectNode();
       body.put("model", config.getTextModel());
       body.put("prompt", prompt);
       body.put("stream", false);
-
       ObjectNode format = objectMapper.createObjectNode();
       format.put("type", "object");
       body.set("format", format);
-
-      String responseJson = postJson(config.baseUrl() + "/api/generate", body.toString());
-      JsonNode response = objectMapper.readTree(responseJson);
-      String text = response.path("response").asText("").trim();
-
-      if (text.isEmpty()) {
-        logger().warn("Empty JSON response from Ollama for query understanding");
-        return Optional.empty();
-      }
-      return Optional.of(text);
-
-    } catch (Exception e) {
-      logger().error("JSON generation failed: {}", e.getMessage());
-      return Optional.empty();
-    }
+      return body;
+    }).peekFailure(reason -> logger().error("JSON generation failed: {}", reason));
   }
 
   /**
    * Computes an embedding vector for the given text using Ollama's embed endpoint.
-   * Returns null on failure.
+   * Returns the vector, or a failure carrying the reason.
    */
-  public float[] embed(String text) {
-    try {
+  public Result<float[], String> embed(String text) {
+    CheckedSupplier<JsonNode> call = () -> {
       ObjectNode body = objectMapper.createObjectNode();
       body.put("model", config.getEmbeddingModel());
       body.put("input", text);
+      return objectMapper.readTree(postJson(config.baseUrl() + "/api/embed", body.toString()));
+    };
+    return call.get()
+        .mapError(OllamaClient::describe)
+        .flatMap(response -> {
+          JsonNode embeddings = response.path("embeddings");
+          if (!embeddings.isArray() || embeddings.isEmpty()) {
+            return Result.<float[], String>failure("no embeddings returned for text: "
+                                                       + text.substring(0, Math.min(50, text.length())));
+          }
+          JsonNode first = embeddings.get(0);
+          float[] vector = new float[first.size()];
+          for (int i = 0; i < first.size(); i++) {
+            vector[i] = (float) first.get(i).asDouble();
+          }
+          return Result.<float[], String>success(vector);
+        })
+        .peekFailure(reason -> logger().error("Embedding failed: {}", reason));
+  }
 
-      String responseJson = postJson(config.baseUrl() + "/api/embed", body.toString());
-      JsonNode response = objectMapper.readTree(responseJson);
-      JsonNode embeddingsNode = response.path("embeddings");
-
-      if (embeddingsNode.isMissingNode() || !embeddingsNode.isArray() || embeddingsNode.isEmpty()) {
-        logger().warn("No embeddings returned from Ollama for text: {}", text.substring(0, Math.min(50, text.length())));
-        return null;
-      }
-
-      JsonNode firstEmbedding = embeddingsNode.get(0);
-      float[] vector = new float[firstEmbedding.size()];
-      for (int i = 0; i < firstEmbedding.size(); i++) {
-        vector[i] = (float) firstEmbedding.get(i).asDouble();
-      }
-      return vector;
-
-    } catch (Exception e) {
-      logger().error("Embedding failed: {}", e.getMessage());
-      return null;
+  /**
+   * Strips a Markdown code fence (for example {@code ```json ... ```}) that
+   * models sometimes wrap around a JSON answer.
+   */
+  public static String stripCodeFence(String json) {
+    String cleaned = json.trim();
+    if (cleaned.startsWith("```")) {
+      cleaned = cleaned.replaceFirst("```[a-zA-Z]*\\n?", "").replaceAll("```$", "").trim();
     }
+    return cleaned;
   }
 
   /**
@@ -157,6 +139,32 @@ public class OllamaClient
       logger().warn("Ollama not reachable at {}: {}", config.baseUrl(), e.getMessage());
       return false;
     }
+  }
+
+  /**
+   * Posts a request body to {@code /api/generate} and extracts the non-blank
+   * {@code response} text.
+   */
+  private Result<String, String> generate(CheckedSupplier<ObjectNode> body) {
+    CheckedSupplier<JsonNode> call = () -> objectMapper.readTree(
+        postJson(config.baseUrl() + "/api/generate", body.getWithException().toString()));
+    return call.get()
+        .mapError(OllamaClient::describe)
+        .map(response -> response.path("response").asText("").trim())
+        .flatMap(text -> text.isEmpty()
+            ? Result.<String, String>failure("empty response from Ollama")
+            : Result.<String, String>success(text));
+  }
+
+  /**
+   * Turns a captured throwable into a log-friendly reason and restores the
+   * interrupt flag when the call was interrupted.
+   */
+  private static String describe(Throwable throwable) {
+    if (throwable instanceof InterruptedException) {
+      Thread.currentThread().interrupt();
+    }
+    return throwable.getClass().getSimpleName() + ": " + throwable.getMessage();
   }
 
   private String postJson(String url, String jsonBody)

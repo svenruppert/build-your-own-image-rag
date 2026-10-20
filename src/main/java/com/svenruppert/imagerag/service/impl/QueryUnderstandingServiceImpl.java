@@ -1,5 +1,6 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.SearchPlan;
 import com.svenruppert.imagerag.domain.enums.CategoryGroup;
@@ -10,7 +11,6 @@ import com.svenruppert.imagerag.service.QueryUnderstandingService;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-import java.util.Optional;
 
 public class QueryUnderstandingServiceImpl
     implements QueryUnderstandingService, HasLogger {
@@ -60,12 +60,10 @@ public class QueryUnderstandingServiceImpl
     plan.setEmbeddingText(query); // sensible default
 
     String prompt = QUERY_PROMPT_TEMPLATE.formatted(query.replace("\"", "'"));
-    Optional<String> jsonResponse = ollamaClient.generateJson(prompt);
-
-    if (jsonResponse.isPresent()) {
-      parseSearchPlan(plan, jsonResponse.get());
-    } else {
-      logger().warn("Query understanding unavailable — using raw query for embedding");
+    switch (ollamaClient.generateJson(prompt)) {
+      case Result.Success<String, String>(String json) -> parseSearchPlan(plan, json);
+      case Result.Failure<String, String>(String reason) ->
+          logger().warn("Query understanding unavailable ({}) — using raw query for embedding", reason);
     }
 
     return plan;
@@ -73,10 +71,7 @@ public class QueryUnderstandingServiceImpl
 
   private void parseSearchPlan(SearchPlan plan, String json) {
     try {
-      String cleaned = json.trim();
-      if (cleaned.startsWith("```")) {
-        cleaned = cleaned.replaceFirst("```[a-zA-Z]*\\n?", "").replaceAll("```$", "").trim();
-      }
+      String cleaned = OllamaClient.stripCodeFence(json);
 
       JsonNode node = objectMapper.readTree(cleaned);
 

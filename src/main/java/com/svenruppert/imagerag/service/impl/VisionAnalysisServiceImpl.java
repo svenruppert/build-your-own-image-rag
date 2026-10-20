@@ -1,5 +1,6 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.dto.VisionAnalysisResponse;
 import com.svenruppert.imagerag.ollama.OllamaClient;
@@ -62,11 +63,10 @@ public class VisionAnalysisServiceImpl
     logger().info("Starting vision analysis for: {}", imagePath.getFileName());
 
     String activePrompt = resolvePrompt();
-    Optional<String> description = ollamaClient.analyzeImageWithVision(imagePath, activePrompt);
-
-    if (description.isPresent() && !description.get().isBlank()) {
+    if (ollamaClient.analyzeImageWithVision(imagePath, activePrompt)
+        instanceof Result.Success<String, String>(String description)) {
       logger().info("Vision analysis complete for: {}", imagePath.getFileName());
-      return new VisionAnalysisResponse(description.get(), config.getVisionModel(), true);
+      return new VisionAnalysisResponse(description, config.getVisionModel(), true);
     }
 
     logger().warn("Vision analysis unavailable for: {} — using stub description", imagePath.getFileName());

@@ -1,6 +1,7 @@
 package com.svenruppert.imagerag.bootstrap;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.imagerag.domain.enums.VectorBackendType;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -103,7 +104,7 @@ public final class AppConfig
    * @return lower-cased, trimmed backend identifier
    */
   public String getVectorBackend() {
-    return get("vector.backend", "in-memory").toLowerCase();
+    return get("vector.backend", VectorBackendType.VALUE_IN_MEMORY).toLowerCase();
   }
 
   /**

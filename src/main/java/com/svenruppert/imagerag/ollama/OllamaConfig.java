@@ -4,6 +4,11 @@ import com.svenruppert.imagerag.bootstrap.AppConfig;
 
 public class OllamaConfig {
 
+  /**
+   * Default model for both vision analysis and text generation.
+   */
+  private static final String DEFAULT_GENERATION_MODEL = "gemma4:31b";
+
   private String host;
   private int port;
   private String visionModel;
@@ -15,8 +20,8 @@ public class OllamaConfig {
     AppConfig cfg = AppConfig.getInstance();
     this.host = cfg.get("ollama.host", "localhost");
     this.port = Integer.parseInt(cfg.get("ollama.port", "11434"));
-    this.visionModel = cfg.get("ollama.vision.model", "gemma4:31b");
-    this.textModel = cfg.get("ollama.text.model", "gemma4:31b");
+    this.visionModel = cfg.get("ollama.vision.model", DEFAULT_GENERATION_MODEL);
+    this.textModel = cfg.get("ollama.text.model", DEFAULT_GENERATION_MODEL);
     // embedding.model: read via AppConfig so -Dembedding.model=... or imagerag.properties override works.
     this.embeddingModel = cfg.getEmbeddingModel();
     this.timeoutSeconds = 300; // large models need more time; override with ollama.timeout.seconds

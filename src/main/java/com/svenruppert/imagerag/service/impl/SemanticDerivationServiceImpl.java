@@ -1,5 +1,6 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.CategoryCandidate;
 import com.svenruppert.imagerag.domain.CategoryConfidence;
@@ -113,12 +114,10 @@ public class SemanticDerivationServiceImpl
     String prompt = promptTemplate.formatted(
         response.rawDescription().replace("\"", "'"));
 
-    Optional<String> jsonResponse = ollamaClient.generateJson(prompt);
-
-    if (jsonResponse.isPresent()) {
-      parseStructuredFields(analysis, jsonResponse.get());
-    } else {
-      applyFallbackHeuristics(analysis, response.rawDescription());
+    switch (ollamaClient.generateJson(prompt)) {
+      case Result.Success<String, String>(String json) -> parseStructuredFields(analysis, json);
+      case Result.Failure<String, String> failure ->
+          applyFallbackHeuristics(analysis, response.rawDescription());
     }
 
     if (analysis.getShortSummary() == null || analysis.getShortSummary().isBlank()) {
@@ -141,11 +140,7 @@ public class SemanticDerivationServiceImpl
 
   private void parseStructuredFields(SemanticAnalysis analysis, String json) {
     try {
-      // Strip potential markdown code fences
-      String cleaned = json.trim();
-      if (cleaned.startsWith("```")) {
-        cleaned = cleaned.replaceFirst("```[a-zA-Z]*\\n?", "").replaceAll("```$", "").trim();
-      }
+      String cleaned = OllamaClient.stripCodeFence(json);
 
       JsonNode node = objectMapper.readTree(cleaned);
 

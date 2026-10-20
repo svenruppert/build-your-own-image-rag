@@ -15,7 +15,7 @@ import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SearchMode;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
 import com.svenruppert.imagerag.dto.SearchResult;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.button.Button;
@@ -316,8 +316,8 @@ public class SearchView
 
   private void refreshRecentChips() {
     recentSearchBar.removeAll();
-    PersistenceService ps = services.persistence();
-    List<RecentSearchEntry> recent = ps.getRecentSearches();
+    ImageCatalogService ps = services.catalog();
+    List<RecentSearchEntry> recent = services.searchHistory().getRecentSearches();
     if (recent.isEmpty()) {
       recentSearchBar.setVisible(false);
       return;
@@ -364,7 +364,7 @@ public class SearchView
                               ButtonVariant.LUMO_ERROR);
     clearBtn.getStyle().set("font-size", "var(--lumo-font-size-xs)");
     clearBtn.addClickListener(e -> {
-      ps.clearRecentSearches();
+      services.searchHistory().clearRecentSearches();
       refreshRecentChips();
     });
     recentSearchBar.add(clearBtn);
@@ -375,9 +375,8 @@ public class SearchView
   // -------------------------------------------------------------------------
 
   private void openHistoryDialog() {
-    PersistenceService ps = services.persistence();
     new SearchHistoryDialog(
-        ps,
+        services.searchHistory(),
         entry -> {
           // Load the original query back into the field for editing — do NOT execute
           queryField.setValue(entry.getQuery());
@@ -766,7 +765,7 @@ public class SearchView
     // Only fresh searches (not refinements) are stored; originalQuery is null for refine.
     if (s.originalQuery != null && !s.originalQuery.isBlank()) {
       String finalQuery = s.plan != null ? s.plan.getEmbeddingText() : null;
-      services.persistence()
+      services.searchHistory()
           .addRecentSearch(s.originalQuery, finalQuery, s.mode);
       refreshRecentChips();
     }
@@ -1145,7 +1144,7 @@ public class SearchView
   // -------------------------------------------------------------------------
 
   private com.vaadin.flow.component.Component buildResultThumb(SearchResultItem r, String height) {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     ImageAsset asset = ps.findImage(r.getImageId()).orElse(null);
     return previewFactory.tile(asset, height);
   }
@@ -1155,7 +1154,7 @@ public class SearchView
   // -------------------------------------------------------------------------
 
   private void openDetailDialog(SearchResultItem result) {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     ImageAsset asset = ps.findImage(result.getImageId()).orElse(null);
     if (asset == null) {
       Notification.show(getTranslation("search.image.notfound"), 3000, Notification.Position.MIDDLE);
@@ -1229,7 +1228,7 @@ public class SearchView
       if (currentPlan != null) {
         view.setEmbeddingText(currentPlan.getEmbeddingText());
       }
-      services.persistence().saveSavedSearchView(view);
+      services.searchHistory().saveSavedSearchView(view);
       Notification.show(getTranslation("search.saved.done", name), 3000, Notification.Position.BOTTOM_END)
           .addThemeVariants(NotificationVariant.LUMO_SUCCESS);
       dlg.close();
@@ -1265,8 +1264,8 @@ public class SearchView
       loadBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_PRIMARY);
 
       Button delBtn = new Button(getTranslation("search.saved.delete"), e -> {
-        services.persistence().deleteSavedSearchView(view.getId());
-        savedGrid.setItems(services.persistence().getSavedSearchViews());
+        services.searchHistory().deleteSavedSearchView(view.getId());
+        savedGrid.setItems(services.searchHistory().getSavedSearchViews());
       });
       delBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_ERROR,
                               ButtonVariant.LUMO_TERTIARY);
@@ -1277,7 +1276,7 @@ public class SearchView
       return actions;
     }).setHeader("").setWidth("200px").setFlexGrow(0);
 
-    savedGrid.setItems(services.persistence().getSavedSearchViews());
+    savedGrid.setItems(services.searchHistory().getSavedSearchViews());
     savedGrid.setHeight("300px");
     dlg.add(savedGrid);
 

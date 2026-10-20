@@ -37,12 +37,12 @@ public class ComparisonDialog
     ViewServices services = ViewServices.current();
     ImagePreviewFactory previewFactory = services.imagePreviews();
 
-    SemanticAnalysis leftAnalysis = services.persistence().findAnalysis(left.getId()).orElse(null);
-    SemanticAnalysis rightAnalysis = services.persistence().findAnalysis(right.getId()).orElse(null);
-    SensitivityAssessment leftAssess = services.persistence().findAssessment(left.getId()).orElse(null);
-    SensitivityAssessment rightAssess = services.persistence().findAssessment(right.getId()).orElse(null);
-    LocationSummary leftLoc = services.persistence().findLocation(left.getId()).orElse(null);
-    LocationSummary rightLoc = services.persistence().findLocation(right.getId()).orElse(null);
+    SemanticAnalysis leftAnalysis = services.catalog().findAnalysis(left.getId()).orElse(null);
+    SemanticAnalysis rightAnalysis = services.catalog().findAnalysis(right.getId()).orElse(null);
+    SensitivityAssessment leftAssess = services.catalog().findAssessment(left.getId()).orElse(null);
+    SensitivityAssessment rightAssess = services.catalog().findAssessment(right.getId()).orElse(null);
+    LocationSummary leftLoc = services.catalog().findLocation(left.getId()).orElse(null);
+    LocationSummary rightLoc = services.catalog().findLocation(right.getId()).orElse(null);
 
     HorizontalLayout columns = new HorizontalLayout(
         buildColumn(left, leftAnalysis, leftAssess, leftLoc, previewFactory),

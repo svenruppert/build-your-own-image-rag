@@ -1,5 +1,6 @@
 package com.svenruppert.imagerag.maintenance;
 
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.VectorEntry;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
@@ -123,8 +124,11 @@ public class VectorIndexMaintenance
         continue;
       }
       try {
-        float[] vector = embeddingService.embed(EmbeddingTextBuilder.build(analysis.get()));
-        if (vector.length == 0) {
+        Result<float[], String> embedding =
+            embeddingService.embed(EmbeddingTextBuilder.build(analysis.get()));
+        if (!(embedding instanceof Result.Success<float[], String>(float[] vector))) {
+          embedding.peekFailure(reason -> logger().debug(
+              "Skipping re-embedding of image {}: {}", imageId, reason));
           continue;
         }
         sink.accept(imageId, vector);

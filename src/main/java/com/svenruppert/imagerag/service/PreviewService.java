@@ -1,6 +1,6 @@
 package com.svenruppert.imagerag.service;
 
-import com.vaadin.flow.server.StreamResource;
+import com.svenruppert.functional.result.Result;
 
 import java.nio.file.Path;
 import java.util.UUID;
@@ -33,13 +33,12 @@ public interface PreviewService {
   boolean previewExists(UUID imageId, PreviewSize size);
 
   /**
-   * Returns a Vaadin {@link StreamResource} for a preview of the requested size.
-   * <p>If no cached file exists, the preview is generated from {@code originalPath} and
-   * written to disk before the resource is opened.  Returns {@code null} on error so
-   * callers can fall back to streaming the original.
+   * Returns the cached preview file of the requested size, generating it from
+   * {@code originalPath} first when it does not exist yet.
+   * <p>The result is framework-free; the UI layer decides how to serve the file.
+   * A failure carries the reason, so callers can fall back to the original image.
    */
-  StreamResource getPreview(UUID imageId, Path originalPath, String resourceName,
-                            PreviewSize size);
+  Result<Path, String> ensurePreview(UUID imageId, Path originalPath, PreviewSize size);
 
   /**
    * Deletes all cached preview files for the given image from disk.

@@ -7,9 +7,8 @@ import com.svenruppert.imagerag.service.PreviewService;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
-import com.vaadin.flow.server.StreamResource;
+import com.vaadin.flow.server.streams.DownloadHandler;
 
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -52,19 +51,13 @@ public class ImagePreviewFactory
         return placeholder();
       }
 
-      StreamResource resource = previewService.getPreview(
-          asset.getId(), originalPath, asset.getStoredFilename(), size);
-      if (resource == null) {
-        resource = new StreamResource(asset.getStoredFilename(), () -> {
-          try {
-            return Files.newInputStream(originalPath);
-          } catch (Exception ex) {
-            return InputStream.nullInputStream();
-          }
-        });
-      }
+      // Serve the cached preview; fall back to the original when it cannot be generated.
+      Path file = previewService.ensurePreview(asset.getId(), originalPath, size)
+          .getOrElse(originalPath);
+      DownloadHandler handler = DownloadHandler.forFile(
+          file.toFile(), file.getFileName().toString());
 
-      Image image = new Image(resource, altText != null ? altText : asset.getOriginalFilename());
+      Image image = new Image(handler, altText != null ? altText : asset.getOriginalFilename());
       if (width != null) {
         image.setWidth(width);
       }

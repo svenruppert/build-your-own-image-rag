@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.bootstrap;
 
+import com.svenruppert.functional.result.Unit;
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.imagerag.domain.enums.AuditAction;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
@@ -64,6 +66,10 @@ public class ServiceRegistry
   private final PromptTemplateService promptTemplateService;
   private final WhyNotFoundService whyNotFoundService;
   private final ClusterDiscoveryService clusterDiscoveryService;
+  private final ImageCatalogService imageCatalogService;
+  private final ImageModerationService imageModerationService;
+  private final SearchHistoryService searchHistoryService;
+  private final PromptTestService promptTestService;
   private final SearchStrategyAutopilot searchStrategyAutopilot;
   private final VectorIndexMaintenance vectorIndexMaintenance;
   private final KeywordIndexMaintenance keywordIndexMaintenance;
@@ -120,7 +126,7 @@ public class ServiceRegistry
     // Controlled by imagerag.properties (classpath): vector.backend=gigamap-jvector
     // A JVM system property -Dvector.backend=... overrides the file value.
     // Absence or any other value falls back to the existing in-memory backend.
-    vectorBackendType = VectorBackendType.fromConfig();
+    vectorBackendType = AppConfig.getInstance().getVectorBackendType();
     logger().info("Vector backend selected: {}", vectorBackendType);
 
     vectorIndexService = (vectorBackendType == VectorBackendType.GIGAMAP_JVECTOR)
@@ -139,12 +145,12 @@ public class ServiceRegistry
     keywordIndexMaintenance = new KeywordIndexMaintenance(persistenceService, keywordIndexService);
     keywordIndexMaintenance.restoreAll();
 
-    imageLifecycleService = new ImageLifecycleService(
-        persistenceService, vectorIndexService, keywordIndexService, keywordIndexMaintenance,
-        previewService, imageStorageService);
-
     // Audit service
     auditService = new AuditServiceImpl(persistenceService);
+    imageLifecycleService = new ImageLifecycleService(
+        persistenceService, vectorIndexService, keywordIndexService, keywordIndexMaintenance,
+        previewService, imageStorageService, auditService);
+
 
     new StartupMigrations(persistenceService).run();
 
@@ -185,6 +191,12 @@ public class ServiceRegistry
 
     // Cluster discovery service — k-means on raw vectors
     clusterDiscoveryService = new ClusterDiscoveryServiceImpl(persistenceService);
+
+    // UI-facing application services — views never touch persistence or Ollama directly
+    imageCatalogService = new ImageCatalogServiceImpl(persistenceService);
+    imageModerationService = new ImageModerationServiceImpl(persistenceService, auditService);
+    searchHistoryService = new SearchHistoryServiceImpl(persistenceService);
+    promptTestService = new PromptTestServiceImpl(ollamaClient, persistenceService, imageStorageService);
 
     // Search-strategy autopilot — heuristic advisor (stateless, no constructor args)
     searchStrategyAutopilot = new SearchStrategyAutopilot();
@@ -271,17 +283,16 @@ public class ServiceRegistry
    * <p>This is a permanent, irreversible operation.  The caller (UI) is responsible
    * for confirming with the user before invoking this method.
    */
-  public void deleteImage(UUID imageId)
-      throws IOException {
-    imageLifecycleService.delete(imageId);
+  public Result<Unit, String> deleteImage(UUID imageId, String reason) {
+    return imageLifecycleService.delete(imageId, reason);
   }
 
   /**
    * Restores a previously archived (soft-deleted) image to the active dataset.
    * See {@link ImageLifecycleService#restore(UUID)}.
    */
-  public void restoreImage(UUID imageId) {
-    imageLifecycleService.restore(imageId);
+  public void restoreImage(UUID imageId, String reason) {
+    imageLifecycleService.restore(imageId, reason);
   }
 
   /**
@@ -422,6 +433,22 @@ public class ServiceRegistry
 
   public ClusterDiscoveryService getClusterDiscoveryService() {
     return clusterDiscoveryService;
+  }
+
+  public ImageCatalogService getImageCatalogService() {
+    return imageCatalogService;
+  }
+
+  public ImageModerationService getImageModerationService() {
+    return imageModerationService;
+  }
+
+  public SearchHistoryService getSearchHistoryService() {
+    return searchHistoryService;
+  }
+
+  public PromptTestService getPromptTestService() {
+    return promptTestService;
   }
 
   public SearchStrategyAutopilot getSearchStrategyAutopilot() {

@@ -3,7 +3,7 @@ package com.svenruppert.imagerag.domain;
 import com.svenruppert.imagerag.domain.enums.CategoryGroup;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 
 import java.util.List;
 import java.util.Objects;
@@ -102,7 +102,7 @@ public class ImageOverviewFilter {
    * @param ps    persistence service used to look up derived attributes
    * @return {@code true} if the asset matches all active constraints
    */
-  public boolean matches(ImageAsset asset, PersistenceService ps) {
+  public boolean matches(ImageAsset asset, ImageCatalogService ps) {
     // Fine-grained check: image passes if its primary OR any secondary category matches.
     if (specificCategory != null) {
       SemanticAnalysis analysis = ps.findAnalysis(asset.getId()).orElse(null);
@@ -140,7 +140,7 @@ public class ImageOverviewFilter {
   /**
    * Filters a list of images, returning only those that pass all active constraints.
    */
-  public List<ImageAsset> apply(List<ImageAsset> images, PersistenceService ps) {
+  public List<ImageAsset> apply(List<ImageAsset> images, ImageCatalogService ps) {
     if (isEmpty()) return images;
     return images.stream()
         .filter(a -> matches(a, ps))

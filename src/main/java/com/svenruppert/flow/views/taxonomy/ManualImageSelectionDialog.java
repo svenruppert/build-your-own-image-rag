@@ -3,7 +3,7 @@ package com.svenruppert.flow.views.taxonomy;
 import com.svenruppert.imagerag.domain.CategoryRegistry;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -41,7 +41,7 @@ public class ManualImageSelectionDialog
    * @param preselected previously selected image IDs (may be empty)
    * @param onConfirm   callback invoked with the confirmed list of UUIDs when the user clicks OK
    */
-  public ManualImageSelectionDialog(PersistenceService ps,
+  public ManualImageSelectionDialog(ImageCatalogService ps,
                                     List<UUID> preselected,
                                     Consumer<List<UUID>> onConfirm) {
     setHeaderTitle(getTranslation("taxonomy.manual.title"));
@@ -125,7 +125,7 @@ public class ManualImageSelectionDialog
     add(filter, grid);
   }
 
-  private void applyFilter(String text, PersistenceService ps) {
+  private void applyFilter(String text, ImageCatalogService ps) {
     if (text == null || text.isBlank()) {
       grid.setItems(allImages);
     } else {

@@ -10,7 +10,7 @@ import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.imagerag.settings.SettingsService;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.SensitivityAssessment;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 import com.svenruppert.imagerag.pipeline.IngestionJob;
 import com.svenruppert.imagerag.pipeline.IngestionPipeline;
 import com.svenruppert.imagerag.pipeline.JobStep;
@@ -738,7 +738,7 @@ public class PipelineView
    */
   private void openDuplicateDialog(UUID existingId) {
     if (existingId == null) return;
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     ps.findImage(existingId).ifPresent(asset -> {
       SemanticAnalysis analysis = ps.findAnalysis(existingId).orElse(null);
       SensitivityAssessment assessment = ps.findAssessment(existingId).orElse(null);

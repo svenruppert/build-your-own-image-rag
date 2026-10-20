@@ -88,6 +88,16 @@ public class ClusterDiscoveryServiceImpl
     return buildSuggestions(ids, vecs, assignments, k, minClusterSize, similarityThreshold);
   }
 
+  @Override
+  public List<CategoryClusterSuggestion> findAllSuggestions() {
+    return persistenceService.findAllClusterSuggestions();
+  }
+
+  @Override
+  public void saveSuggestion(CategoryClusterSuggestion suggestion) {
+    persistenceService.saveClusterSuggestion(suggestion);
+  }
+
   // ── Suggestion generation ─────────────────────────────────────────────
 
   @Override

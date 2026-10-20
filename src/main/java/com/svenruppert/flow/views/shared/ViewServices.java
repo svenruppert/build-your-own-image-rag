@@ -1,15 +1,14 @@
 package com.svenruppert.flow.views.shared;
 
+import com.svenruppert.functional.result.Unit;
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.imagerag.settings.SettingsService;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
-import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
-import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.pipeline.IngestionPipeline;
 import com.svenruppert.imagerag.service.*;
 
-import java.io.IOException;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 
@@ -41,8 +40,20 @@ public class ViewServices {
     return registry.getSettingsService();
   }
 
-  public PersistenceService persistence() {
-    return registry.getPersistenceService();
+  public ImageCatalogService catalog() {
+    return registry.getImageCatalogService();
+  }
+
+  public ImageModerationService moderation() {
+    return registry.getImageModerationService();
+  }
+
+  public SearchHistoryService searchHistory() {
+    return registry.getSearchHistoryService();
+  }
+
+  public PromptTestService promptTests() {
+    return registry.getPromptTestService();
   }
 
   public PreviewService previews() {
@@ -55,10 +66,6 @@ public class ViewServices {
 
   public OllamaConfig ollamaConfig() {
     return registry.getOllamaConfig();
-  }
-
-  public OllamaClient ollamaClient() {
-    return registry.getOllamaClient();
   }
 
   public KeywordIndexService keywordIndex() {
@@ -117,13 +124,12 @@ public class ViewServices {
     return registry.getVectorBackendType();
   }
 
-  public void deleteImage(UUID imageId)
-      throws IOException {
-    registry.deleteImage(imageId);
+  public Result<Unit, String> deleteImage(UUID imageId, String reason) {
+    return registry.deleteImage(imageId, reason);
   }
 
-  public void restoreImage(UUID imageId) {
-    registry.restoreImage(imageId);
+  public void restoreImage(UUID imageId, String reason) {
+    registry.restoreImage(imageId, reason);
   }
 
   public void rebuildVectorIndex() {

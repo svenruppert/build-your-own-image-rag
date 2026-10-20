@@ -4,6 +4,7 @@ import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.dto.StoredImage;
 import com.svenruppert.imagerag.service.ImageStorageService;
 
+import java.util.Optional;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -36,10 +37,8 @@ public class ImageStorageServiceImpl
     Path tempPath = storageRoot.resolve(imageId + ".tmp");
     try {
       Files.copy(inputStream, tempPath, StandardCopyOption.REPLACE_EXISTING);
-      String extension = detectImageExtension(tempPath);
-      if (extension == null) {
-        throw new IOException("Unsupported or invalid image content (declared type: " + mimeType + ")");
-      }
+      String extension = detectImageExtension(tempPath).orElseThrow(() -> new IOException(
+          "Unsupported or invalid image content (declared type: " + mimeType + ")"));
       String storedFilename = imageId + extension;
       Path targetPath = storageRoot.resolve(storedFilename);
       String sha256 = computeSha256(tempPath);
@@ -108,28 +107,28 @@ public class ImageStorageServiceImpl
   /**
    * Detects the image format from the file's magic bytes.
    *
-   * @return the file extension for the detected format, or {@code null} when the
-   * content is not one of the supported image formats
+   * @return the file extension for the detected format, or empty when the content is
+   * not one of the supported image formats
    */
-  static String detectImageExtension(Path path)
+  static Optional<String> detectImageExtension(Path path)
       throws IOException {
     byte[] head = new byte[12];
     int read;
     try (InputStream in = Files.newInputStream(path)) {
       read = in.readNBytes(head, 0, head.length);
     }
-    if (read >= 3 && startsWith(head, 0xFF, 0xD8, 0xFF)) return ".jpg";
-    if (read >= 8 && startsWith(head, 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A)) return ".png";
-    if (read >= 4 && startsWith(head, 'G', 'I', 'F', '8')) return ".gif";
+    if (read >= 3 && startsWith(head, 0xFF, 0xD8, 0xFF)) return Optional.of(".jpg");
+    if (read >= 8 && startsWith(head, 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A)) return Optional.of(".png");
+    if (read >= 4 && startsWith(head, 'G', 'I', 'F', '8')) return Optional.of(".gif");
     if (read >= 12 && startsWith(head, 'R', 'I', 'F', 'F')
         && head[8] == 'W' && head[9] == 'E' && head[10] == 'B' && head[11] == 'P') {
-      return ".webp";
+      return Optional.of(".webp");
     }
-    if (read >= 2 && startsWith(head, 'B', 'M')) return ".bmp";
+    if (read >= 2 && startsWith(head, 'B', 'M')) return Optional.of(".bmp");
     if (read >= 4 && (startsWith(head, 'I', 'I', 0x2A, 0x00) || startsWith(head, 'M', 'M', 0x00, 0x2A))) {
-      return ".tiff";
+      return Optional.of(".tiff");
     }
-    return null;
+    return Optional.empty();
   }
 
   private static boolean startsWith(byte[] data, int... prefix) {

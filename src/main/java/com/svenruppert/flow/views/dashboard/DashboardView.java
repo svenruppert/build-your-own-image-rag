@@ -15,7 +15,7 @@ import com.svenruppert.flow.views.upload.UploadView;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.enums.SuggestionStatus;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 import com.svenruppert.imagerag.pipeline.IngestionPipeline;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.UI;
@@ -122,14 +122,14 @@ public class DashboardView
   // ── 2. Session status chips ───────────────────────────────────────────────
 
   private Component buildStatusSection() {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     OllamaConfig cfg = services.ollamaConfig();
     IngestionPipeline pipeline = services.ingestionPipeline();
 
     int activeImages = ps.findAllImages().size();
     int archivedImages = ps.findArchivedImages().size();
     int vectorCount = ps.getRawVectorCount();
-    int openSuggestions = ps.findSuggestionsByStatus(SuggestionStatus.OPEN).size();
+    int openSuggestions = services.taxonomySuggestions().findByStatus(SuggestionStatus.OPEN).size();
     boolean paused = pipeline.isPaused();
 
     // Compute OCR-text and low-confidence counts from analysis records
@@ -213,7 +213,7 @@ public class DashboardView
   // ── 3. Lab state insights ─────────────────────────────────────────────────
 
   private Component buildLabStateSection() {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     OllamaConfig cfg = services.ollamaConfig();
     IngestionPipeline pipeline = services.ingestionPipeline();
 
@@ -233,12 +233,12 @@ public class DashboardView
         .set("gap", "var(--lumo-space-s)");
 
     // Prompt versions
-    int promptVersions = ps.findAllPromptVersions().size();
+    int promptVersions = services.promptTemplates().findAll().size();
     grid.add(labItem(getTranslation("dashboard.lab.prompt.versions"),
                      String.valueOf(promptVersions), null));
 
     // Pending taxonomy suggestions
-    int pending = ps.findSuggestionsByStatus(SuggestionStatus.OPEN).size();
+    int pending = services.taxonomySuggestions().findByStatus(SuggestionStatus.OPEN).size();
     grid.add(labItem(getTranslation("dashboard.lab.pending.suggestions"),
                      String.valueOf(pending),
                      pending > 0 ? "/" + TaxonomyMaintenanceView.PATH : null));
@@ -261,7 +261,7 @@ public class DashboardView
                      "/" + MigrationCenterView.PATH));
 
     // Cluster suggestions
-    int clusterSuggestions = ps.findAllClusterSuggestions().size();
+    int clusterSuggestions = services.clusterDiscovery().findAllSuggestions().size();
     grid.add(labItem(getTranslation("dashboard.lab.cluster.suggestions"),
                      String.valueOf(clusterSuggestions),
                      clusterSuggestions > 0 ? "/" + TaxonomyMaintenanceView.PATH : null));

@@ -1,5 +1,7 @@
 package com.svenruppert.flow.views.overview;
 
+import com.svenruppert.functional.result.Unit;
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.CategoryTreeChooserDialog;
@@ -11,10 +13,9 @@ import com.svenruppert.flow.views.shared.RiskBadge;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.shared.ViewModeToggle;
 import com.svenruppert.imagerag.domain.*;
-import com.svenruppert.imagerag.domain.enums.AuditAction;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
@@ -65,8 +66,6 @@ public class OverviewView
   private static final String REASON_BATCH_ARCHIVE = "Batch archive from overview";
   private static final String REASON_SINGLE_ARCHIVE = "User archived from overview";
   private static final String REASON_MANUAL = "Manual change from overview";
-  private static final String REASON_RISK_SAFE = "Risk level set to SAFE in overview";
-  private static final String REASON_RISK_NOT_SAFE = "Risk level set above SAFE in overview";
   private static final String VIS_APPROVED = "approved";
   private static final String VIS_LOCKED = "locked";
   private final Grid<ImageAsset> grid = new Grid<>(ImageAsset.class, false);
@@ -236,35 +235,22 @@ public class OverviewView
   }
 
   private void batchApprove() {
-    PersistenceService ps = services.persistence();
     Set<ImageAsset> selected = grid.getSelectedItems();
-    selected.forEach(a -> {
-      ps.approveImage(a.getId());
-      services.audit().log(AuditAction.APPROVE, a.getId(), a.getOriginalFilename(), REASON_BATCH);
-    });
+    selected.forEach(a -> services.moderation().approve(a, REASON_BATCH));
     showNotification(getTranslation("overview.batch.approved", selected.size()), true);
     loadData();
   }
 
   private void batchLock() {
-    PersistenceService ps = services.persistence();
     Set<ImageAsset> selected = grid.getSelectedItems();
-    selected.forEach(a -> {
-      ps.unapproveImage(a.getId());
-      services.audit().log(AuditAction.UNAPPROVE, a.getId(), a.getOriginalFilename(), REASON_BATCH);
-    });
+    selected.forEach(a -> services.moderation().lock(a, REASON_BATCH));
     showNotification(getTranslation("overview.batch.locked", selected.size()), false);
     loadData();
   }
 
   private void batchArchive() {
-    PersistenceService ps = services.persistence();
     Set<ImageAsset> selected = grid.getSelectedItems();
-    selected.forEach(a -> {
-      ps.softDeleteImage(a.getId(), REASON_BATCH_ARCHIVE);
-      services.audit()
-          .log(AuditAction.SOFT_DELETE, a.getId(), a.getOriginalFilename(), REASON_BATCH_ARCHIVE);
-    });
+    selected.forEach(a -> services.moderation().archive(a, REASON_BATCH_ARCHIVE));
     showNotification(getTranslation("overview.batch.archived", selected.size()), false);
     loadData();
   }
@@ -292,7 +278,7 @@ public class OverviewView
   }
 
   private void applyFilter() {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     currentFilteredImages = filter.apply(allImages, ps);
     grid.setItems(currentFilteredImages);
     if (tileMode) {
@@ -310,7 +296,7 @@ public class OverviewView
     tileContainer.setVisible(tileMode);
     loadMoreTilesBtn.setVisible(false);
     if (tileMode) {
-      PersistenceService ps = services.persistence();
+      ImageCatalogService ps = services.catalog();
       currentFilteredImages = filter.apply(allImages, ps);
       renderTiles(currentFilteredImages);
     }
@@ -345,7 +331,7 @@ public class OverviewView
 
     // Category (editable — tree-structured chooser dialog)
     grid.addComponentColumn(asset -> {
-      PersistenceService ps = services.persistence();
+      ImageCatalogService ps = services.catalog();
       SourceCategory cur = ps.findAnalysis(asset.getId()).map(SemanticAnalysis::getSourceCategory).orElse(null);
       String label = cur != null ? CategoryRegistry.getUserLabel(cur) : "\u2014";
       Button chooseBtn = new Button(label);
@@ -353,7 +339,7 @@ public class OverviewView
       chooseBtn.getStyle().set("font-size", "var(--lumo-font-size-s)");
       chooseBtn.addClickListener(e ->
                                      new CategoryTreeChooserDialog(selected -> {
-                                       ps.updateSourceCategory(asset.getId(), selected);
+                                       services.moderation().changeSourceCategory(asset.getId(), selected);
                                        showNotification(
                                            getTranslation("overview.category.updated",
                                                           CategoryRegistry.getUserLabel(selected)), true);
@@ -364,7 +350,7 @@ public class OverviewView
 
     // Description
     grid.addComponentColumn(asset -> {
-      PersistenceService ps = services.persistence();
+      ImageCatalogService ps = services.catalog();
       return ps.findAnalysis(asset.getId()).map(a -> {
         String s = a.getShortSummary();
         Span span = new Span(s != null ? s : "—");
@@ -375,7 +361,7 @@ public class OverviewView
 
     // Location
     grid.addComponentColumn(asset -> {
-      PersistenceService ps = services.persistence();
+      ImageCatalogService ps = services.catalog();
       return ps.findLocation(asset.getId())
           .map(l -> new Span(l.toHumanReadable()))
           .orElse(new Span("—"));
@@ -437,7 +423,7 @@ public class OverviewView
   }
 
   private Div buildTileCard(ImageAsset asset) {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
 
     Div card = new Div();
     // Fixed height: all cards keep the same size regardless of content length.
@@ -572,7 +558,7 @@ public class OverviewView
    * Returns an eye/eye-slash icon indicating whether the image is approved for
    * search results, with a tooltip.
    */
-  private Component visibilityIcon(ImageAsset asset, PersistenceService ps) {
+  private Component visibilityIcon(ImageAsset asset, ImageCatalogService ps) {
     boolean approved = ps.isApproved(asset.getId());
     Icon icon = approved ? VaadinIcon.EYE.create() : VaadinIcon.EYE_SLASH.create();
     icon.setSize("18px");
@@ -596,7 +582,7 @@ public class OverviewView
   }
 
   private Select<RiskLevel> buildRiskSelect(ImageAsset asset) {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     RiskLevel current = ps.findAssessment(asset.getId())
         .map(SensitivityAssessment::getRiskLevel).orElse(null);
     Select<RiskLevel> sel = new Select<>();
@@ -606,18 +592,7 @@ public class OverviewView
     sel.getStyle().set("font-size", "var(--lumo-font-size-s)");
     sel.addValueChangeListener(e -> {
       if (e.getValue() != null && e.getValue() != e.getOldValue()) {
-        ps.updateRiskLevel(asset.getId(), e.getValue());
-        services.audit().log(AuditAction.RISK_CHANGE, asset.getId(), asset.getOriginalFilename(),
-                             e.getOldValue() + " -> " + e.getValue());
-        if (e.getValue() == RiskLevel.SAFE) {
-          ps.approveImage(asset.getId());
-          services.audit().log(AuditAction.APPROVE, asset.getId(), asset.getOriginalFilename(),
-                               REASON_RISK_SAFE);
-        } else {
-          ps.unapproveImage(asset.getId());
-          services.audit().log(AuditAction.UNAPPROVE, asset.getId(), asset.getOriginalFilename(),
-                               REASON_RISK_NOT_SAFE);
-        }
+        services.moderation().changeRiskLevel(asset, e.getOldValue(), e.getValue());
         showNotification(getTranslation("overview.risk.updated", e.getValue().name()), true);
         loadData();
       }
@@ -626,7 +601,7 @@ public class OverviewView
   }
 
   private HorizontalLayout approveButton(ImageAsset asset) {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     boolean hasAssessment = ps.findAssessment(asset.getId()).isPresent();
     if (!hasAssessment) {
       Span pending = new Span(getTranslation("overview.processing"));
@@ -645,14 +620,10 @@ public class OverviewView
     }
     btn.addClickListener(e -> {
       if (approved) {
-        ps.unapproveImage(asset.getId());
-        services.audit().log(AuditAction.UNAPPROVE, asset.getId(), asset.getOriginalFilename(),
-                             REASON_MANUAL);
+        services.moderation().lock(asset, REASON_MANUAL);
         showNotification(getTranslation("overview.locked", asset.getOriginalFilename()), false);
       } else {
-        ps.approveImage(asset.getId());
-        services.audit().log(AuditAction.APPROVE, asset.getId(), asset.getOriginalFilename(),
-                             REASON_MANUAL);
+        services.moderation().approve(asset, REASON_MANUAL);
         showNotification(getTranslation("overview.approved", asset.getOriginalFilename()), true);
       }
       loadData();
@@ -665,7 +636,7 @@ public class OverviewView
   // -------------------------------------------------------------------------
 
   private void openDetailDialog(ImageAsset asset) {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     SemanticAnalysis analysis = ps.findAnalysis(asset.getId()).orElse(null);
     SensitivityAssessment assess = ps.findAssessment(asset.getId()).orElse(null);
     LocationSummary location = ps.findLocation(asset.getId()).orElse(null);
@@ -711,27 +682,22 @@ public class OverviewView
   }
 
   private void softDeleteImage(ImageAsset asset) {
-    PersistenceService ps = services.persistence();
-    ps.softDeleteImage(asset.getId(), REASON_SINGLE_ARCHIVE);
-    services.audit()
-        .log(AuditAction.SOFT_DELETE, asset.getId(), asset.getOriginalFilename(), REASON_SINGLE_ARCHIVE);
+    services.moderation().archive(asset, REASON_SINGLE_ARCHIVE);
     showNotification(getTranslation("overview.archived", asset.getOriginalFilename()), false);
     loadData();
   }
 
   private void hardDeleteImage(ImageAsset asset) {
-    try {
-      services.deleteImage(asset.getId());
-      services.audit()
-          .log(AuditAction.PERMANENT_DELETE, asset.getId(), asset.getOriginalFilename(),
-               "Permanently deleted from overview");
-      showNotification(getTranslation("overview.deleted", asset.getOriginalFilename()), false);
-      loadData();
-    } catch (Exception ex) {
-      logger().error("Failed to delete image {}: {}", asset.getId(), ex.getMessage(), ex);
-      Notification n = Notification.show(
-          getTranslation("overview.delete.error", ex.getMessage()), 5000, Notification.Position.MIDDLE);
-      n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+    switch (services.deleteImage(asset.getId(), "Permanently deleted from overview")) {
+      case Result.Success<Unit, String> done -> {
+        showNotification(getTranslation("overview.deleted", asset.getOriginalFilename()), false);
+        loadData();
+      }
+      case Result.Failure<Unit, String>(String error) -> {
+        Notification n = Notification.show(
+            getTranslation("overview.delete.error", error), 5000, Notification.Position.MIDDLE);
+        n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+      }
     }
   }
 
@@ -759,7 +725,7 @@ public class OverviewView
   // -------------------------------------------------------------------------
 
   private void loadData() {
-    allImages = services.persistence().findAllImages();
+    allImages = services.catalog().findAllImages();
     applyFilter();  // renderTiles() inside handles the full reset
   }
 

@@ -45,7 +45,7 @@ public class DetailDialog
 
     this.services = ViewServices.current();
     this.previewFactory = services.imagePreviews();
-    Optional<OcrResult> ocrOpt = services.persistence().findOcrResult(asset.getId());
+    Optional<OcrResult> ocrOpt = services.catalog().findOcrResult(asset.getId());
 
     TabSheet tabs = new TabSheet();
     tabs.setWidthFull();
@@ -150,14 +150,14 @@ public class DetailDialog
     changePrimaryBtn.addClickListener(e ->
         new CategoryTreeChooserDialog(chosen -> {
           if (chosen.equals(analysis.getSourceCategory())) return;
-          services.persistence()
-              .updateSourceCategory(analysis.getImageId(), chosen);
+          services.moderation()
+              .changeSourceCategory(analysis.getImageId(), chosen);
           // Remove chosen from secondaries if it was there — keeps assignments consistent.
           var normalized = CategoryAssignmentNormalizer.normalizeSecondaries(
               chosen, analysis.getSecondaryCategories());
           if (!normalized.equals(analysis.getSecondaryCategories())) {
-            services.persistence()
-                .updateSecondaryCategories(analysis.getImageId(), normalized);
+            services.moderation()
+                .changeSecondaryCategories(analysis.getImageId(), normalized);
             analysis.setSecondaryCategories(normalized);
           }
           analysis.setSourceCategory(chosen);
@@ -191,8 +191,8 @@ public class DetailDialog
           var cats = new ArrayList<>(analysis.getSecondaryCategories());
           if (!cats.contains(chosen) && !chosen.equals(analysis.getSourceCategory())) {
             cats.add(chosen);
-            services.persistence()
-                .updateSecondaryCategories(analysis.getImageId(), cats);
+            services.moderation()
+                .changeSecondaryCategories(analysis.getImageId(), cats);
             analysis.setSecondaryCategories(cats);
             refreshSecondaryBadges(secCatsContainer, analysis);
           }
@@ -417,8 +417,8 @@ public class DetailDialog
       removeBtn.addClickListener(e -> {
         var updated = new ArrayList<>(analysis.getSecondaryCategories());
         updated.remove(sc);
-        services.persistence()
-            .updateSecondaryCategories(analysis.getImageId(), updated);
+        services.moderation()
+            .changeSecondaryCategories(analysis.getImageId(), updated);
         analysis.setSecondaryCategories(updated);
         refreshSecondaryBadges(container, analysis);
       });

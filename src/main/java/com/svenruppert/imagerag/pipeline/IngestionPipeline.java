@@ -185,8 +185,7 @@ public class IngestionPipeline
    * @param mimeType MIME type of the uploaded image
    * @return the created {@link IngestionJob} for status tracking
    */
-  public IngestionJob submitFromPath(Path tempFile, String filename, String mimeType)
-      throws IOException {
+  public IngestionJob submitFromPath(Path tempFile, String filename, String mimeType) {
     IngestionJob job = new IngestionJob(filename, mimeType);
     enqueue(job, () -> processFromPath(job, tempFile), () -> deleteTempFile(job, tempFile));
     logger().info("Job queued (from path): {} ({})", filename, job.getJobId());
@@ -614,9 +613,10 @@ public class IngestionPipeline
       throws InterruptedException {
     checkPauseOrCancelled();
     job.transition(JobStep.EMBEDDING);
-    float[] vector = embeddingService.embed(EmbeddingTextBuilder.build(analysis));
-    if (vector.length == 0) {
-      logger().warn("[{}] Empty embedding — vector index not updated", label);
+    Result<float[], String> embedding = embeddingService.embed(EmbeddingTextBuilder.build(analysis));
+    if (!(embedding instanceof Result.Success<float[], String>(float[] vector))) {
+      embedding.peekFailure(reason -> logger().warn(
+          "[{}] No embedding ({}) — vector index not updated", label, reason));
       return;
     }
     checkPauseOrCancelled();

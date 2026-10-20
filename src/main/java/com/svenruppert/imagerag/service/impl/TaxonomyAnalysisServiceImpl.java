@@ -204,8 +204,7 @@ public class TaxonomyAnalysisServiceImpl
 
       // 2. UNKNOWN / MIXED primary → try LLM reclassification
       if (primary == SourceCategory.UNKNOWN || primary == SourceCategory.MIXED) {
-        TaxonomySuggestion s = tryLlmReclassify(imageId, asset.getOriginalFilename(), analysis);
-        if (s != null) results.add(s);
+        tryLlmReclassify(imageId, asset.getOriginalFilename(), analysis).ifPresent(results::add);
         progress.incrementAnalyzed();
         notify(progress, cb);
         continue;
@@ -355,12 +354,12 @@ public class TaxonomyAnalysisServiceImpl
   /**
    * Calls the LLM to re-evaluate a category assignment for an image.
    * Returns a {@link TaxonomySuggestion} if the LLM suggests a different category,
-   * or null if the call fails or the suggestion is the same as the current category.
+   * or empty if the call fails (logged) or the suggestion equals the current category.
    */
-  private TaxonomySuggestion tryLlmReclassify(UUID imageId, String filename,
+  private Optional<TaxonomySuggestion> tryLlmReclassify(UUID imageId, String filename,
                                               SemanticAnalysis analysis) {
     if (!ollamaClient.isAvailable() || analysis.getSummary() == null) {
-      return null;
+      return Optional.empty();
     }
     try {
       String prompt = PromptTemplates.fill(REEVAL_PROMPT_TEMPLATE,
@@ -368,7 +367,7 @@ public class TaxonomyAnalysisServiceImpl
           String.valueOf(analysis.getSourceCategory()));
 
       if (!(ollamaClient.generateJson(prompt) instanceof Result.Success<String, String>(String json))) {
-        return null;
+        return Optional.empty();
       }
       String cleaned = OllamaClient.stripCodeFence(json);
 
@@ -403,14 +402,14 @@ public class TaxonomyAnalysisServiceImpl
 
       if (suggestedCat != null && suggestedCat != analysis.getSourceCategory()
           && suggestedCat != SourceCategory.UNKNOWN) {
-        return TaxonomySuggestion.reclassify(imageId, filename,
-                                             analysis.getSourceCategory(), suggestedCat,
-                                             1.0 - primaryConf, rationale, MODEL_NAME);
+        return Optional.of(TaxonomySuggestion.reclassify(imageId, filename,
+                                                         analysis.getSourceCategory(), suggestedCat,
+                                                         1.0 - primaryConf, rationale, MODEL_NAME));
       }
 
     } catch (Exception e) {
       logger().warn("LLM re-evaluation failed for image {}: {}", imageId, e.getMessage());
     }
-    return null;
+    return Optional.empty();
   }
 }

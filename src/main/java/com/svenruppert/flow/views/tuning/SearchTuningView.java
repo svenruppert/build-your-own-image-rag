@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.tuning;
 
+import com.svenruppert.imagerag.service.SearchHistoryService;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.shared.Formats;
@@ -12,7 +13,7 @@ import com.svenruppert.imagerag.domain.enums.QueryIntentType;
 import com.svenruppert.imagerag.domain.enums.RetrievalMode;
 import com.svenruppert.imagerag.domain.enums.SimilarityFunction;
 import com.svenruppert.imagerag.dto.*;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 import com.svenruppert.imagerag.service.PreviewService;
 import com.svenruppert.imagerag.service.SearchService;
 import com.svenruppert.imagerag.service.SearchStrategyAutopilot;
@@ -73,7 +74,8 @@ public class SearchTuningView
 
   // ── Services ──────────────────────────────────────────────────────────────
   private final SearchService searchService;
-  private final PersistenceService persistenceService;
+  private final ImageCatalogService catalog;
+  private final SearchHistoryService searchHistory;
   private final SearchStrategyAutopilot autopilot;
   private final ImagePreviewFactory previewFactory;
 
@@ -122,7 +124,8 @@ public class SearchTuningView
   public SearchTuningView() {
     ViewServices services = ViewServices.current();
     this.searchService = services.search();
-    this.persistenceService = services.persistence();
+    this.catalog = services.catalog();
+    this.searchHistory = services.searchHistory();
     this.autopilot = services.searchStrategyAutopilot();
     this.previewFactory = services.imagePreviews();
 
@@ -442,7 +445,7 @@ public class SearchTuningView
       qbeStatusSpan.setText(getTranslation("tuning.qbe.none"));
       qbeStatusSpan.getStyle().remove("color");
     } else {
-      String label = persistenceService.findImage(qbeImageId)
+      String label = catalog.findImage(qbeImageId)
           .map(ImageAsset::getOriginalFilename).orElse(qbeImageId.toString());
       if (label.length() > 26) label = label.substring(0, 23) + "\u2026";
       qbeStatusSpan.setText(getTranslation("tuning.qbe.active", label));
@@ -818,7 +821,7 @@ public class SearchTuningView
   // ── Feedback management ───────────────────────────────────────────────────
 
   private void markFeedback(SearchResultItem item, FeedbackType type) {
-    float[] vector = persistenceService.findRawVector(item.getImageId())
+    float[] vector = catalog.findRawVector(item.getImageId())
         .orElse(new float[0]);
     feedbackSession.mark(item.getImageId(),
                          item.getTitle() != null ? item.getTitle() : item.getImageId().toString(),
@@ -856,7 +859,7 @@ public class SearchTuningView
         return;
       }
       String q = queryField.getValue() != null ? queryField.getValue() : "";
-      persistenceService.saveTuningPreset(
+      searchHistory.saveTuningPreset(
           SearchTuningPreset.from(name.trim(), q, buildConfig(null)));
       dlg.close();
       Notification.show(getTranslation("tuning.preset.saved", name.trim()),
@@ -871,7 +874,7 @@ public class SearchTuningView
   }
 
   private void openLoadPresetDialog() {
-    List<SearchTuningPreset> presets = persistenceService.findAllTuningPresets();
+    List<SearchTuningPreset> presets = searchHistory.findAllTuningPresets();
     if (presets.isEmpty()) {
       Notification.show(getTranslation("tuning.preset.none"),
                         2500, Notification.Position.BOTTOM_START);
@@ -902,7 +905,7 @@ public class SearchTuningView
     Button deleteBtn = new Button(getTranslation("tuning.preset.delete"), e -> {
       SearchTuningPreset p = selector.getValue();
       if (p == null) return;
-      persistenceService.deleteTuningPreset(p.getId());
+      searchHistory.deleteTuningPreset(p.getId());
       dlg.close();
       Notification.show(getTranslation("tuning.preset.deleted", p.getName()),
                         2500, Notification.Position.BOTTOM_START);
@@ -936,7 +939,7 @@ public class SearchTuningView
   // ── Thumbnail ─────────────────────────────────────────────────────────────
 
   private Component buildThumbnail(SearchResultItem item) {
-    ImageAsset asset = persistenceService.findImage(item.getImageId()).orElse(null);
+    ImageAsset asset = catalog.findImage(item.getImageId()).orElse(null);
     if (asset == null) {
       return thumbPlaceholder();
     }

@@ -1,7 +1,7 @@
 package com.svenruppert.flow.views.search;
 
 import com.svenruppert.imagerag.domain.RecentSearchEntry;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.SearchHistoryService;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -34,7 +34,7 @@ public class SearchHistoryDialog
   private static final DateTimeFormatter DATE_FMT =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
 
-  private final PersistenceService ps;
+  private final SearchHistoryService ps;
   private final Consumer<RecentSearchEntry> onSelect;
   private final Runnable onChanged;
   private final Grid<RecentSearchEntry> grid =
@@ -49,7 +49,7 @@ public class SearchHistoryDialog
    * @param onChanged callback invoked after any delete/clear operation so the caller
    *                  can refresh the compact chip bar
    */
-  public SearchHistoryDialog(PersistenceService ps,
+  public SearchHistoryDialog(SearchHistoryService ps,
                              Consumer<RecentSearchEntry> onSelect,
                              Runnable onChanged) {
     this.ps = ps;

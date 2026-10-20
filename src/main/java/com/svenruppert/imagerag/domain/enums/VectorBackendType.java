@@ -47,18 +47,15 @@ public enum VectorBackendType {
   public static final String VALUE_GIGAMAP_JVECTOR = "gigamap-jvector";
 
   /**
-   * Resolves the backend type using the full configuration precedence:
-   * JVM system property &gt; {@code imagerag.properties} &gt; default ({@link #IN_MEMORY}).
-   * <p>This is the preferred factory method.  It delegates to
-   * {@link com.svenruppert.imagerag.bootstrap.AppConfig#getVectorBackend()},
-   * which applies the same override rules.
+   * Maps a configured property value to the backend type; unknown values fall back to
+   * {@link #IN_MEMORY}. Resolving the value from the configuration is the job of
+   * the bootstrap layer.
    *
-   * @return the resolved backend type, never {@code null}
+   * @param raw the configured value, for example {@value #VALUE_GIGAMAP_JVECTOR}
+   * @return the backend type, never {@code null}
    */
-  public static VectorBackendType fromConfig() {
-    String raw = com.svenruppert.imagerag.bootstrap.AppConfig.getInstance()
-        .getVectorBackend();
-    return switch (raw) {
+  public static VectorBackendType fromValue(String raw) {
+    return switch (raw == null ? "" : raw.trim().toLowerCase()) {
       case VALUE_GIGAMAP_JVECTOR -> GIGAMAP_JVECTOR;
       default -> IN_MEMORY;
     };

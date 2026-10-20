@@ -1,5 +1,6 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.settings.SettingsService;
 import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.imagerag.domain.CategoryConfidence;
@@ -41,7 +42,7 @@ import java.util.UUID;
  * Relevance feedback is not part of the estimate.
  */
 public class WhyNotFoundServiceImpl
-    implements WhyNotFoundService {
+    implements WhyNotFoundService, HasLogger {
 
   private final PersistenceService persistenceService;
   private final EmbeddingService embeddingService;
@@ -224,7 +225,9 @@ public class WhyNotFoundServiceImpl
       Optional<float[]> qbe = persistenceService.findRawVector(qbeId).filter(VectorMath::isUsable);
       if (qbe.isPresent()) return qbe.get();
     }
-    return embeddingService.embed(query);
+    return embeddingService.embed(query)
+        .peekFailure(reason -> logger().warn("Query embedding unavailable: {}", reason))
+        .getOrElse(new float[0]);
   }
 
   private static int indexOf(List<UUID> ranking, UUID imageId) {

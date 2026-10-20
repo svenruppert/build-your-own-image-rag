@@ -55,7 +55,7 @@ public class SearchServiceImpl
   @Override
   public SearchResult search(SearchPlan plan) {
     // Step 1: Embed the semantic query text
-    float[] queryVector = embeddingService.embed(plan.getEmbeddingText());
+    float[] queryVector = embedQuery(plan.getEmbeddingText());
 
     // Step 2: Vector similarity search — candidates sorted by descending score
     List<VectorSearchHit> vectorHits = VectorMath.isUsable(queryVector)
@@ -158,7 +158,7 @@ public class SearchServiceImpl
         }
       }
       if (queryVector == null) {
-        queryVector = embeddingService.embed(query);
+        queryVector = embedQuery(query);
       }
     }
 
@@ -269,7 +269,9 @@ public class SearchServiceImpl
       WeightedSum text = new WeightedSum("text");
       for (MultimodalSignal sig : config.getSignals(MultimodalSignal.SignalType.TEXT)) {
         if (sig.textContent() == null || sig.textContent().isBlank()) continue;
-        text.add(embeddingService.embed(sig.textContent()), sig.weight());
+        embeddingService.embed(sig.textContent())
+            .peek(v -> text.add(v, sig.weight()))
+            .peekFailure(reason -> logger().warn("Skipping text signal: {}", reason));
       }
 
       WeightedSum image = new WeightedSum("image example");
@@ -498,6 +500,16 @@ public class SearchServiceImpl
    * whose dimension differs from the first accepted one are skipped and logged, so a
    * failed embedding or a vector from an older model cannot corrupt the sum.
    */
+  /**
+   * Embeds a query; on failure the reason is logged and an empty vector is returned,
+   * which the callers treat as "no vector retrieval" (keyword retrieval still runs).
+   */
+  private float[] embedQuery(String text) {
+    return embeddingService.embed(text)
+        .peekFailure(reason -> logger().warn("Query embedding unavailable: {}", reason))
+        .getOrElse(new float[0]);
+  }
+
   private final class WeightedSum {
 
     private final String label;

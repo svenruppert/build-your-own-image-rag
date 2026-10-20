@@ -13,7 +13,7 @@ import com.svenruppert.imagerag.dto.MultimodalSearchConfig;
 import com.svenruppert.imagerag.dto.MultimodalSearchResult;
 import com.svenruppert.imagerag.dto.MultimodalSignal;
 import com.svenruppert.imagerag.dto.SearchStrategyPlan;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 import com.svenruppert.imagerag.service.SearchService;
 import com.svenruppert.imagerag.service.SearchStrategyAutopilot;
 import com.vaadin.flow.component.AttachEvent;
@@ -62,7 +62,7 @@ public class MultimodalSearchView
 
   // ── Services ─────────────────────────────────────────────────────────────
   private final SearchService searchService;
-  private final PersistenceService persistenceService;
+  private final ImageCatalogService catalog;
   private final SearchStrategyAutopilot autopilot;
 
   // ── Signal builder state ─────────────────────────────────────────────────
@@ -101,7 +101,7 @@ public class MultimodalSearchView
   public MultimodalSearchView() {
     ViewServices services = ViewServices.current();
     this.searchService = services.search();
-    this.persistenceService = services.persistence();
+    this.catalog = services.catalog();
     this.autopilot = services.searchStrategyAutopilot();
 
     setSizeFull();
@@ -610,7 +610,7 @@ public class MultimodalSearchView
     } catch (IllegalArgumentException ignored) {
     }
     // Try filename fragment
-    return persistenceService.findAllImages().stream()
+    return catalog.findAllImages().stream()
         .filter(a -> a.getOriginalFilename() != null
             && a.getOriginalFilename().toLowerCase().contains(value.toLowerCase()))
         .map(ImageAsset::getId)

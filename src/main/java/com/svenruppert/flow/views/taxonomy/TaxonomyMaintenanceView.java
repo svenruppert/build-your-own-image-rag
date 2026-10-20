@@ -11,7 +11,7 @@ import com.svenruppert.imagerag.domain.enums.CategoryGroup;
 import com.svenruppert.imagerag.domain.enums.CategoryLifecycleState;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.domain.enums.SuggestionStatus;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 import com.svenruppert.imagerag.service.*;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.UI;
@@ -73,7 +73,7 @@ public class TaxonomyMaintenanceView
   // ── Services ──────────────────────────────────────────────────────────────
   private final TaxonomyAnalysisService analysisService;
   private final TaxonomySuggestionService suggestionService;
-  private final PersistenceService persistenceService;
+  private final ImageCatalogService catalog;
   private final ClusterDiscoveryService clusterDiscoveryService;
   private final ImagePreviewFactory previewFactory;
   // ── Inspector (left column) ───────────────────────────────────────────────
@@ -128,7 +128,7 @@ public class TaxonomyMaintenanceView
     ViewServices services = ViewServices.current();
     this.analysisService = services.taxonomyAnalysis();
     this.suggestionService = services.taxonomySuggestions();
-    this.persistenceService = services.persistence();
+    this.catalog = services.catalog();
     this.clusterDiscoveryService = services.clusterDiscovery();
     this.previewFactory = services.imagePreviews();
 
@@ -290,7 +290,7 @@ public class TaxonomyMaintenanceView
 
   private void openManualSelectionDialog() {
     ManualImageSelectionDialog dialog = new ManualImageSelectionDialog(
-        persistenceService, manualImageIds, selected -> {
+        catalog, manualImageIds, selected -> {
       manualImageIds = new ArrayList<>(selected);
       updateScopeSummary();
     });
@@ -312,7 +312,7 @@ public class TaxonomyMaintenanceView
 
     String text = switch (mode) {
       case ALL -> {
-        long count = persistenceService.findAllImages().size();
+        long count = catalog.findAllImages().size();
         yield getTranslation("taxonomy.scope.summary.all", count);
       }
       case MANUAL_SELECTION -> {
@@ -325,10 +325,10 @@ public class TaxonomyMaintenanceView
         CategoryGroup group = groupCombo.getValue();
         if (group == null) yield getTranslation("taxonomy.scope.summary.group.none");
         boolean incl = subgroupCheck.getValue() != null && subgroupCheck.getValue();
-        long count = persistenceService.findAllImages().stream()
+        long count = catalog.findAllImages().stream()
             .filter(a -> {
               Optional<com.svenruppert.imagerag.domain.SemanticAnalysis> an =
-                  persistenceService.findAnalysis(a.getId());
+                  catalog.findAnalysis(a.getId());
               if (an.isEmpty()) return false;
               boolean prim = CategoryRegistry.getGroup(an.get().getSourceCategory()) == group;
               boolean sec = incl && an.get().getSecondaryCategories().stream()
@@ -338,10 +338,10 @@ public class TaxonomyMaintenanceView
         yield getTranslation("taxonomy.scope.summary.group", group.getLabel(), count);
       }
       case MISSING_CATEGORY -> {
-        long count = persistenceService.findAllImages().stream()
+        long count = catalog.findAllImages().stream()
             .filter(a -> {
               Optional<com.svenruppert.imagerag.domain.SemanticAnalysis> an =
-                  persistenceService.findAnalysis(a.getId());
+                  catalog.findAnalysis(a.getId());
               if (an.isEmpty()) return true;
               SourceCategory cat = an.get().getSourceCategory();
               return cat == null || cat == SourceCategory.UNKNOWN || cat == SourceCategory.MIXED;
@@ -351,10 +351,10 @@ public class TaxonomyMaintenanceView
       case LOW_CONFIDENCE -> {
         Double thr = thresholdField.getValue();
         double threshold = thr != null ? thr : defaultConfidenceThreshold();
-        long count = persistenceService.findAllImages().stream()
+        long count = catalog.findAllImages().stream()
             .filter(a -> {
               Optional<com.svenruppert.imagerag.domain.SemanticAnalysis> an =
-                  persistenceService.findAnalysis(a.getId());
+                  catalog.findAnalysis(a.getId());
               if (an.isEmpty()) return false;
               com.svenruppert.imagerag.domain.CategoryConfidence cc =
                   an.get().getCategoryConfidence();
@@ -601,7 +601,7 @@ public class TaxonomyMaintenanceView
 
         Button dismissBtn = new Button(getTranslation("cluster.dismiss"), e -> {
           s.dismiss();
-          persistenceService.saveClusterSuggestion(s);
+          clusterDiscoveryService.saveSuggestion(s);
           refreshClusterGrid();
           Notification.show(getTranslation("cluster.dismissed", s.getClusterLabel()),
                             2000, Notification.Position.BOTTOM_START);
@@ -640,7 +640,7 @@ public class TaxonomyMaintenanceView
             msg -> ui.access(() -> clusterStatus.setText(msg)));
 
         // Persist newly discovered suggestions
-        suggestions.forEach(persistenceService::saveClusterSuggestion);
+        suggestions.forEach(clusterDiscoveryService::saveSuggestion);
 
         ui.access(() -> {
           clusterProgress.setVisible(false);
@@ -665,7 +665,7 @@ public class TaxonomyMaintenanceView
 
   private void refreshClusterGrid() {
     List<CategoryClusterSuggestion> suggestions =
-        persistenceService.findAllClusterSuggestions();
+        clusterDiscoveryService.findAllSuggestions();
     clusterGrid.setItems(suggestions);
   }
 
@@ -707,7 +707,7 @@ public class TaxonomyMaintenanceView
     // Cap at 40 thumbnails to keep the dialog manageable
     List<UUID> shown = ids.size() > 40 ? ids.subList(0, 40) : ids;
     for (UUID imgId : shown) {
-      persistenceService.findImage(imgId).ifPresent(asset -> {
+      catalog.findImage(imgId).ifPresent(asset -> {
         Div cell = new Div();
         cell.getStyle()
             .set("border", "1px solid var(--lumo-contrast-10pct)")
@@ -814,7 +814,7 @@ public class TaxonomyMaintenanceView
     confirmBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_SUCCESS);
     confirmBtn.addClickListener(e -> {
       s.accept();
-      persistenceService.saveClusterSuggestion(s);
+      clusterDiscoveryService.saveSuggestion(s);
       dlg.close();
       refreshClusterGrid();
       Notification n = Notification.show(
@@ -1235,7 +1235,7 @@ public class TaxonomyMaintenanceView
     taxonomyGrid.setItems(taxonomyLevel);
 
     List<CategoryMetadata> deprecated =
-        persistenceService.findAllCategoryMetadata().stream()
+        catalog.findAllCategoryMetadata().stream()
             .filter(m -> m.getLifecycleState() == CategoryLifecycleState.DEPRECATED)
             .collect(Collectors.toList());
     deprecatedGrid.setItems(deprecated);

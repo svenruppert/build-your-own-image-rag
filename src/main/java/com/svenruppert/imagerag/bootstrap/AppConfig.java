@@ -110,6 +110,13 @@ public final class AppConfig
   }
 
   /**
+   * Resolves the configured vector backend type.
+   */
+  public VectorBackendType getVectorBackendType() {
+    return VectorBackendType.fromValue(getVectorBackend());
+  }
+
+  /**
    * Returns the Ollama embedding model to use for semantic-search vectors.
    * Defaults to {@code "bge-m3"} when the property {@code embedding.model} is absent.
    * <p>Changing this value after vectors have been stored requires a full vector-index

@@ -2,7 +2,7 @@ package com.svenruppert.imagerag.service.impl;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.service.PreviewService;
-import com.vaadin.flow.server.StreamResource;
+import com.svenruppert.functional.result.Result;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -10,7 +10,6 @@ import javax.imageio.stream.ImageInputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -56,30 +55,19 @@ public class PreviewServiceImpl
   }
 
   @Override
-  public StreamResource getPreview(UUID imageId, Path originalPath,
-                                   String resourceName, PreviewSize size) {
+  public Result<Path, String> ensurePreview(UUID imageId, Path originalPath, PreviewSize size) {
     Path previewPath = previewPath(imageId, size);
-
-    // Generate preview if not yet cached
-    if (!Files.exists(previewPath)) {
-      try {
-        generatePreview(originalPath, previewPath, size.getMaxWidth(), size.getMaxHeight());
-        logger().debug("Generated {} preview for imageId={}", size, imageId);
-      } catch (Exception e) {
-        logger().warn("Could not generate {} preview for imageId={}: {}", size, imageId, e.getMessage());
-        return null; // caller falls back to original
-      }
+    if (Files.exists(previewPath)) {
+      return Result.success(previewPath);
     }
-
-    // Build a StreamResource backed by the cached JPEG
-    final String resourceId = previewPath.getFileName().toString();
-    return new StreamResource(resourceId, () -> {
-      try {
-        return Files.newInputStream(previewPath);
-      } catch (IOException ex) {
-        return InputStream.nullInputStream();
-      }
-    });
+    try {
+      generatePreview(originalPath, previewPath, size.getMaxWidth(), size.getMaxHeight());
+      logger().debug("Generated {} preview for imageId={}", size, imageId);
+      return Result.success(previewPath);
+    } catch (IOException | RuntimeException e) {
+      logger().warn("Could not generate {} preview for imageId={}: {}", size, imageId, e.getMessage());
+      return Result.failure("preview generation failed: " + e.getMessage());
+    }
   }
 
   @Override

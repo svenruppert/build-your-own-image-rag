@@ -5,11 +5,10 @@ import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.settings.SettingsView;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.ImageAsset;
-import com.svenruppert.imagerag.ollama.PromptTemplates;
 import com.svenruppert.imagerag.domain.PromptTemplateVersion;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
-import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
+import com.svenruppert.imagerag.service.PromptTestService;
 import com.svenruppert.imagerag.service.PromptTemplateService;
 import com.svenruppert.imagerag.service.impl.SemanticDerivationServiceImpl;
 import com.svenruppert.imagerag.service.impl.VisionAnalysisServiceImpl;
@@ -37,10 +36,10 @@ import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
 
-import java.nio.file.Files;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 /**
@@ -177,16 +176,6 @@ public class MigrationCenterView
    * <p>This is a defence-in-depth measure for the "Test draft" flow, where the draft
    * may be executed against real image descriptions during prompt authoring.
    */
-  private static String sanitizeForPrompt(String raw) {
-    if (raw == null) return "";
-    String s = raw.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", " ");
-    s = s.replace("```", "'''")
-        .replace("</", "< /")
-        .replace("\"", "'");
-    final int maxLen = 4000;
-    if (s.length() > maxLen) s = s.substring(0, maxLen) + "…";
-    return s;
-  }
 
   @Override
   public void beforeEnter(BeforeEnterEvent event) {
@@ -255,8 +244,8 @@ public class MigrationCenterView
 
     // Image / index statistics
     tab.add(sectionHeading(getTranslation("migration.config.stats")));
-    long totalImages = services.persistence().findAllImages().size();
-    long indexedImages = services.persistence().findAllIndexedImageIds().size();
+    long totalImages = services.catalog().findAllImages().size();
+    long indexedImages = services.catalog().findAllIndexedImageIds().size();
     tab.add(configRow(getTranslation("migration.config.total.images"), String.valueOf(totalImages)));
     tab.add(configRow(getTranslation("migration.config.indexed.images"), String.valueOf(indexedImages)));
 
@@ -410,7 +399,7 @@ public class MigrationCenterView
         getTranslation("migration.rebuild.vector.description"),
         getTranslation("migration.rebuild.vector.button"),
         () -> {
-          long count = services.persistence().findAllIndexedImageIds().size();
+          long count = services.catalog().findAllIndexedImageIds().size();
           return getTranslation("migration.rebuild.vector.confirm")
               + "  " + getTranslation("migration.rebuild.affected.images", count);
         },
@@ -421,7 +410,7 @@ public class MigrationCenterView
         getTranslation("migration.rebuild.keyword.description"),
         getTranslation("migration.rebuild.keyword.button"),
         () -> {
-          long count = services.persistence().findAllImages().size();
+          long count = services.catalog().findAllImages().size();
           return getTranslation("migration.rebuild.keyword.confirm")
               + "  " + getTranslation("migration.rebuild.affected.images", count);
         },
@@ -613,13 +602,14 @@ public class MigrationCenterView
       testProgress.setVisible(true);
       resultArea.setValue(getTranslation("migration.test.running"));
       UI ui = UI.getCurrent();
+      final Locale locale = getLocale();
       final UUID finalId = imageId;
       Thread.ofVirtual().name("prompt-test").start(() -> {
         java.util.concurrent.ExecutorService exec =
             java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor();
         try {
           java.util.concurrent.Future<String> fut =
-              exec.submit(() -> executePromptTest(finalKey, finalId, finalDraft));
+              exec.submit(() -> executePromptTest(finalKey, finalId, finalDraft, locale));
           String result;
           try {
             result = fut.get(PROMPT_TEST_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
@@ -670,7 +660,7 @@ public class MigrationCenterView
     } catch (IllegalArgumentException ignored) {
     }
     String lower = idStr.toLowerCase();
-    return services.persistence().findAllImages().stream()
+    return services.catalog().findAllImages().stream()
         .filter(a -> a.getOriginalFilename() != null
             && a.getOriginalFilename().toLowerCase().contains(lower))
         .map(ImageAsset::getId)
@@ -678,35 +668,21 @@ public class MigrationCenterView
   }
 
   /**
-   * Executes the draft prompt against the chosen image and returns the raw model output.
-   * <ul>
-   *   <li>For the <em>vision</em> key the draft is sent as the system prompt directly to
-   *       the vision model together with the image file.</li>
-   *   <li>For the <em>semantic</em> key the draft is formatted with the existing vision
-   *       description of the image and sent to the text model (no re-vision needed).</li>
-   * </ul>
+   * Executes the draft prompt against the chosen image via the {@link PromptTestService}
+   * and returns the raw model output, or a translated message when there is none.
+   * <p>Runs on a worker thread; the fallback texts are resolved with the locale captured
+   * by the caller.
    */
-  private String executePromptTest(String promptKey, UUID imageId, String draftContent) {
-    OllamaClient ollama = services.ollamaClient();
-
-    if (VisionAnalysisServiceImpl.PROMPT_KEY.equals(promptKey)) {
-      // Vision test: run draft against the actual stored image file
-      var asset = services.persistence().findImage(imageId).orElse(null);
-      if (asset == null) return getTranslation("migration.test.error.image.not.found");
-      var imagePath = services.imageStorage().resolvePath(asset.getId());
-      if (!Files.exists(imagePath)) return getTranslation("migration.test.error.file.not.found");
-      return ollama.analyzeImageWithVision(imagePath, draftContent)
-          .getOrElse(getTranslation("migration.test.no.result"));
-    } else {
-      // Semantic test: use the existing vision description as input to the draft prompt
-      var analysis = services.persistence().findAnalysis(imageId).orElse(null);
-      String description = (analysis != null && analysis.getSummary() != null)
-          ? analysis.getSummary()
-          : getTranslation("migration.test.no.description");
-      String formatted = PromptTemplates.fill(draftContent, sanitizeForPrompt(description));
-      return ollama.generateJson(formatted)
-          .getOrElse(getTranslation("migration.test.no.result"));
-    }
+  private String executePromptTest(String promptKey, UUID imageId, String draftContent,
+                                   Locale locale) {
+    return services.promptTests()
+        .run(promptKey, imageId, draftContent,
+             getTranslation(locale, "migration.test.no.description"))
+        .getOrElse(failure -> switch (failure) {
+          case IMAGE_NOT_FOUND -> getTranslation(locale, "migration.test.error.image.not.found");
+          case FILE_NOT_FOUND -> getTranslation(locale, "migration.test.error.file.not.found");
+          case NO_RESULT -> getTranslation(locale, "migration.test.no.result");
+        });
   }
 
   // ── Index rebuild actions ─────────────────────────────────────────────────

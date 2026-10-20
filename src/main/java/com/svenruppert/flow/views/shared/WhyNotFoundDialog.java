@@ -252,7 +252,7 @@ public class WhyNotFoundDialog
   private UUID resolveByFilenamePrefix(String prefix) {
     if (prefix == null || prefix.isBlank()) return null;
     String lower = prefix.toLowerCase();
-    return services.persistence().findAllImages().stream()
+    return services.catalog().findAllImages().stream()
         .filter(a -> a.getOriginalFilename() != null
             && a.getOriginalFilename().toLowerCase().contains(lower))
         .map(ImageAsset::getId)

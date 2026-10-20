@@ -44,4 +44,14 @@ public interface ClusterDiscoveryService {
   List<CategoryClusterSuggestion> discoverForCategory(
       SourceCategory category,
       int minClusterSize);
+
+  /**
+   * Returns all stored cluster suggestions.
+   */
+  List<CategoryClusterSuggestion> findAllSuggestions();
+
+  /**
+   * Stores a new or changed cluster suggestion.
+   */
+  void saveSuggestion(CategoryClusterSuggestion suggestion);
 }

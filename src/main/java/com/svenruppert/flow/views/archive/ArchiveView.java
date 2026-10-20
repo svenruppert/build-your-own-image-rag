@@ -1,6 +1,7 @@
 package com.svenruppert.flow.views.archive;
 
-import com.svenruppert.imagerag.domain.enums.AuditAction;
+import com.svenruppert.functional.result.Unit;
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
@@ -12,7 +13,7 @@ import com.svenruppert.imagerag.domain.CategoryRegistry;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.SensitivityAssessment;
-import com.svenruppert.imagerag.persistence.PersistenceService;
+import com.svenruppert.imagerag.service.ImageCatalogService;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
@@ -137,7 +138,7 @@ public class ArchiveView
           .set("cursor", "pointer");
       name.getElement().setAttribute("title", asset.getOriginalFilename());
       name.addClickListener(e -> {
-        PersistenceService ps = services.persistence();
+        ImageCatalogService ps = services.catalog();
         SemanticAnalysis analysis = ps.findAnalysis(asset.getId()).orElse(null);
         SensitivityAssessment assessment = ps.findAssessment(asset.getId()).orElse(null);
         com.svenruppert.imagerag.domain.LocationSummary location =
@@ -246,10 +247,7 @@ public class ArchiveView
 
   private void restoreImage(ImageAsset asset) {
     try {
-      services.restoreImage(asset.getId());
-      services.audit()
-          .log(AuditAction.RESTORE, asset.getId(), asset.getOriginalFilename(),
-               "Restored from archive view");
+      services.restoreImage(asset.getId(), "Restored from archive view");
       Notification n = Notification.show(
           getTranslation("archive.restore.success", asset.getOriginalFilename()),
           3000, Notification.Position.BOTTOM_END);
@@ -294,22 +292,20 @@ public class ArchiveView
   }
 
   private void permanentlyDeleteImage(ImageAsset asset) {
-    try {
-      services.deleteImage(asset.getId());
-      services.audit()
-          .log(AuditAction.PERMANENT_DELETE, asset.getId(), asset.getOriginalFilename(),
-               "Permanently deleted from archive view");
-      Notification n = Notification.show(
-          getTranslation("archive.deleted.success", asset.getOriginalFilename()),
-          3000, Notification.Position.BOTTOM_END);
-      n.addThemeVariants(NotificationVariant.LUMO_CONTRAST);
-      loadData();
-    } catch (Exception ex) {
-      logger().error("Permanent delete failed for {}: {}", asset.getId(), ex.getMessage(), ex);
-      Notification n = Notification.show(
-          getTranslation("archive.deleted.error", ex.getMessage()),
-          5000, Notification.Position.MIDDLE);
-      n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+    switch (services.deleteImage(asset.getId(), "Permanently deleted from archive view")) {
+      case Result.Success<Unit, String> done -> {
+        Notification n = Notification.show(
+            getTranslation("archive.deleted.success", asset.getOriginalFilename()),
+            3000, Notification.Position.BOTTOM_END);
+        n.addThemeVariants(NotificationVariant.LUMO_CONTRAST);
+        loadData();
+      }
+      case Result.Failure<Unit, String>(String error) -> {
+        Notification n = Notification.show(
+            getTranslation("archive.deleted.error", error),
+            5000, Notification.Position.MIDDLE);
+        n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+      }
     }
   }
 
@@ -318,10 +314,7 @@ public class ArchiveView
     int succeeded = 0;
     for (ImageAsset asset : selected) {
       try {
-        services.restoreImage(asset.getId());
-        services.audit()
-            .log(AuditAction.RESTORE, asset.getId(), asset.getOriginalFilename(),
-                 "Batch restored from archive view");
+        services.restoreImage(asset.getId(), "Batch restored from archive view");
         succeeded++;
       } catch (Exception ex) {
         logger().warn("Batch restore failed for {}: {}", asset.getId(), ex.getMessage());
@@ -368,14 +361,9 @@ public class ArchiveView
   private void batchPermanentDelete(Set<ImageAsset> toDelete) {
     int succeeded = 0;
     for (ImageAsset asset : toDelete) {
-      try {
-        services.deleteImage(asset.getId());
-        services.audit()
-            .log(AuditAction.PERMANENT_DELETE, asset.getId(), asset.getOriginalFilename(),
-                 "Batch permanently deleted from archive view");
+      if (services.deleteImage(asset.getId(), "Batch permanently deleted from archive view")
+          .isSuccess()) {
         succeeded++;
-      } catch (Exception ex) {
-        logger().warn("Batch permanent delete failed for {}: {}", asset.getId(), ex.getMessage());
       }
     }
     Notification n = Notification.show(
@@ -388,7 +376,7 @@ public class ArchiveView
   // ── Data ──────────────────────────────────────────────────────────────────
 
   private void loadData() {
-    PersistenceService ps = services.persistence();
+    ImageCatalogService ps = services.catalog();
     archivedImages = ps.findArchivedImages();
     grid.setItems(archivedImages);
     grid.deselectAll();
@@ -403,7 +391,7 @@ public class ArchiveView
   }
 
   private Component buildCategoryCell(ImageAsset asset) {
-    return services.persistence()
+    return services.catalog()
         .findAnalysis(asset.getId())
         .map(SemanticAnalysis::getSourceCategory)
         .map(cat -> {
@@ -416,7 +404,7 @@ public class ArchiveView
   }
 
   private Component buildRiskCell(ImageAsset asset) {
-    return services.persistence()
+    return services.catalog()
         .findAssessment(asset.getId())
         .map(SensitivityAssessment::getRiskLevel)
         .map(risk -> (Component) RiskBadge.badge(risk))

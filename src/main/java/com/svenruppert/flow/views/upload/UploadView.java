@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.upload;
 
+import java.util.concurrent.RejectedExecutionException;
 import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.dependencies.core.net.MediaType;
@@ -97,7 +98,7 @@ public class UploadView
 
       logger().info("Queued: {} → jobId={}", filename, job.getJobId());
 
-    } catch (IOException e) {
+    } catch (RejectedExecutionException e) {
       logger().error("Failed to queue {}: {}", filename, e.getMessage(), e);
       deleteQuietly(tempFile);
       Notification n = Notification.show(

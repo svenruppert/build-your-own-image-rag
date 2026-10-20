@@ -1,5 +1,6 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.CategoryClusterSuggestion;
 import com.svenruppert.imagerag.domain.CategoryClusterSuggestion.SuggestionType;
 import com.svenruppert.imagerag.domain.ImageAsset;
@@ -7,6 +8,7 @@ import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.ClusterDiscoveryService;
+import com.svenruppert.imagerag.vector.VectorMath;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -21,10 +23,34 @@ import java.util.stream.Collectors;
  * centroid movement falls below a convergence threshold.
  */
 public class ClusterDiscoveryServiceImpl
-    implements ClusterDiscoveryService {
+    implements ClusterDiscoveryService, HasLogger {
 
   private static final int MAX_ITERATIONS = 15;
   private static final double CONVERGENCE_THRESHOLD = 1e-4;
+  /**
+   * k-means needs at least two clusters to produce a meaningful split.
+   */
+  private static final int MIN_CLUSTERS = 2;
+  /**
+   * Global discovery: one cluster per this many images (before clamping).
+   */
+  private static final int IMAGES_PER_CLUSTER = 10;
+  /**
+   * Per-category discovery: one cluster per this many images (before clamping).
+   */
+  private static final int CATEGORY_IMAGES_PER_CLUSTER = 8;
+  /**
+   * Upper bound for k in per-category discovery.
+   */
+  private static final int CATEGORY_MAX_CLUSTERS = 5;
+  /**
+   * Intra-cluster similarity threshold for subcategory proposals in per-category discovery.
+   */
+  private static final double CATEGORY_SIMILARITY_THRESHOLD = 0.70;
+  /**
+   * Maximum number of cluster members sampled for the intra-cluster similarity.
+   */
+  private static final int INTRA_CLUSTER_SAMPLE = 20;
   private static final Random RNG = new Random(42L); // deterministic
 
   private final PersistenceService persistenceService;
@@ -34,25 +60,6 @@ public class ClusterDiscoveryServiceImpl
   }
 
   // ── Public API ───────────────────────────────────────────────────────────
-
-  private static double cosineSim(float[] a, float[] b) {
-    double dot = 0, normA = 0, normB = 0;
-    int len = Math.min(a.length, b.length);
-    for (int i = 0; i < len; i++) {
-      dot += (double) a[i] * b[i];
-      normA += (double) a[i] * a[i];
-      normB += (double) b[i] * b[i];
-    }
-    double denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom > 1e-9 ? dot / denom : 0.0;
-  }
-
-  private static void normalize(float[] v) {
-    double norm = 0;
-    for (float f : v) norm += (double) f * f;
-    norm = Math.sqrt(norm);
-    if (norm > 1e-9) for (int i = 0; i < v.length; i++) v[i] /= (float) norm;
-  }
 
   // ── K-means ──────────────────────────────────────────────────────────────
 
@@ -66,14 +73,25 @@ public class ClusterDiscoveryServiceImpl
       double similarityThreshold, Consumer<String> progress) {
 
     notify(progress, "Loading image vectors…");
-    Map<UUID, float[]> vectors = persistenceService.findAllRawVectors();
+    // Archived images keep their vectors but must not shape new taxonomy proposals.
+    Set<UUID> activeIds = persistenceService.findAllImages().stream()
+        .filter(img -> !img.isDeleted())
+        .map(ImageAsset::getId)
+        .collect(Collectors.toSet());
+    Map<UUID, float[]> vectors = new LinkedHashMap<>(persistenceService.findAllRawVectors());
+    vectors.keySet().retainAll(activeIds);
+    vectors = withDominantDimension(vectors);
 
     if (vectors.size() < minClusterSize * 2) {
       notify(progress, "Not enough vectors to form clusters (need at least " + (minClusterSize * 2) + ").");
       return List.of();
     }
 
-    int k = Math.clamp(vectors.size() / 10, 2, maxClusters);
+    if (maxClusters < MIN_CLUSTERS) {
+      logger().warn("maxClusters={} is below {} — using {}", maxClusters, MIN_CLUSTERS, MIN_CLUSTERS);
+    }
+    int upper = Math.max(MIN_CLUSTERS, maxClusters);
+    int k = Math.clamp(vectors.size() / IMAGES_PER_CLUSTER, MIN_CLUSTERS, upper);
     notify(progress, String.format("Running k-means with k=%d over %d images…", k, vectors.size()));
 
     List<UUID> ids = new ArrayList<>(vectors.keySet());
@@ -107,14 +125,15 @@ public class ClusterDiscoveryServiceImpl
     for (UUID id : categoryIds) {
       persistenceService.findRawVector(id).ifPresent(v -> vectors.put(id, v));
     }
-    if (vectors.size() < minClusterSize * 2) return List.of();
+    Map<UUID, float[]> consistent = withDominantDimension(vectors);
+    if (consistent.size() < minClusterSize * 2) return List.of();
 
-    int k = Math.clamp(vectors.size() / 8, 2, 5);
-    List<UUID> ids = new ArrayList<>(vectors.keySet());
-    List<float[]> vecs = ids.stream().map(vectors::get).toList();
+    int k = Math.clamp(consistent.size() / CATEGORY_IMAGES_PER_CLUSTER, MIN_CLUSTERS, CATEGORY_MAX_CLUSTERS);
+    List<UUID> ids = new ArrayList<>(consistent.keySet());
+    List<float[]> vecs = ids.stream().map(consistent::get).toList();
 
     int[] assignments = kMeans(vecs, k, null);
-    return buildSuggestions(ids, vecs, assignments, k, minClusterSize, 0.70);
+    return buildSuggestions(ids, vecs, assignments, k, minClusterSize, CATEGORY_SIMILARITY_THRESHOLD);
   }
 
   private int[] kMeans(List<float[]> vectors, int k, Consumer<String> progress) {
@@ -132,7 +151,7 @@ public class ClusterDiscoveryServiceImpl
         int best = 0;
         double bestSim = -2.0;
         for (int c = 0; c < k; c++) {
-          double sim = cosineSim(vectors.get(i), centroids[c]);
+          double sim = VectorMath.cosine(vectors.get(i), centroids[c]);
           if (sim > bestSim) {
             bestSim = sim;
             best = c;
@@ -160,8 +179,8 @@ public class ClusterDiscoveryServiceImpl
           continue;
         }
         for (int d = 0; d < dims; d++) newCentroids[c][d] /= counts[c];
-        normalize(newCentroids[c]);
-        maxShift = Math.max(maxShift, 1.0 - cosineSim(centroids[c], newCentroids[c]));
+        VectorMath.normalizeInPlace(newCentroids[c]);
+        maxShift = Math.max(maxShift, 1.0 - VectorMath.cosine(centroids[c], newCentroids[c]));
       }
       centroids = newCentroids;
       if (maxShift < CONVERGENCE_THRESHOLD) break;
@@ -175,7 +194,7 @@ public class ClusterDiscoveryServiceImpl
     float[][] centroids = new float[k][];
     // First centroid: random
     centroids[0] = Arrays.copyOf(vectors.get(RNG.nextInt(n)), vectors.get(0).length);
-    normalize(centroids[0]);
+    VectorMath.normalizeInPlace(centroids[0]);
 
     for (int c = 1; c < k; c++) {
       // k-means++ — choose next centroid proportional to distance from nearest existing centroid
@@ -184,7 +203,7 @@ public class ClusterDiscoveryServiceImpl
       for (int i = 0; i < n; i++) {
         double minDist = Double.MAX_VALUE;
         for (int j = 0; j < c; j++) {
-          double dist = 1.0 - cosineSim(vectors.get(i), centroids[j]);
+          double dist = 1.0 - VectorMath.cosine(vectors.get(i), centroids[j]);
           minDist = Math.min(minDist, dist);
         }
         distances[i] = minDist * minDist;
@@ -200,7 +219,7 @@ public class ClusterDiscoveryServiceImpl
         }
       }
       centroids[c] = Arrays.copyOf(vectors.get(chosen), vectors.get(chosen).length);
-      normalize(centroids[c]);
+      VectorMath.normalizeInPlace(centroids[c]);
     }
     return centroids;
   }
@@ -292,14 +311,38 @@ public class ClusterDiscoveryServiceImpl
     if (memberIdx.size() < 2) return 1.0;
     double total = 0;
     int count = 0;
-    int n = Math.min(memberIdx.size(), 20); // sample up to 20 pairs for speed
+    int n = Math.min(memberIdx.size(), INTRA_CLUSTER_SAMPLE); // sample members for speed
     for (int i = 0; i < n; i++) {
       for (int j = i + 1; j < n; j++) {
-        total += cosineSim(vecs.get(memberIdx.get(i)), vecs.get(memberIdx.get(j)));
+        total += VectorMath.cosine(vecs.get(memberIdx.get(i)), vecs.get(memberIdx.get(j)));
         count++;
       }
     }
     return count > 0 ? total / count : 0.5;
+  }
+
+  /**
+   * Keeps only vectors with the most common dimension. Vectors from an older
+   * embedding model (or empty ones) would otherwise distort the centroids.
+   */
+  private Map<UUID, float[]> withDominantDimension(Map<UUID, float[]> vectors) {
+    Map<Integer, Long> byDimension = vectors.values().stream()
+        .filter(VectorMath::isUsable)
+        .collect(Collectors.groupingBy(v -> v.length, Collectors.counting()));
+    if (byDimension.isEmpty()) return Map.of();
+    int dimension = byDimension.entrySet().stream()
+        .max(Map.Entry.comparingByValue())
+        .map(Map.Entry::getKey)
+        .orElseThrow();
+    Map<UUID, float[]> consistent = new LinkedHashMap<>();
+    vectors.forEach((id, v) -> {
+      if (VectorMath.isUsable(v) && v.length == dimension) consistent.put(id, v);
+    });
+    int skipped = vectors.size() - consistent.size();
+    if (skipped > 0) {
+      logger().warn("Cluster discovery skipped {} vectors without dimension {}", skipped, dimension);
+    }
+    return consistent;
   }
 
   private String generateClusterLabel(List<UUID> clusterIds, SourceCategory dominant) {

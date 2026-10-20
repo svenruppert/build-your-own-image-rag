@@ -5,6 +5,7 @@ import com.svenruppert.imagerag.domain.enums.SimilarityFunction;
 import com.svenruppert.imagerag.dto.VectorSearchHit;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.VectorIndexService;
+import com.svenruppert.imagerag.vector.VectorMath;
 import io.github.jbellis.jvector.graph.*;
 import io.github.jbellis.jvector.util.Bits;
 import io.github.jbellis.jvector.vector.VectorSimilarityFunction;
@@ -13,6 +14,7 @@ import io.github.jbellis.jvector.vector.types.VectorFloat;
 import io.github.jbellis.jvector.vector.types.VectorTypeSupport;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Vector-search backend that combines two responsibilities:
@@ -24,8 +26,8 @@ import java.util.*;
  *       without requiring the embedding model to be called again.</li>
  *   <li><b>Fast approximate-nearest-neighbour search</b> via JVector 4.x — an HNSW
  *       graph index (DiskANN-style) is built in memory from the persisted vectors at
- *       startup.  The index is kept in sync with the EclipseStore data through the
- *       {@link #index} and {@link #remove} operations.</li>
+ *       startup.  {@link #index} and {@link #remove} mark the index stale; it is
+ *       rebuilt once, lazily, before the next search.</li>
  * </ol>
  * <h3>JVector 4.x notes</h3>
  * <ul>
@@ -43,14 +45,23 @@ import java.util.*;
  * <ul>
  *   <li>Construction: call {@link #initialize()} to load vectors from EclipseStore
  *       and build the initial JVector HNSW index — no Ollama call required.</li>
- *   <li>{@link #index}: persists the vector to EclipseStore and rebuilds the index.</li>
- *   <li>{@link #remove}: removes from EclipseStore and rebuilds the index.</li>
- *   <li>{@link #search}: queries the in-memory JVector HNSW index.</li>
+ *   <li>{@link #index}: persists the vector to EclipseStore and marks the index stale.</li>
+ *   <li>{@link #remove}: removes from EclipseStore and marks the index stale.</li>
+ *   <li>{@link #search}: rebuilds a stale index (once, under the rebuild lock) and
+ *       queries the in-memory JVector HNSW index.  A batch of changes — for example
+ *       a reprocess (remove + index) or a migration — therefore costs one rebuild
+ *       instead of one per change.</li>
  * </ul>
  * <h3>Thread safety</h3>
  * The JVector index snapshot is replaced atomically via a volatile reference.
- * Rebuilds are synchronised to prevent overlapping rebuilds while reads against a
- * previous snapshot proceed concurrently.
+ * Rebuilds and {@link #initialize()} are synchronised on one lock so they never
+ * overlap, while reads against a previous snapshot proceed concurrently.  The stale
+ * flag is cleared <em>before</em> the vectors are read, so a change that lands
+ * during a rebuild marks the index stale again.
+ * <h3>Dimensions</h3>
+ * Only vectors with the most common dimension enter the graph; others (from an
+ * older embedding model) are skipped and logged.  A query whose dimension differs
+ * from the graph returns no hits.
  */
 public class EclipseStoreGigaMapJVectorBackend
     implements VectorIndexService, HasLogger {
@@ -90,6 +101,10 @@ public class EclipseStoreGigaMapJVectorBackend
    * {@code null} before the first successful build (empty store).
    */
   private volatile JVectorIndexSnapshot currentIndex = null;
+  /**
+   * {@code true} when the persisted vectors changed since the last build.
+   */
+  private volatile boolean stale = false;
 
   public EclipseStoreGigaMapJVectorBackend(PersistenceService persistenceService) {
     this.persistenceService = persistenceService;
@@ -98,29 +113,29 @@ public class EclipseStoreGigaMapJVectorBackend
   // ── VectorIndexService ────────────────────────────────────────────────────
 
   /**
-   * Persists {@code vector} to the EclipseStore GigaMap (raw-vector store) and
-   * rebuilds the JVector HNSW index so the image is immediately searchable.
+   * Persists {@code vector} to the EclipseStore GigaMap (raw-vector store) and marks
+   * the JVector HNSW index stale; the next search sees the image.
    */
   @Override
   public void index(UUID imageId, float[] vector) {
-    if (vector == null || vector.length == 0) {
+    if (!VectorMath.isUsable(vector)) {
       logger().warn("Skipping indexing for {} — empty vector", imageId);
       return;
     }
     persistenceService.saveRawVector(imageId, vector);
-    rebuildIndex();
+    stale = true;
     logger().debug("Indexed vector for {} (dim={}) in EclipseStore + JVector 4.x",
                    imageId, vector.length);
   }
 
   /**
-   * Removes the vector from the EclipseStore GigaMap and rebuilds the JVector HNSW
-   * index so the image no longer appears in search results.
+   * Removes the vector from the EclipseStore GigaMap and marks the JVector HNSW
+   * index stale; the next search no longer returns the image.
    */
   @Override
   public void remove(UUID imageId) {
     persistenceService.removeRawVector(imageId);
-    rebuildIndex();
+    stale = true;
     logger().debug("Removed vector for {} from EclipseStore + JVector 4.x", imageId);
   }
 
@@ -130,12 +145,18 @@ public class EclipseStoreGigaMapJVectorBackend
    */
   @Override
   public List<VectorSearchHit> search(float[] queryVector, int limit) {
-    if (queryVector == null || queryVector.length == 0) {
+    if (!VectorMath.isUsable(queryVector)) {
       return List.of();
     }
+    rebuildIfStale();
     JVectorIndexSnapshot idx = currentIndex;
     if (idx == null || idx.isEmpty()) {
       logger().debug("JVector index is empty — returning no results");
+      return List.of();
+    }
+    if (queryVector.length != idx.dimension()) {
+      logger().warn("Query dimension {} differs from index dimension {} — returning no results",
+                    queryVector.length, idx.dimension());
       return List.of();
     }
     return idx.search(queryVector, limit);
@@ -150,7 +171,7 @@ public class EclipseStoreGigaMapJVectorBackend
    */
   @Override
   public List<VectorSearchHit> search(float[] queryVector, int limit, SimilarityFunction fn) {
-    if (queryVector == null || queryVector.length == 0) return List.of();
+    if (!VectorMath.isUsable(queryVector)) return List.of();
     if (fn == SimilarityFunction.COSINE) {
       return search(queryVector, limit); // fast HNSW path
     }
@@ -159,33 +180,25 @@ public class EclipseStoreGigaMapJVectorBackend
     if (all.isEmpty()) return List.of();
 
     List<VectorSearchHit> results = new ArrayList<>(all.size());
+    int skipped = 0;
     for (Map.Entry<UUID, float[]> entry : all.entrySet()) {
+      if (!VectorMath.compatible(queryVector, entry.getValue())) {
+        skipped++;
+        continue;
+      }
       double score = switch (fn) {
-        case DOT_PRODUCT -> dotProduct(queryVector, entry.getValue());
-        case EUCLIDEAN -> euclideanSimilarity(queryVector, entry.getValue());
+        case DOT_PRODUCT -> VectorMath.dot(queryVector, entry.getValue());
+        case EUCLIDEAN -> VectorMath.euclideanSimilarity(queryVector, entry.getValue());
         default -> 0.0;
       };
       results.add(new VectorSearchHit(entry.getKey(), score));
     }
+    if (skipped > 0) {
+      logger().warn("Brute-force search skipped {} vectors whose dimension differs from the query (dim={})",
+                    skipped, queryVector.length);
+    }
     results.sort(Comparator.naturalOrder()); // VectorSearchHit.compareTo() = descending
     return new ArrayList<>(results.subList(0, Math.min(limit, results.size())));
-  }
-
-  private double dotProduct(float[] a, float[] b) {
-    int len = Math.min(a.length, b.length);
-    double dot = 0.0;
-    for (int i = 0; i < len; i++) dot += (double) a[i] * b[i];
-    return dot;
-  }
-
-  private double euclideanSimilarity(float[] a, float[] b) {
-    int len = Math.min(a.length, b.length);
-    double sumSq = 0.0;
-    for (int i = 0; i < len; i++) {
-      double d = (double) a[i] - b[i];
-      sumSq += d * d;
-    }
-    return 1.0 / (1.0 + Math.sqrt(sumSq));
   }
 
   // ── Startup initialisation ────────────────────────────────────────────────
@@ -195,18 +208,25 @@ public class EclipseStoreGigaMapJVectorBackend
    * Must be called once after construction, before the first {@link #search}.
    * Unlike the in-memory backend's {@code restoreVectorIndex()}, this does <em>not</em>
    * require Ollama — vectors are read directly from the EclipseStore GigaMap.
+   * <p>Safe to call again at runtime (for example after a vector rebuild): it runs
+   * under the rebuild lock, and an empty store clears the current index.
    */
   public void initialize() {
-    Map<UUID, float[]> stored = persistenceService.findAllRawVectors();
-    if (stored.isEmpty()) {
-      logger().info("EclipseStore GigaMap raw-vector store is empty — JVector index not built. "
-                        + "Vectors will be indexed as images are processed.");
-      return;
+    synchronized (rebuildLock) {
+      stale = false;
+      Map<UUID, float[]> stored = persistenceService.findAllRawVectors();
+      if (stored.isEmpty()) {
+        currentIndex = null;
+        logger().info("EclipseStore GigaMap raw-vector store is empty — JVector index cleared. "
+                          + "Vectors will be indexed as images are processed.");
+        return;
+      }
+      logger().info("Building JVector 4.x HNSW index from {} vectors in EclipseStore...",
+                    stored.size());
+      currentIndex = buildSnapshot(stored);
+      logger().info("JVector 4.x HNSW index ready: {} vectors indexed",
+                    currentIndex == null ? 0 : currentIndex.size());
     }
-    logger().info("Building JVector 4.x HNSW index from {} vectors in EclipseStore...",
-                  stored.size());
-    currentIndex = JVectorIndexSnapshot.build(stored);
-    logger().info("JVector 4.x HNSW index ready: {} vectors indexed", stored.size());
   }
 
   /**
@@ -221,19 +241,44 @@ public class EclipseStoreGigaMapJVectorBackend
   // ── Internal rebuild ──────────────────────────────────────────────────────
 
   /**
-   * Rebuilds the JVector HNSW index from the current EclipseStore GigaMap contents.
-   * Synchronised to prevent concurrent rebuilds; publishes the new index atomically.
+   * Rebuilds the JVector HNSW index if the persisted vectors changed since the last
+   * build. Concurrent callers wait for one rebuild instead of each starting their own.
    */
-  private void rebuildIndex() {
+  private void rebuildIfStale() {
+    if (!stale) return;
     synchronized (rebuildLock) {
+      if (!stale) return;
+      stale = false;
       Map<UUID, float[]> all = persistenceService.findAllRawVectors();
-      if (all.isEmpty()) {
-        currentIndex = null;
-        return;
-      }
-      currentIndex = JVectorIndexSnapshot.build(all);
-      logger().debug("JVector 4.x HNSW index rebuilt: {} vectors", all.size());
+      currentIndex = all.isEmpty() ? null : buildSnapshot(all);
+      logger().debug("JVector 4.x HNSW index rebuilt: {} vectors",
+                     currentIndex == null ? 0 : currentIndex.size());
     }
+  }
+
+  /**
+   * Builds a snapshot from the vectors with the most common dimension; vectors with
+   * another dimension are skipped and logged. Returns {@code null} if none remain.
+   */
+  private JVectorIndexSnapshot buildSnapshot(Map<UUID, float[]> vectors) {
+    Map<Integer, Long> byDimension = vectors.values().stream()
+        .filter(VectorMath::isUsable)
+        .collect(Collectors.groupingBy(v -> v.length, Collectors.counting()));
+    if (byDimension.isEmpty()) return null;
+    int dimension = byDimension.entrySet().stream()
+        .max(Map.Entry.comparingByValue())
+        .map(Map.Entry::getKey)
+        .orElseThrow();
+    Map<UUID, float[]> consistent = new LinkedHashMap<>();
+    vectors.forEach((id, v) -> {
+      if (VectorMath.isUsable(v) && v.length == dimension) consistent.put(id, v);
+    });
+    int skipped = vectors.size() - consistent.size();
+    if (skipped > 0) {
+      logger().warn("JVector index skipped {} vectors without dimension {} — rebuild the vector index "
+                        + "after changing the embedding model", skipped, dimension);
+    }
+    return JVectorIndexSnapshot.build(consistent, dimension);
   }
 
   // ── JVector index snapshot ────────────────────────────────────────────────
@@ -278,7 +323,7 @@ public class EclipseStoreGigaMapJVectorBackend
      * Each {@code float[]} is wrapped in a JVector {@link VectorFloat} via
      * {@link VectorizationProvider} so JVector can apply SIMD optimisations.
      */
-    static JVectorIndexSnapshot build(Map<UUID, float[]> vectors) {
+    static JVectorIndexSnapshot build(Map<UUID, float[]> vectors, int dim) {
       List<UUID> uuids = new ArrayList<>(vectors.size());
       List<VectorFloat<?>> vfList = new ArrayList<>(vectors.size());
 
@@ -288,7 +333,6 @@ public class EclipseStoreGigaMapJVectorBackend
       }
 
       int size = vfList.size();
-      int dim = vfList.get(0).length();
       FloatVectorValues ravv = new FloatVectorValues(vfList, dim);
 
       // JVector 4.x constructor: boolean addHierarchy enables the HNSW multi-layer structure
@@ -310,6 +354,14 @@ public class EclipseStoreGigaMapJVectorBackend
 
     boolean isEmpty() {
       return nodeToUuid.isEmpty();
+    }
+
+    int size() {
+      return nodeToUuid.size();
+    }
+
+    int dimension() {
+      return ravv.dimension();
     }
 
     /**

@@ -1,16 +1,21 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.imagerag.domain.CategoryConfidence;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SearchTuningConfig;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.SensitivityAssessment;
 import com.svenruppert.imagerag.domain.enums.RetrievalMode;
+import com.svenruppert.imagerag.dto.KeywordSearchHit;
+import com.svenruppert.imagerag.dto.VectorSearchHit;
 import com.svenruppert.imagerag.dto.WhyNotFoundAnalysis;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.EmbeddingService;
 import com.svenruppert.imagerag.service.KeywordIndexService;
 import com.svenruppert.imagerag.service.VectorIndexService;
 import com.svenruppert.imagerag.service.WhyNotFoundService;
+import com.svenruppert.imagerag.vector.RrfFusion;
+import com.svenruppert.imagerag.vector.VectorMath;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -26,17 +31,20 @@ import java.util.UUID;
  *   <li>Vector availability</li>
  *   <li>Semantic score (cosine between query embedding and image vector)</li>
  *   <li>BM25 score (keyword index lookup)</li>
- *   <li>Score fusion estimate</li>
+ *   <li>Fused score, computed with the same weighted RRF, normalisation and
+ *       confidence boost as the Search Tuning Lab ({@link SearchScoring})</li>
  *   <li>Score cutoff comparison</li>
  *   <li>Structural exclusions (category, risk, visibility)</li>
  * </ul>
+ * Relevance feedback is not part of the estimate.
  */
 public class WhyNotFoundServiceImpl
     implements WhyNotFoundService {
 
-  private static final int RRF_K = 60;
-  private static final int VECTOR_CANDS = 50;
-  private static final int KEYWORD_CANDS = 100;
+  /**
+   * Category-confidence ratio below which the primary category counts as ambiguous.
+   */
+  private static final double AMBIGUITY_THRESHOLD = 0.6;
 
   private final PersistenceService persistenceService;
   private final EmbeddingService embeddingService;
@@ -53,20 +61,6 @@ public class WhyNotFoundServiceImpl
     this.keywordIndexService = keywordIndexService;
   }
 
-  private static double cosineSimilarity(float[] a, float[] b) {
-    if (a == null || b == null || a.length != b.length) return 0.0;
-    double dot = 0, normA = 0, normB = 0;
-    for (int i = 0; i < a.length; i++) {
-      dot += (double) a[i] * b[i];
-      normA += (double) a[i] * a[i];
-      normB += (double) b[i] * b[i];
-    }
-    double denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom > 1e-9 ? dot / denom : 0.0;
-  }
-
-  // ── Helpers ──────────────────────────────────────────────────────────────
-
   @Override
   public WhyNotFoundAnalysis analyze(UUID imageId, String query, SearchTuningConfig config) {
 
@@ -75,7 +69,7 @@ public class WhyNotFoundServiceImpl
     String filename = assetOpt.map(ImageAsset::getOriginalFilename)
         .orElse(imageId.toString());
 
-    boolean archived = assetOpt.map(ImageAsset::isDeleted).orElse(false);
+    boolean archived = SearchScoring.isArchived(persistenceService, imageId);
     boolean approved = persistenceService.isApproved(imageId);
 
     List<String> exclusionReasons = new ArrayList<>();
@@ -89,52 +83,58 @@ public class WhyNotFoundServiceImpl
     }
 
     // ── Vector availability ───────────────────────────────────────────────
-    Optional<float[]> rawVec = persistenceService.findRawVector(imageId);
+    Optional<float[]> rawVec = persistenceService.findRawVector(imageId).filter(VectorMath::isUsable);
     boolean vectorAvailable = rawVec.isPresent();
     if (!vectorAvailable) {
       exclusionReasons.add("No embedding vector found — image may not have been indexed yet.");
     }
 
-    // ── Semantic score ────────────────────────────────────────────────────
-    double semanticScore = 0.0;
-    if (vectorAvailable && query != null && !query.isBlank()
-        && config.getRetrievalMode() != RetrievalMode.BM25_ONLY) {
-      try {
-        float[] queryVec = embeddingService.embed(query);
-        float[] imageVec = rawVec.get();
-        semanticScore = cosineSimilarity(queryVec, imageVec);
+    boolean hasQuery = query != null && !query.isBlank();
 
-        // Check where the image would rank in vector search
-        var vectorHits = vectorIndexService.search(queryVec, VECTOR_CANDS,
-                                                   config.getSimilarityFunction());
-        int vectorRank = -1;
-        for (int i = 0; i < vectorHits.size(); i++) {
-          if (imageId.equals(vectorHits.get(i).imageId())) {
-            vectorRank = i;
-            break;
-          }
-        }
-        if (vectorRank < 0) {
-          diagnosticNotes.add(String.format(
-              "Not in top %d vector candidates (semantic score %.3f — below retrieval threshold).",
-              VECTOR_CANDS, semanticScore));
+    // ── Semantic channel ──────────────────────────────────────────────────
+    double semanticScore = 0.0;
+    List<VectorSearchHit> vectorHits = List.of();
+    if (hasQuery && config.getRetrievalMode() != RetrievalMode.BM25_ONLY) {
+      try {
+        float[] queryVec = resolveQueryVector(query, config);
+        if (!VectorMath.isUsable(queryVec)) {
+          diagnosticNotes.add("Query embedding unavailable — semantic channel skipped.");
         } else {
-          diagnosticNotes.add(String.format(
-              "Vector rank: %d of %d candidates (semantic score %.3f).",
-              vectorRank + 1, vectorHits.size(), semanticScore));
+          vectorHits = vectorIndexService.search(queryVec, SearchScoring.VECTOR_CANDIDATES,
+                                                 config.getSimilarityFunction());
+          if (vectorAvailable) {
+            float[] imageVec = rawVec.get();
+            if (!VectorMath.compatible(queryVec, imageVec)) {
+              exclusionReasons.add(String.format(
+                  "Image vector dimension %d differs from query embedding dimension %d — "
+                      + "rebuild the vector index after changing the embedding model.",
+                  imageVec.length, queryVec.length));
+            }
+            semanticScore = VectorMath.cosine(queryVec, imageVec);
+          }
+          int vectorRank = indexOf(vectorHits.stream().map(VectorSearchHit::imageId).toList(), imageId);
+          if (vectorRank < 0) {
+            diagnosticNotes.add(String.format(
+                "Not in top %d vector candidates (semantic score %.3f — below retrieval threshold).",
+                SearchScoring.VECTOR_CANDIDATES, semanticScore));
+          } else {
+            diagnosticNotes.add(String.format(
+                "Vector rank: %d of %d candidates (semantic score %.3f).",
+                vectorRank + 1, vectorHits.size(), semanticScore));
+          }
         }
       } catch (Exception e) {
         diagnosticNotes.add("Could not compute semantic score: " + e.getMessage());
       }
     }
 
-    // ── BM25 score ────────────────────────────────────────────────────────
+    // ── Keyword channel ───────────────────────────────────────────────────
     double bm25Score = 0.0;
-    if (query != null && !query.isBlank()
-        && config.getRetrievalMode() != RetrievalMode.SEMANTIC_ONLY) {
+    List<KeywordSearchHit> keywordHits = List.of();
+    if (hasQuery && config.getRetrievalMode() != RetrievalMode.SEMANTIC_ONLY) {
       try {
-        var keywordHits = keywordIndexService.search(query, KEYWORD_CANDS);
-        for (var hit : keywordHits) {
+        keywordHits = keywordIndexService.search(query, SearchScoring.KEYWORD_CANDIDATES);
+        for (KeywordSearchHit hit : keywordHits) {
           if (imageId.equals(hit.imageId())) {
             bm25Score = hit.score();
             break;
@@ -143,7 +143,7 @@ public class WhyNotFoundServiceImpl
         if (bm25Score <= 0) {
           diagnosticNotes.add(String.format(
               "Not in top %d BM25 keyword candidates — no keyword overlap with query.",
-              KEYWORD_CANDS));
+              SearchScoring.KEYWORD_CANDIDATES));
         } else {
           diagnosticNotes.add(String.format("BM25 raw score: %.3f", bm25Score));
         }
@@ -152,27 +152,35 @@ public class WhyNotFoundServiceImpl
       }
     }
 
-    // ── Confidence boost ──────────────────────────────────────────────────
-    double confidenceBoost = 0.0;
-    if (config.getConfidenceWeight() > 0) {
-      var analysis = persistenceService.findAnalysis(imageId);
-      if (analysis.isPresent() && analysis.get().getCategoryConfidence() != null) {
-        double primaryScore = analysis.get().getCategoryConfidence().getPrimaryScore();
-        confidenceBoost = config.getConfidenceWeight() * primaryScore * 0.15;
-        diagnosticNotes.add(String.format(
-            "Category confidence: %.2f → confidence boost: +%.3f", primaryScore, confidenceBoost));
+    // ── Fused score — same formula as the tuning search ───────────────────
+    double estimatedFinal = 0.0;
+    if (hasQuery) {
+      SearchScoring.EffectiveWeights weights = SearchScoring.effectiveWeights(query, config);
+      List<RrfFusion.Candidate> fused = RrfFusion.fuse(
+          vectorHits.stream().map(VectorSearchHit::imageId).toList(),
+          keywordHits.stream().map(KeywordSearchHit::imageId).toList(),
+          weights.semantic(), weights.keyword(), RrfFusion.DEFAULT_K);
+      double norm = RrfFusion.normalizer(fused);
+      Optional<RrfFusion.Candidate> candidate = fused.stream()
+          .filter(c -> c.id().equals(imageId)).findFirst();
+      if (candidate.isPresent()) {
+        double baseScore = candidate.get().total() / norm;
+        CategoryConfidence cc = persistenceService.findAnalysis(imageId)
+            .map(SemanticAnalysis::getCategoryConfidence).orElse(null);
+        double boostFraction = SearchScoring.boostFraction(config.getConfidenceWeight(), cc);
+        estimatedFinal = SearchScoring.boosted(baseScore, config.getConfidenceWeight(), cc);
+        if (boostFraction > 0) {
+          diagnosticNotes.add(String.format(
+              "Category confidence %.2f → confidence boost ×%.3f",
+              cc.getPrimaryScore(), 1.0 + boostFraction));
+        }
+      } else {
+        diagnosticNotes.add("Image is in neither candidate list — fused score is 0.");
+      }
+      if (config.isFeedbackEnabled()) {
+        diagnosticNotes.add("Relevance feedback is not included in this estimate.");
       }
     }
-
-    // ── Estimate combined score ───────────────────────────────────────────
-    // Simplified RRF — single-candidate approximation
-    double semRrf = semanticScore > 0.01 ? config.getSemanticWeight() / (RRF_K + 1.0) : 0;
-    double bm25Rrf = bm25Score > 0.01 ? config.getBm25Weight() / (RRF_K + 1.0) : 0;
-    double totalRrf = semRrf + bm25Rrf;
-    // Normalise to 0–1 range approximation
-    double maxPossibleRrf = (config.getSemanticWeight() + config.getBm25Weight()) / (RRF_K + 1.0);
-    double normalised = maxPossibleRrf > 0 ? totalRrf / maxPossibleRrf : 0;
-    double estimatedFinal = Math.min(1.0, normalised + confidenceBoost);
 
     boolean aboveThreshold = estimatedFinal >= config.getScoreCutoff();
 
@@ -191,7 +199,7 @@ public class WhyNotFoundServiceImpl
         diagnosticNotes.add("Primary category: " + analysis.getSourceCategory().name());
       }
       var conf = analysis.getCategoryConfidence();
-      if (conf != null && conf.isAmbiguous(0.6)) {
+      if (conf != null && conf.isAmbiguous(AMBIGUITY_THRESHOLD)) {
         conf.getBetterAlternative().ifPresent(alt ->
                                                   diagnosticNotes.add(String.format(
                                                       "Ambiguous category confidence — alternative: %s (%.0f%%)",
@@ -207,6 +215,23 @@ public class WhyNotFoundServiceImpl
         List.copyOf(exclusionReasons),
         List.copyOf(diagnosticNotes),
         vectorAvailable);
+  }
+
+  /**
+   * Mirrors the tuning search: a query-by-example image vector takes priority over
+   * the text embedding.
+   */
+  private float[] resolveQueryVector(String query, SearchTuningConfig config) {
+    UUID qbeId = config.getQueryByExampleImageId();
+    if (qbeId != null) {
+      Optional<float[]> qbe = persistenceService.findRawVector(qbeId).filter(VectorMath::isUsable);
+      if (qbe.isPresent()) return qbe.get();
+    }
+    return embeddingService.embed(query);
+  }
+
+  private static int indexOf(List<UUID> ranking, UUID imageId) {
+    return ranking.indexOf(imageId);
   }
 
   private void analyseStructuralFilters(UUID imageId, List<String> notes) {

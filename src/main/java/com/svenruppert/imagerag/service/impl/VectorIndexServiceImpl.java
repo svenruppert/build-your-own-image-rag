@@ -4,6 +4,7 @@ import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.enums.SimilarityFunction;
 import com.svenruppert.imagerag.dto.VectorSearchHit;
 import com.svenruppert.imagerag.service.VectorIndexService;
+import com.svenruppert.imagerag.vector.VectorMath;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -20,7 +21,7 @@ public class VectorIndexServiceImpl
 
   @Override
   public void index(UUID imageId, float[] vector) {
-    if (vector == null || vector.length == 0) {
+    if (!VectorMath.isUsable(vector)) {
       logger().warn("Skipping indexing for {} — empty vector", imageId);
       return;
     }
@@ -35,19 +36,27 @@ public class VectorIndexServiceImpl
 
   @Override
   public List<VectorSearchHit> search(float[] queryVector, int limit, SimilarityFunction fn) {
-    if (queryVector == null || queryVector.length == 0 || store.isEmpty()) {
+    if (!VectorMath.isUsable(queryVector) || store.isEmpty()) {
       return List.of();
     }
 
     List<VectorSearchHit> results = new ArrayList<>(store.size());
-
+    int skipped = 0;
     for (Map.Entry<UUID, float[]> entry : store.entrySet()) {
+      if (!VectorMath.compatible(queryVector, entry.getValue())) {
+        skipped++;
+        continue;
+      }
       double score = switch (fn) {
-        case COSINE -> cosineSimilarity(queryVector, entry.getValue());
-        case DOT_PRODUCT -> dotProduct(queryVector, entry.getValue());
-        case EUCLIDEAN -> euclideanSimilarity(queryVector, entry.getValue());
+        case COSINE -> VectorMath.cosine(queryVector, entry.getValue());
+        case DOT_PRODUCT -> VectorMath.dot(queryVector, entry.getValue());
+        case EUCLIDEAN -> VectorMath.euclideanSimilarity(queryVector, entry.getValue());
       };
       results.add(new VectorSearchHit(entry.getKey(), score));
+    }
+    if (skipped > 0) {
+      logger().warn("Skipped {} stored vectors whose dimension differs from the query (dim={})",
+                    skipped, queryVector.length);
     }
 
     results.sort(Comparator.naturalOrder()); // VectorSearchHit.compareTo() = descending
@@ -57,45 +66,5 @@ public class VectorIndexServiceImpl
   @Override
   public void remove(UUID imageId) {
     store.remove(imageId);
-  }
-
-  // ── Similarity functions ──────────────────────────────────────────────────
-
-  private double cosineSimilarity(float[] a, float[] b) {
-    int len = Math.min(a.length, b.length);
-    double dot = 0.0, normA = 0.0, normB = 0.0;
-    for (int i = 0; i < len; i++) {
-      dot += (double) a[i] * b[i];
-      normA += (double) a[i] * a[i];
-      normB += (double) b[i] * b[i];
-    }
-    double denom = Math.sqrt(normA) * Math.sqrt(normB);
-    return denom < 1e-10 ? 0.0 : dot / denom;
-  }
-
-  /**
-   * Raw inner product — scale-sensitive; equivalent to cosine for unit-norm vectors.
-   */
-  private double dotProduct(float[] a, float[] b) {
-    int len = Math.min(a.length, b.length);
-    double dot = 0.0;
-    for (int i = 0; i < len; i++) {
-      dot += (double) a[i] * b[i];
-    }
-    return dot;
-  }
-
-  /**
-   * L2 distance converted to a similarity in (0, 1]: {@code 1 / (1 + L2)}.
-   * Smaller distance → score closer to 1.0.
-   */
-  private double euclideanSimilarity(float[] a, float[] b) {
-    int len = Math.min(a.length, b.length);
-    double sumSq = 0.0;
-    for (int i = 0; i < len; i++) {
-      double diff = (double) a[i] - b[i];
-      sumSq += diff * diff;
-    }
-    return 1.0 / (1.0 + Math.sqrt(sumSq));
   }
 }

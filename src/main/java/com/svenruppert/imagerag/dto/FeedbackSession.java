@@ -1,6 +1,7 @@
 package com.svenruppert.imagerag.dto;
 
 import com.svenruppert.imagerag.domain.enums.FeedbackType;
+import com.svenruppert.imagerag.vector.VectorMath;
 
 import java.util.*;
 
@@ -28,17 +29,6 @@ public class FeedbackSession {
   private final Map<UUID, FeedbackEntry> entries = new LinkedHashMap<>();
 
   // ── Public mutation API (call on UI thread only) ──────────────────────────
-
-  private static double cosineSimilarity(float[] a, float[] b) {
-    double dot = 0.0, na = 0.0, nb = 0.0;
-    for (int i = 0; i < a.length; i++) {
-      dot += (double) a[i] * b[i];
-      na += (double) a[i] * a[i];
-      nb += (double) b[i] * b[i];
-    }
-    double denom = Math.sqrt(na) * Math.sqrt(nb);
-    return denom < 1e-9 ? 0.0 : dot / denom;
-  }
 
   /**
    * Adds or replaces a feedback mark for the given image.
@@ -123,8 +113,8 @@ public class FeedbackSession {
     double score = 0.0;
     for (FeedbackEntry entry : entries.values()) {
       float[] ev = entry.vector();
-      if (ev.length == 0 || ev.length != candidateVector.length) continue;
-      double sim = cosineSimilarity(candidateVector, ev);
+      if (!VectorMath.compatible(candidateVector, ev)) continue;
+      double sim = VectorMath.cosine(candidateVector, ev);
       score += switch (entry.type()) {
         case GOOD -> sim;
         case MORE_LIKE_THIS -> 2.0 * sim;

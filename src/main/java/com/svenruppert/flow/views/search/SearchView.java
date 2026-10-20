@@ -225,7 +225,9 @@ public class SearchView
       progressTask = null;
     }
     if (progressScheduler != null) {
-      progressScheduler.shutdownNow();
+      // shutdown(), not shutdownNow(): onPoll() calls this method on the scheduler's own
+      // thread, and interrupting that thread makes the following EclipseStore write fail.
+      progressScheduler.shutdown();
       progressScheduler = null;
     }
   }
@@ -442,18 +444,23 @@ public class SearchView
       planEditor.populate(s.plan);
     }
 
+    // Show results only when the full search pipeline ran
+    if (!s.transformOnly) {
+      resultsPanel.showResults(s.results != null ? s.results : List.of());
+    }
+
     // Persist to history after completion — captures original + final LLM query.
     // Only fresh searches (not refinements) are stored; originalQuery is null for refine.
     if (s.originalQuery != null && !s.originalQuery.isBlank()) {
       String finalQuery = s.plan != null ? s.plan.getEmbeddingText() : null;
-      services.searchHistory()
-          .addRecentSearch(s.originalQuery, finalQuery, s.mode);
-      recentSearchBar.refresh();
-    }
-
-    // Show results only when the full search pipeline ran
-    if (!s.transformOnly) {
-      resultsPanel.showResults(s.results != null ? s.results : List.of());
+      try {
+        services.searchHistory()
+            .addRecentSearch(s.originalQuery, finalQuery, s.mode);
+        recentSearchBar.refresh();
+      } catch (RuntimeException e) {
+        // The history is a convenience; a failed write must not hide the search results.
+        logger().warn("Could not store search in history: {}", e.getMessage(), e);
+      }
     }
   }
 

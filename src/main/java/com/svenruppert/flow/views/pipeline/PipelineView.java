@@ -281,7 +281,8 @@ public class PipelineView
       refreshTask = null;
     }
     if (scheduler != null) {
-      scheduler.shutdownNow();
+      // shutdown(), not shutdownNow(): never interrupt a refresh that is running right now.
+      scheduler.shutdown();
       scheduler = null;
     }
   }

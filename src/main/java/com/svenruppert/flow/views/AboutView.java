@@ -12,13 +12,15 @@ import com.vaadin.flow.component.orderedlayout.FlexComponent.Alignment;
 import com.vaadin.flow.component.orderedlayout.FlexLayout;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 import org.jspecify.annotations.NonNull;
 
 @Route(value = AboutView.PATH, layout = MainLayout.class)
 @CssImport("./styles/about-view.css")
 public class AboutView
-    extends Composite<Div> {
+    extends Composite<Div>
+    implements HasDynamicTitle {
 
   public static final String PATH = "about";
 
@@ -30,6 +32,11 @@ public class AboutView
   private static final String C_LINK = "about-link";
   private static final String C_IMG_ICON = "about-link__imgicon";
   private static final String C_ICONROW = "about-iconrow";
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("about.title");
+  }
 
   public AboutView() {
     Div root = getContent();

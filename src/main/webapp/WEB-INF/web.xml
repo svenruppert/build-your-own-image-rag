@@ -7,6 +7,12 @@
     <servlet>
         <servlet-name>Vaadin Servlet</servlet-name>
         <servlet-class>com.svenruppert.flow.AppServlet</servlet-class>
+        <!-- Vaadin 25 reads the I18NProvider only from this init parameter;
+             a META-INF/services entry is ignored and DefaultI18NProvider is used instead. -->
+        <init-param>
+            <param-name>i18n.provider</param-name>
+            <param-value>com.svenruppert.flow.i18n.TranslationProvider</param-value>
+        </init-param>
         <async-supported>true</async-supported>
         <load-on-startup>1</load-on-startup>
     </servlet>

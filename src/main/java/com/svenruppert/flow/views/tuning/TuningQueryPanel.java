@@ -75,7 +75,7 @@ class TuningQueryPanel
     qbeRow.setSpacing(false);
     qbeRow.getStyle().set("gap", "0.3rem");
 
-    // Presets row (save + load side by side)
+    // Presets: save and load stacked — side by side, the German labels overflow the 240 px panel
     Button saveBtn = new Button(getTranslation("tuning.preset.save"));
     saveBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_SMALL);
     saveBtn.setWidthFull();
@@ -86,11 +86,6 @@ class TuningQueryPanel
     loadBtn.setWidthFull();
     loadBtn.addClickListener(e -> onLoadPreset.run());
 
-    HorizontalLayout presetsRow = new HorizontalLayout(saveBtn, loadBtn);
-    presetsRow.setWidthFull();
-    presetsRow.setSpacing(false);
-    presetsRow.getStyle().set("gap", "0.3rem");
-
     add(
         queryField,
         runBtn,
@@ -98,7 +93,7 @@ class TuningQueryPanel
         separator(),
         sectionLabel(getTranslation("tuning.qbe.label")), qbeRow,
         separator(),
-        sectionLabel(getTranslation("tuning.presets")), presetsRow
+        sectionLabel(getTranslation("tuning.presets")), saveBtn, loadBtn
     );
   }
 

@@ -35,6 +35,10 @@ public class AppInitializer
     // the first one still holds the Lucene NativeFSLock, causing OverlappingFileLockException.
     event.getSource().addServiceDestroyListener(e -> ServiceRegistry.shutdown());
 
+    // Makes a missing or wrong i18n.provider registration visible at startup.
+    logger().info("I18NProvider in use: {}",
+                  event.getSource().getInstantiator().getI18NProvider().getClass().getName());
+
     // Restore the user's chosen locale on every new UI creation (includes page reloads).
     event.getSource().addUIInitListener(uiEvent -> {
       VaadinSession session = uiEvent.getUI().getSession();

@@ -7,12 +7,12 @@ import com.svenruppert.imagerag.dto.FeedbackSession;
 import com.svenruppert.imagerag.dto.SearchStrategyPlan;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.html.Span;
-import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.component.textfield.NumberField;
 
+import java.util.List;
 import java.util.UUID;
 
 import static com.svenruppert.flow.views.tuning.TuningStyles.controlSection;
@@ -66,11 +66,8 @@ class TuningParameterPanel
     configureWeightField(confidenceWeightField, getTranslation("tuning.weight.confidence"),
                          SearchTuningConfig.DEFAULT_CONFIDENCE_WEIGHT, 0.0, 1.0, 0.05);
 
-    HorizontalLayout semBm25Row = new HorizontalLayout(semanticWeightField, bm25WeightField);
-    semBm25Row.setWidthFull();
-    semBm25Row.setSpacing(false);
-    semBm25Row.getStyle().set("gap", "0.35rem");
-    add(controlSection(getTranslation("tuning.weights"), semBm25Row, confidenceWeightField));
+    add(controlSection(getTranslation("tuning.weights"),
+                       pairRow(semanticWeightField, bm25WeightField), confidenceWeightField));
 
     // Relevance feedback: toggle + weight field side by side
     configureWeightField(feedbackWeightField, getTranslation("tuning.feedback.weight"),
@@ -80,12 +77,8 @@ class TuningParameterPanel
     feedbackToggle.addValueChangeListener(e ->
                                               feedbackWeightField.setEnabled(Boolean.TRUE.equals(e.getValue())));
 
-    HorizontalLayout fbRow = new HorizontalLayout(feedbackToggle, feedbackWeightField);
-    fbRow.setAlignItems(FlexComponent.Alignment.BASELINE);
-    fbRow.setWidthFull();
-    fbRow.setSpacing(false);
-    fbRow.getStyle().set("gap", "0.5rem");
-    add(controlSection(getTranslation("tuning.feedback"), fbRow));
+    // Stacked: side by side, the field does not fit into the 280 px panel.
+    add(controlSection(getTranslation("tuning.feedback"), feedbackToggle, feedbackWeightField));
 
     // Query intent: toggle + compact hint
     intentToggle.setValue(false);
@@ -120,11 +113,23 @@ class TuningParameterPanel
     maxResultsField.setStepButtonsVisible(true);
     maxResultsField.setWidthFull();
 
-    HorizontalLayout cutoffRow = new HorizontalLayout(scoreCutoffField, maxResultsField);
-    cutoffRow.setWidthFull();
-    cutoffRow.setSpacing(false);
-    cutoffRow.getStyle().set("gap", "0.35rem");
-    add(controlSection(getTranslation("tuning.cutoff.section"), cutoffRow));
+    add(controlSection(getTranslation("tuning.cutoff.section"),
+                       pairRow(scoreCutoffField, maxResultsField)));
+  }
+
+  /**
+   * Places two number fields side by side so that both shrink to share the panel width;
+   * without min-width 0 the fields keep their default width and overflow the panel.
+   */
+  private static HorizontalLayout pairRow(NumberField left, NumberField right) {
+    for (NumberField field : List.of(left, right)) {
+      field.getStyle().set("flex", "1 1 0").set("min-width", "0");
+    }
+    HorizontalLayout row = new HorizontalLayout(left, right);
+    row.setWidthFull();
+    row.setSpacing(false);
+    row.getStyle().set("gap", "0.35rem");
+    return row;
   }
 
   /**

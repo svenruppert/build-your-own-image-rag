@@ -6,9 +6,12 @@ import com.svenruppert.imagerag.domain.CategoryConfidence;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SearchTuningConfig;
 import com.svenruppert.imagerag.domain.enums.QueryIntentType;
+import com.svenruppert.imagerag.dto.KeywordSearchHit;
+import com.svenruppert.imagerag.dto.VectorSearchHit;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.QueryIntentResolver;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -94,6 +97,20 @@ final class SearchScoring {
    */
   static boolean isArchived(PersistenceService persistence, UUID imageId) {
     return persistence.findImage(imageId).map(ImageAsset::isDeleted).orElse(false);
+  }
+
+  /**
+   * Image ids of vector hits in rank order.
+   */
+  static List<UUID> vectorIds(List<VectorSearchHit> hits) {
+    return hits.stream().map(VectorSearchHit::imageId).toList();
+  }
+
+  /**
+   * Image ids of keyword hits in rank order.
+   */
+  static List<UUID> keywordIds(List<KeywordSearchHit> hits) {
+    return hits.stream().map(KeywordSearchHit::imageId).toList();
   }
 
   /**

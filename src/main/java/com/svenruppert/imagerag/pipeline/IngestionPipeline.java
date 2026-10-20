@@ -1,7 +1,9 @@
 package com.svenruppert.imagerag.pipeline;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.imagerag.domain.*;
+import com.svenruppert.imagerag.domain.enums.RecommendedStorageMode;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.dto.ExtractedMetadata;
 import com.svenruppert.imagerag.dto.KeywordIndexDocument;
@@ -21,24 +23,38 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Sequential async ingestion pipeline.
- * <p>Images are submitted via {@link #submit} and processed <em>one at a time</em>
- * on a single virtual-thread-backed executor, ensuring the LLM is never overwhelmed
- * by concurrent requests. Each job can be cancelled via {@link #cancel}.
- * <p>All submitted jobs are kept in a {@link CopyOnWriteArrayList} so the
- * {@link com.svenruppert.flow.views.pipeline.PipelineView} can read them
- * safely without locks at any time.
+ * Asynchronous ingestion pipeline for uploads and reprocessing jobs.
+ * <p>Jobs run on a bounded executor of virtual threads; the number of concurrent workers
+ * is set via {@link #updateParallelism} (1 to {@value #MAX_PARALLELISM}). Each job can be
+ * cancelled via {@link #cancel}, and the whole pipeline can be paused between steps.
+ * <p>Jobs are kept in a {@link CopyOnWriteArrayList} so the pipeline view can read them
+ * without locks. Only the most recent {@value #MAX_FINISHED_JOBS} finished jobs are kept.
  */
 public class IngestionPipeline
     implements HasLogger {
 
+  /**
+   * Upper bound for the number of concurrent ingestion workers.
+   */
+  public static final int MAX_PARALLELISM = 6;
+  /**
+   * Number of finished (terminal) jobs kept for display; older ones are pruned.
+   */
+  public static final int MAX_FINISHED_JOBS = 200;
+  /**
+   * Note added to the sensitivity assessment when the vision analysis failed.
+   */
+  static final String VISION_FAILED_NOTE =
+      "Vision analysis failed — content was not analyzed, manual review required";
+
   private final List<IngestionJob> jobs = new CopyOnWriteArrayList<>();
-  // Pause/resume support
-  private final AtomicBoolean paused = new AtomicBoolean(false);
-  private final Semaphore pauseSemaphore = new Semaphore(1);
+  /**
+   * Guards {@link #paused}; workers wait on it while the pipeline is paused.
+   */
+  private final Object pauseMonitor = new Object();
+  private boolean paused;
   private final ImageStorageService imageStorageService;
   private final MetadataExtractionService metadataExtractionService;
   private final ReverseGeocodingService reverseGeocodingService;
@@ -51,19 +67,19 @@ public class IngestionPipeline
   private final KeywordIndexService keywordIndexService;
   private final OllamaConfig ollamaConfig;
   /**
-   * Maps each job's UUID to the {@link FutureTask} that was submitted to the executor.
-   * Used by {@link #promote} to locate and reorder the task in the work queue.
+   * Maps each queued or running job's UUID to its {@link FutureTask}.
+   * Used by {@link #promote} to locate and reorder the task in the work queue;
+   * entries are removed when the task finishes.
    */
   private final ConcurrentHashMap<UUID, FutureTask<?>> taskMap = new ConcurrentHashMap<>();
   /**
-   * Work queue for the current executor.  Using {@link LinkedBlockingDeque} instead of a
-   * plain {@link LinkedBlockingQueue} allows {@link #promote} to move a queued task to the
-   * front of the deque so it executes before other pending tasks.
+   * Work queue for the current executor. A {@link LinkedBlockingDeque} allows
+   * {@link #promote} to move a queued task to the front.
    */
   private volatile LinkedBlockingDeque<Runnable> workQueue = new LinkedBlockingDeque<>();
   /**
    * Worker executor — size reflects the current ingestion parallelism setting.
-   * Initially sequential (1 thread).  Call {@link #updateParallelism} to resize.
+   * Initially sequential (1 thread). Call {@link #updateParallelism} to resize.
    */
   private volatile ThreadPoolExecutor executor = buildThreadPoolExecutor(1, workQueue);
 
@@ -90,10 +106,6 @@ public class IngestionPipeline
     this.keywordIndexService = keywordIndexService;
     this.ollamaConfig = ollamaConfig;
   }
-
-  // -------------------------------------------------------------------------
-  // Public API
-  // -------------------------------------------------------------------------
 
   /**
    * Throws {@link InterruptedException} if the worker thread has been interrupted,
@@ -124,41 +136,52 @@ public class IngestionPipeline
     }
   }
 
+  /**
+   * Checkpoint between pipeline steps: fails fast on cancellation and blocks while the
+   * pipeline is paused. A cancellation during the pause ends the wait with an
+   * {@link InterruptedException}.
+   */
   private void checkPauseOrCancelled()
       throws InterruptedException {
     checkCancelled();
-    if (paused.get()) {
-      try {
-        pauseSemaphore.acquire();
-        pauseSemaphore.release();
-      } catch (InterruptedException e) {
-        throw new InterruptedException("Pipeline job cancelled during pause");
+    synchronized (pauseMonitor) {
+      while (paused) {
+        pauseMonitor.wait();
       }
     }
   }
 
+  // -------------------------------------------------------------------------
+  // Public API
+  // -------------------------------------------------------------------------
+
+  /**
+   * Pauses the pipeline: running jobs stop at their next checkpoint, queued jobs wait.
+   * Idempotent and safe to call from several threads.
+   */
   public void pause() {
-    paused.set(true);
-    try {
-      pauseSemaphore.acquire();
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
+    synchronized (pauseMonitor) {
+      paused = true;
     }
     logger().info("Pipeline paused");
   }
 
   public void resume() {
-    paused.set(false);
-    pauseSemaphore.release();
+    synchronized (pauseMonitor) {
+      paused = false;
+      pauseMonitor.notifyAll();
+    }
     logger().info("Pipeline resumed");
   }
 
   public boolean isPaused() {
-    return paused.get();
+    synchronized (pauseMonitor) {
+      return paused;
+    }
   }
 
   /**
-   * Submits an image for sequential async processing.
+   * Submits an image for async processing.
    * The InputStream is buffered immediately so the caller (Vaadin Upload handler)
    * can return without risk of the stream being closed.
    *
@@ -168,27 +191,18 @@ public class IngestionPipeline
       throws IOException {
     byte[] data = inputStream.readAllBytes();
     IngestionJob job = new IngestionJob(filename, mimeType);
-    jobs.add(job);
-    FutureTask<Void> task = new FutureTask<>(() -> {
-      process(job, data);
-      return null;
-    });
-    taskMap.put(job.getJobId(), task);
-    executor.execute(task);
-    job.setFuture(task);
+    enqueue(job, () -> process(job, data), null);
     logger().info("Job queued: {} ({})", filename, job.getJobId());
     return job;
   }
 
   /**
    * Submits an image for processing from a temp file written by the upload component.
-   * <p>Unlike {@link #submit}, no bytes are read here — the temp file path is simply
-   * captured in the job closure.  The pipeline reads the file from disk only when the
-   * job actually starts (i.e. a worker slot is free), keeping peak memory consumption
-   * at {@code parallelism × max_file_size} instead of {@code queued_files × max_file_size}.
-   * The temp file is deleted immediately after the bytes are read.
+   * <p>No bytes are read here — the pipeline reads the file only when the job starts,
+   * keeping peak memory at {@code parallelism × max_file_size}. The temp file is deleted
+   * right after it was read, or when the job is cancelled before it started.
    *
-   * @param tempFile path to the temp file written by Vaadin's {@code MultiFileBuffer}
+   * @param tempFile path to the temp file written by the upload component
    * @param filename original filename shown to the user
    * @param mimeType MIME type of the uploaded image
    * @return the created {@link IngestionJob} for status tracking
@@ -196,26 +210,16 @@ public class IngestionPipeline
   public IngestionJob submitFromPath(Path tempFile, String filename, String mimeType)
       throws IOException {
     IngestionJob job = new IngestionJob(filename, mimeType);
-    jobs.add(job);
-    FutureTask<Void> task = new FutureTask<>(() -> {
-      processFromPath(job, tempFile);
-      return null;
-    });
-    taskMap.put(job.getJobId(), task);
-    executor.execute(task);
-    job.setFuture(task);
+    enqueue(job, () -> processFromPath(job, tempFile), () -> deleteTempFile(job, tempFile));
     logger().info("Job queued (from path): {} ({})", filename, job.getJobId());
     return job;
   }
 
   /**
    * Submits a reprocessing job for an already-stored image asset.
-   * <p>Unlike {@link #submit}, no bytes are read from a stream — the image file already
-   * exists on disk.  The job skips file storage and duplicate detection and re-runs only
-   * the AI-heavy stages: vision analysis, semantic derivation, sensitivity assessment,
-   * embedding, and vector index update.
-   * <p>The job is visible in the pipeline UI just like a regular upload job but carries
-   * {@link JobType#REPROCESS_EXISTING} to distinguish it from uploads.
+   * <p>The job skips file storage and duplicate detection and re-runs the AI-heavy
+   * stages: OCR, vision analysis, semantic derivation, sensitivity assessment,
+   * embedding, vector and keyword indexing. It carries {@link JobType#REPROCESS_EXISTING}.
    *
    * @param asset the image asset to reprocess; must already exist in the image store
    * @return the created {@link IngestionJob} for status tracking
@@ -223,14 +227,7 @@ public class IngestionPipeline
   public IngestionJob submitReprocess(ImageAsset asset) {
     IngestionJob job = new IngestionJob(asset.getOriginalFilename(), asset.getMimeType(),
                                         JobType.REPROCESS_EXISTING);
-    jobs.add(job);
-    FutureTask<Void> task = new FutureTask<>(() -> {
-      reprocess(job, asset);
-      return null;
-    });
-    taskMap.put(job.getJobId(), task);
-    executor.execute(task);
-    job.setFuture(task);
+    enqueue(job, () -> reprocess(job, asset), null);
     logger().info("Reprocess job queued: {} ({})", asset.getOriginalFilename(), job.getJobId());
     return job;
   }
@@ -244,7 +241,6 @@ public class IngestionPipeline
     }
     UUID imageId = failedJob.getResultImageId();
     if (imageId != null) {
-      // Image was stored — reprocess it
       return persistenceService.findImage(imageId)
           .map(this::submitReprocess)
           .orElseThrow(() -> new IllegalStateException("Image not found for retry"));
@@ -264,15 +260,11 @@ public class IngestionPipeline
   }
 
   /**
-   * Returns an unmodifiable live view of all jobs (newest-last).
+   * Returns an unmodifiable live view of all retained jobs (newest-last).
    */
   public List<IngestionJob> getAllJobs() {
     return Collections.unmodifiableList(jobs);
   }
-
-  // -------------------------------------------------------------------------
-  // Pipeline orchestration — runs on the single worker thread, never on UI thread
-  // -------------------------------------------------------------------------
 
   public long countByStep(JobStep step) {
     return jobs.stream().filter(j -> j.getCurrentStep() == step).count();
@@ -281,34 +273,25 @@ public class IngestionPipeline
   /**
    * Dynamically changes the number of concurrent ingestion workers.
    * <p>The current executor is shut down gracefully (already-running and queued
-   * jobs will still complete on it).  A new executor with the requested thread
-   * count is installed for future submissions.  The value is clamped to [1, 6].
+   * jobs still complete on it). A new executor with the requested thread count is
+   * installed for future submissions. The value is clamped to [1, {@value #MAX_PARALLELISM}].
    *
    * @param parallelism desired number of concurrent workers
    */
   public synchronized void updateParallelism(int parallelism) {
-    int clamped = Math.clamp(parallelism, 1, 6);
+    int clamped = Math.clamp(parallelism, 1, MAX_PARALLELISM);
     ThreadPoolExecutor old = executor;
-    // Create a fresh queue so the old executor can drain its queue without interference
-    // from the new executor.  Tasks already in the old queue complete on old executor threads.
-    // promote() references workQueue via a volatile read, so newly submitted tasks get the
-    // new queue automatically.
+    // A fresh queue lets the old executor drain its queue without interference.
+    // promote() reads workQueue via a volatile read, so new submissions use the new queue.
     workQueue = new LinkedBlockingDeque<>();
     executor = buildThreadPoolExecutor(clamped, workQueue);
-    old.shutdown(); // lets already-submitted jobs finish; no new work accepted
+    old.shutdown();
     logger().info("Ingestion parallelism updated to {}", clamped);
   }
 
-  // -------------------------------------------------------------------------
-  // SHA-256 helper — used for duplicate detection from raw byte array
-  // -------------------------------------------------------------------------
-
   /**
    * Promotes a QUEUED job to the front of the work queue so it executes next.
-   * <p>Implementation: the job's {@link FutureTask} is looked up in the task map, removed
-   * from wherever it sits in the {@link LinkedBlockingDeque}, and re-inserted at the head.
-   * If the task has already been picked up by a worker thread (i.e. is already running),
-   * the deque no longer contains it and this method is a safe no-op.
+   * If the task has already been picked up by a worker thread, this is a safe no-op.
    *
    * @param job the job to promote; must currently be in {@link JobStep#QUEUED} state
    */
@@ -323,9 +306,7 @@ public class IngestionPipeline
       logger().warn("No task found for job {} — cannot promote", job.getFilename());
       return;
     }
-    // Remove from current position and push to the front (next to execute).
-    // workQueue may have been replaced by updateParallelism(); in that case remove() returns false
-    // and we log accordingly — this is a safe, benign race condition.
+    // workQueue may have been replaced by updateParallelism(); then remove() returns false.
     LinkedBlockingDeque<Runnable> q = workQueue;
     if (q.remove(task)) {
       q.addFirst(task);
@@ -341,128 +322,58 @@ public class IngestionPipeline
     executor.shutdownNow();
   }
 
-  private void reprocess(IngestionJob job, ImageAsset asset) {
-    UUID imageId = asset.getId();
+  // -------------------------------------------------------------------------
+  // Job bookkeeping
+  // -------------------------------------------------------------------------
 
-    // ── Snapshot pre-reprocessing state for diff computation ──────────────────
-    SemanticAnalysis previousAnalysis = persistenceService.findAnalysis(imageId).orElse(null);
-    SensitivityAssessment previousAssessment = persistenceService.findAssessment(imageId).orElse(null);
-    OcrResult previousOcr = persistenceService.findOcrResult(imageId).orElse(null);
-
-    // Working variables assigned during the pipeline steps
-    SemanticAnalysis semanticAnalysis = null;
-    SensitivityAssessment assessment = null;
-    OcrResult ocrResult = null;
-
-    try {
-      // Step 1: Load image from disk
-      checkPauseOrCancelled();
-      job.transition(JobStep.LOADING_IMAGE);
-      java.nio.file.Path imagePath = imageStorageService.resolvePath(imageId);
-      logger().info("[reprocess][{}] Loading image from {}", asset.getOriginalFilename(), imagePath);
-
-      // Step 2: Vision analysis (LLM — slow)
-      checkPauseOrCancelled();
-      job.transition(JobStep.ANALYZING_VISION);
-      VisionAnalysisResponse visionResponse =
-          visionAnalysisService.analyzeImage(imagePath);
-      logger().info("[reprocess][{}] Vision done (successful={})",
-                    asset.getOriginalFilename(), visionResponse.successful());
-
-      // Step 3: Semantic derivation — overwrites existing analysis
-      checkPauseOrCancelled();
-      job.transition(JobStep.DERIVING_SEMANTICS);
-      semanticAnalysis = semanticDerivationService.derive(imageId, visionResponse);
-      persistenceService.saveAnalysis(imageId, semanticAnalysis);
-
-      // Step 4: Sensitivity assessment — re-evaluate using stored metadata/location
-      checkPauseOrCancelled();
-      job.transition(JobStep.ASSESSING_SENSITIVITY);
-      ImageMetadataInfo metadataInfo = persistenceService.findMetadata(imageId).orElse(null);
-      LocationSummary locationSummary = persistenceService.findLocation(imageId).orElse(null);
-      assessment = sensitivityAssessmentService.assess(
-          asset, metadataInfo, locationSummary, semanticAnalysis);
-      persistenceService.saveAssessment(imageId, assessment);
-      logger().info("[reprocess][{}] Risk: {} | Flags: {}",
-                    asset.getOriginalFilename(), assessment.getRiskLevel(), assessment.getFlags());
-
-      // Re-evaluate visibility — intentionally resets any prior manual approval/lock.
-      // SAFE → auto-approved; other → locked (requires manual approval in Overview).
-      if (assessment.getRiskLevel() == RiskLevel.SAFE) {
-        persistenceService.approveImage(imageId);
-        logger().info("[reprocess][{}] Auto-approved (SAFE)", asset.getOriginalFilename());
-      } else {
-        persistenceService.unapproveImage(imageId);
-        logger().info("[reprocess][{}] Locked ({} risk)",
-                      asset.getOriginalFilename(), assessment.getRiskLevel());
+  /**
+   * Registers the job and hands its work to the executor.
+   *
+   * @param onCancelled runs when the task is cancelled (also before it started); may be null
+   */
+  private void enqueue(IngestionJob job, Runnable work, Runnable onCancelled) {
+    jobs.add(job);
+    FutureTask<Void> task = new FutureTask<>(work, null) {
+      @Override
+      protected void done() {
+        taskMap.remove(job.getJobId());
+        if (isCancelled() && onCancelled != null) {
+          onCancelled.run();
+        }
+        pruneFinishedJobs();
       }
-
-      // Step 5: Embedding
-      checkPauseOrCancelled();
-      job.transition(JobStep.EMBEDDING);
-      String embeddingText = buildEmbeddingText(semanticAnalysis);
-      float[] vector = embeddingService.embed(embeddingText);
-
-      // Step 6: Vector index — remove stale entry, insert fresh one
-      if (vector != null && vector.length > 0) {
-        checkPauseOrCancelled();
-        job.transition(JobStep.INDEXING);
-        vectorIndexService.remove(imageId);
-        vectorIndexService.index(imageId, vector);
-        VectorEntry entry = new VectorEntry(imageId, ollamaConfig.getEmbeddingModel(),
-                                            vector.length, Instant.now());
-        persistenceService.saveVectorEntry(imageId, entry);
-        logger().info("[reprocess][{}] Indexed {} dims",
-                      asset.getOriginalFilename(), vector.length);
-      } else {
-        logger().warn("[reprocess][{}] Empty embedding — vector index not updated",
-                      asset.getOriginalFilename());
-      }
-
-      // Step 7: OCR (reprocess)
-      checkPauseOrCancelled();
-      job.transition(JobStep.OCR_TEXT);
-      try {
-        VisionAnalysisResponse ocrResponse =
-            visionAnalysisService.analyzeImage(imagePath);
-        String raw = ocrResponse.rawDescription();
-        boolean hasText = raw != null && !raw.isBlank() && !raw.equals("NO_TEXT");
-        ocrResult = new OcrResult(imageId, hasText ? raw : null, hasText,
-                                  ollamaConfig.getVisionModel(), Instant.now());
-        persistenceService.saveOcrResult(imageId, ocrResult);
-      } catch (Exception e) {
-        logger().warn("[reprocess][{}] OCR step failed (non-fatal): {}", asset.getOriginalFilename(), e.getMessage());
-      }
-
-      // ── Compute diff between previous and new derived state ───────────────
-      if (previousAnalysis != null || semanticAnalysis != null) {
-        job.setReprocessingDiff(buildReprocessingDiff(
-            previousAnalysis, previousAssessment, previousOcr,
-            semanticAnalysis, assessment, ocrResult));
-      }
-
-      // Step 8: Keyword indexing (BM25)
-      checkPauseOrCancelled();
-      job.transition(JobStep.KEYWORD_INDEXING);
-      keywordIndexService.index(KeywordIndexDocument.from(
-          asset, semanticAnalysis, locationSummary, ocrResult));
-
-      job.complete(imageId);
-      logger().info("[reprocess][{}] COMPLETED", asset.getOriginalFilename());
-
-    } catch (InterruptedException e) {
-      job.transition(JobStep.CANCELLED);
-      logger().info("[reprocess][{}] Cancelled by interrupt", asset.getOriginalFilename());
-    } catch (Exception e) {
-      logger().error("[reprocess][{}] FAILED: {}", asset.getOriginalFilename(), e.getMessage(), e);
-      job.fail(e.getMessage());
-    }
+    };
+    taskMap.put(job.getJobId(), task);
+    job.setFuture(task);
+    executor.execute(task);
   }
 
   /**
+   * Drops the oldest finished jobs so that at most {@value #MAX_FINISHED_JOBS} remain.
+   */
+  private void pruneFinishedJobs() {
+    List<IngestionJob> finished = jobs.stream().filter(IngestionJob::isTerminal).toList();
+    int excess = finished.size() - MAX_FINISHED_JOBS;
+    if (excess > 0) {
+      jobs.removeAll(finished.subList(0, excess));
+    }
+  }
+
+  private void deleteTempFile(IngestionJob job, Path tempFile) {
+    try {
+      Files.deleteIfExists(tempFile);
+    } catch (IOException e) {
+      logger().warn("[{}] Could not delete temp file {}: {}", job.getFilename(), tempFile, e.getMessage());
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Pipeline orchestration — runs on worker threads, never on the UI thread
+  // -------------------------------------------------------------------------
+
+  /**
    * Reads the temp file into memory, deletes it immediately, then delegates to
-   * {@link #process(IngestionJob, byte[])}.  The {@code finally} block guarantees
-   * the temp file is removed even if the read fails.
+   * {@link #process(IngestionJob, byte[])}.
    */
   private void processFromPath(IngestionJob job, Path tempFile) {
     byte[] data;
@@ -474,31 +385,26 @@ public class IngestionPipeline
       job.fail("Failed to read uploaded file: " + e.getMessage());
       return;
     } finally {
-      try {
-        Files.deleteIfExists(tempFile);
-      } catch (IOException ignored) {
-        logger().warn("[{}] Could not delete temp file {}", job.getFilename(), tempFile);
-      }
+      deleteTempFile(job, tempFile);
     }
     process(job, data);
   }
 
   private void process(IngestionJob job, byte[] data) {
+    String label = job.getFilename();
     try {
       // ── Duplicate detection (hash check before any expensive work) ────────
       String sha256 = computeSha256(data);
-      if (sha256 != null) {
-        Optional<UUID> existingId = persistenceService.findImageIdByHash(sha256);
-        if (existingId.isPresent()) {
-          UUID eid = existingId.get();
-          String existingFilename = persistenceService.findImage(eid)
-              .map(ImageAsset::getOriginalFilename)
-              .orElse(eid.toString());
-          logger().info("[{}] Duplicate detected — same content already stored as '{}' ({})",
-                        job.getFilename(), existingFilename, eid);
-          job.markDuplicate(eid, existingFilename);
-          return;
-        }
+      Optional<UUID> existingId = persistenceService.findImageIdByHash(sha256);
+      if (existingId.isPresent()) {
+        UUID eid = existingId.get();
+        String existingFilename = persistenceService.findImage(eid)
+            .map(ImageAsset::getOriginalFilename)
+            .orElse(eid.toString());
+        logger().info("[{}] Duplicate detected — same content already stored as '{}' ({})",
+                      label, existingFilename, eid);
+        job.markDuplicate(eid, existingFilename);
+        return;
       }
 
       // Step 1: Store image file
@@ -506,22 +412,21 @@ public class IngestionPipeline
       job.transition(JobStep.STORING);
       StoredImage stored = imageStorageService.store(
           new ByteArrayInputStream(data), job.getFilename(), job.getMimeType());
-      var imageId = stored.imageId();
-      logger().info("[{}] Stored → {}", job.getFilename(), imageId);
+      UUID imageId = stored.imageId();
+      Path imagePath = imageStorageService.resolvePath(imageId);
+      logger().info("[{}] Stored → {}", label, imageId);
 
       // Step 2: Extract EXIF / technical metadata
       checkPauseOrCancelled();
       job.transition(JobStep.EXTRACTING_METADATA);
       ExtractedMetadata extracted;
       try {
-        extracted = metadataExtractionService.extract(
-            imageStorageService.resolvePath(imageId));
+        extracted = metadataExtractionService.extract(imagePath);
       } catch (Exception e) {
-        logger().warn("[{}] Metadata extraction failed: {}", job.getFilename(), e.getMessage());
+        logger().warn("[{}] Metadata extraction failed: {}", label, e.getMessage());
         extracted = ExtractedMetadata.minimal(0, 0);
       }
 
-      // Persist ImageAsset
       ImageAsset asset = new ImageAsset(
           imageId,
           stored.originalFilename(),
@@ -557,98 +462,200 @@ public class IngestionPipeline
           locationSummary = reverseGeocodingService.reverseGeocode(
               extracted.latitude(), extracted.longitude());
           persistenceService.saveLocation(imageId, locationSummary);
-          logger().info("[{}] Location: {}", job.getFilename(), locationSummary.toHumanReadable());
+          logger().debug("[{}] Location: {}", label, locationSummary.toHumanReadable());
         } catch (Exception e) {
-          logger().warn("[{}] Geocoding failed: {}", job.getFilename(), e.getMessage());
+          logger().warn("[{}] Geocoding failed: {}", label, e.getMessage());
         }
       }
 
-      // Step 3b: OCR text extraction
-      checkPauseOrCancelled();
-      job.transition(JobStep.OCR_TEXT);
-      OcrResult ocrResult = null;
-      try {
-        VisionAnalysisResponse ocrResponse =
-            visionAnalysisService.analyzeImage(imageStorageService.resolvePath(imageId));
-        String raw = ocrResponse.rawDescription();
-        boolean hasText = raw != null && !raw.isBlank() && !raw.equals("NO_TEXT");
-        ocrResult = new OcrResult(imageId, hasText ? raw : null, hasText,
-                                  ollamaConfig.getVisionModel(), Instant.now());
-        persistenceService.saveOcrResult(imageId, ocrResult);
-      } catch (Exception e) {
-        logger().warn("[{}] OCR step failed (non-fatal): {}", job.getFilename(), e.getMessage());
-      }
+      // Steps 4-6: OCR, vision, semantics, sensitivity, visibility
+      OcrResult ocrResult = runOcr(job, label, imageId, imagePath, null);
+      AnalysisOutcome outcome = runAnalysis(job, label, asset, imagePath, metadataInfo, locationSummary);
 
-      // Step 4: Vision analysis (LLM — slow, sequential)
-      checkPauseOrCancelled();
-      job.transition(JobStep.ANALYZING_VISION);
-      VisionAnalysisResponse visionResponse = visionAnalysisService.analyzeImage(
-          imageStorageService.resolvePath(imageId));
-      logger().info("[{}] Vision done (successful={})", job.getFilename(), visionResponse.successful());
+      // Steps 7-9: embedding, vector index, keyword index
+      runEmbedding(job, label, imageId, outcome.analysis());
+      runKeywordIndexing(job, asset, outcome.analysis(), locationSummary, ocrResult);
 
-      // Step 5: Semantic derivation (LLM — structured JSON)
-      checkPauseOrCancelled();
-      job.transition(JobStep.DERIVING_SEMANTICS);
-      SemanticAnalysis semanticAnalysis = semanticDerivationService.derive(imageId, visionResponse);
-      persistenceService.saveAnalysis(imageId, semanticAnalysis);
-
-      // Step 6: Privacy / sensitivity assessment
-      checkPauseOrCancelled();
-      job.transition(JobStep.ASSESSING_SENSITIVITY);
-      SensitivityAssessment assessment = sensitivityAssessmentService.assess(
-          asset, metadataInfo, locationSummary, semanticAnalysis);
-      persistenceService.saveAssessment(imageId, assessment);
-      logger().info("[{}] Risk: {} | Flags: {}", job.getFilename(),
-                    assessment.getRiskLevel(), assessment.getFlags());
-
-      // SAFE images are auto-approved and immediately searchable.
-      // REVIEW / SENSITIVE images require explicit user approval in the Overview.
-      if (assessment.getRiskLevel() == RiskLevel.SAFE) {
-        persistenceService.approveImage(imageId);
-        logger().info("[{}] Auto-approved for search (SAFE risk)", job.getFilename());
-      } else {
-        logger().info("[{}] Locked — requires manual approval ({} risk)",
-                      job.getFilename(), assessment.getRiskLevel());
-      }
-
-      // Step 7: Embedding
-      checkPauseOrCancelled();
-      job.transition(JobStep.EMBEDDING);
-      String embeddingText = buildEmbeddingText(semanticAnalysis);
-      float[] vector = embeddingService.embed(embeddingText);
-
-      // Step 8: Vector index
-      if (vector != null && vector.length > 0) {
-        checkPauseOrCancelled();
-        job.transition(JobStep.INDEXING);
-        vectorIndexService.index(imageId, vector);
-        VectorEntry entry = new VectorEntry(imageId, ollamaConfig.getEmbeddingModel(),
-                                            vector.length, Instant.now());
-        persistenceService.saveVectorEntry(imageId, entry);
-        logger().info("[{}] Indexed {} dims", job.getFilename(), vector.length);
-      } else {
-        logger().warn("[{}] Empty embedding — skipping vector index", job.getFilename());
-      }
-
-      // Step 9: BM25 keyword index
-      checkPauseOrCancelled();
-      job.transition(JobStep.KEYWORD_INDEXING);
-      keywordIndexService.index(KeywordIndexDocument.from(
-          asset, semanticAnalysis, locationSummary, ocrResult));
-
-      // Done
       job.complete(imageId);
-      logger().info("[{}] Pipeline COMPLETED → imageId={}", job.getFilename(), imageId);
+      logger().info("[{}] Pipeline COMPLETED → imageId={}", label, imageId);
 
     } catch (InterruptedException e) {
-      // Worker thread interrupted — user-requested cancellation.
-      // Do NOT re-interrupt: the single worker thread must stay clean for the next job.
+      // User-requested cancellation. Do not re-interrupt: the worker thread must stay
+      // clean for the next job.
       job.transition(JobStep.CANCELLED); // no-op if cancel() was already called
-      logger().info("[{}] Job cancelled by interrupt", job.getFilename());
+      logger().info("[{}] Job cancelled by interrupt", label);
     } catch (Exception e) {
-      logger().error("[{}] Pipeline FAILED: {}", job.getFilename(), e.getMessage(), e);
+      logger().error("[{}] Pipeline FAILED: {}", label, e.getMessage(), e);
       job.fail(e.getMessage());
     }
+  }
+
+  private void reprocess(IngestionJob job, ImageAsset asset) {
+    UUID imageId = asset.getId();
+    String label = "reprocess][" + asset.getOriginalFilename();
+
+    // Snapshot of the previous derived state for the diff
+    SemanticAnalysis previousAnalysis = persistenceService.findAnalysis(imageId).orElse(null);
+    SensitivityAssessment previousAssessment = persistenceService.findAssessment(imageId).orElse(null);
+    OcrResult previousOcr = persistenceService.findOcrResult(imageId).orElse(null);
+
+    try {
+      // Step 1: Load image from disk
+      checkPauseOrCancelled();
+      job.transition(JobStep.LOADING_IMAGE);
+      Path imagePath = imageStorageService.resolvePath(imageId);
+      logger().info("[{}] Loading image from {}", label, imagePath);
+
+      ImageMetadataInfo metadataInfo = persistenceService.findMetadata(imageId).orElse(null);
+      LocationSummary locationSummary = persistenceService.findLocation(imageId).orElse(null);
+
+      // Keep the previous OCR result if the OCR call fails this time.
+      OcrResult ocrResult = runOcr(job, label, imageId, imagePath, previousOcr);
+      AnalysisOutcome outcome = runAnalysis(job, label, asset, imagePath, metadataInfo, locationSummary);
+      runEmbedding(job, label, imageId, outcome.analysis());
+
+      job.setReprocessingDiff(buildReprocessingDiff(
+          previousAnalysis, previousAssessment, previousOcr,
+          outcome.analysis(), outcome.assessment(), ocrResult));
+
+      runKeywordIndexing(job, asset, outcome.analysis(), locationSummary, ocrResult);
+
+      job.complete(imageId);
+      logger().info("[{}] COMPLETED", label);
+
+    } catch (InterruptedException e) {
+      job.transition(JobStep.CANCELLED);
+      logger().info("[{}] Cancelled by interrupt", label);
+    } catch (Exception e) {
+      logger().error("[{}] FAILED: {}", label, e.getMessage(), e);
+      job.fail(e.getMessage());
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Shared pipeline steps
+  // -------------------------------------------------------------------------
+
+  private record AnalysisOutcome(SemanticAnalysis analysis, SensitivityAssessment assessment) {
+  }
+
+  /**
+   * OCR step with the dedicated OCR prompt. On failure no new result is stored and
+   * {@code fallback} is returned (null for new images, the previous result on reprocess).
+   */
+  private OcrResult runOcr(IngestionJob job, String label, UUID imageId, Path imagePath,
+                           OcrResult fallback)
+      throws InterruptedException {
+    checkPauseOrCancelled();
+    job.transition(JobStep.OCR_TEXT);
+    return switch (visionAnalysisService.extractText(imagePath)) {
+      case Result.Success<String, String>(String text) -> {
+        boolean textFound = !text.isBlank();
+        OcrResult result = new OcrResult(imageId, textFound ? text : null, textFound,
+                                         ollamaConfig.getVisionModel(), Instant.now());
+        persistenceService.saveOcrResult(imageId, result);
+        logger().debug("[{}] OCR done (textFound={})", label, textFound);
+        yield result;
+      }
+      case Result.Failure<String, String>(String reason) -> {
+        logger().warn("[{}] OCR step failed (non-fatal): {}", label, reason);
+        yield fallback;
+      }
+    };
+  }
+
+  /**
+   * Vision analysis, semantic derivation, sensitivity assessment and visibility decision.
+   */
+  private AnalysisOutcome runAnalysis(IngestionJob job, String label, ImageAsset asset,
+                                      Path imagePath, ImageMetadataInfo metadataInfo,
+                                      LocationSummary locationSummary)
+      throws InterruptedException {
+    UUID imageId = asset.getId();
+
+    checkPauseOrCancelled();
+    job.transition(JobStep.ANALYZING_VISION);
+    VisionAnalysisResponse visionResponse = visionAnalysisService.analyzeImage(imagePath);
+    logger().info("[{}] Vision done (successful={})", label, visionResponse.successful());
+
+    checkPauseOrCancelled();
+    job.transition(JobStep.DERIVING_SEMANTICS);
+    SemanticAnalysis semanticAnalysis = semanticDerivationService.derive(imageId, visionResponse);
+    persistenceService.saveAnalysis(imageId, semanticAnalysis);
+
+    checkPauseOrCancelled();
+    job.transition(JobStep.ASSESSING_SENSITIVITY);
+    SensitivityAssessment assessment = sensitivityAssessmentService.assess(
+        asset, metadataInfo, locationSummary, semanticAnalysis);
+    if (!visionResponse.successful()) {
+      requireReviewForUnanalyzedContent(assessment);
+    }
+    persistenceService.saveAssessment(imageId, assessment);
+    logger().info("[{}] Risk: {} | Flags: {}", label, assessment.getRiskLevel(), assessment.getFlags());
+
+    applyVisibility(label, imageId, assessment);
+    return new AnalysisOutcome(semanticAnalysis, assessment);
+  }
+
+  /**
+   * Without a successful vision analysis the assessment is based on a stub text and
+   * says nothing about the content, so the image must never be auto-approved.
+   */
+  private static void requireReviewForUnanalyzedContent(SensitivityAssessment assessment) {
+    if (assessment.getRiskLevel() == RiskLevel.SAFE) {
+      assessment.setRiskLevel(RiskLevel.REVIEW);
+      assessment.setRecommendedStorageMode(RecommendedStorageMode.STORE_REDUCED);
+    }
+    assessment.setReviewRequired(true);
+    String notes = assessment.getNotes();
+    assessment.setNotes(notes == null || notes.isBlank()
+                            ? VISION_FAILED_NOTE
+                            : VISION_FAILED_NOTE + "; " + notes);
+  }
+
+  /**
+   * Approves SAFE, non-archived images for search; locks everything else. Resets any
+   * earlier manual approval or lock on reprocessing.
+   */
+  private void applyVisibility(String label, UUID imageId, SensitivityAssessment assessment) {
+    boolean archived = persistenceService.isDeleted(imageId);
+    if (assessment.getRiskLevel() == RiskLevel.SAFE && !archived) {
+      persistenceService.approveImage(imageId);
+      logger().info("[{}] Auto-approved for search (SAFE risk)", label);
+    } else {
+      persistenceService.unapproveImage(imageId);
+      logger().info("[{}] Locked — {}", label,
+                    archived ? "image is archived" : assessment.getRiskLevel() + " risk requires manual approval");
+    }
+  }
+
+  /**
+   * Embeds the analysis text and stores the vector. {@code index} replaces an existing
+   * entry, so no prior remove is needed on reprocessing.
+   */
+  private void runEmbedding(IngestionJob job, String label, UUID imageId, SemanticAnalysis analysis)
+      throws InterruptedException {
+    checkPauseOrCancelled();
+    job.transition(JobStep.EMBEDDING);
+    float[] vector = embeddingService.embed(EmbeddingTextBuilder.build(analysis));
+    if (vector.length == 0) {
+      logger().warn("[{}] Empty embedding — vector index not updated", label);
+      return;
+    }
+    checkPauseOrCancelled();
+    job.transition(JobStep.INDEXING);
+    vectorIndexService.index(imageId, vector);
+    persistenceService.saveVectorEntry(imageId, new VectorEntry(
+        imageId, ollamaConfig.getEmbeddingModel(), vector.length, Instant.now()));
+    logger().info("[{}] Indexed {} dims", label, vector.length);
+  }
+
+  private void runKeywordIndexing(IngestionJob job, ImageAsset asset, SemanticAnalysis analysis,
+                                  LocationSummary locationSummary, OcrResult ocrResult)
+      throws InterruptedException {
+    checkPauseOrCancelled();
+    job.transition(JobStep.KEYWORD_INDEXING);
+    keywordIndexService.index(KeywordIndexDocument.from(asset, analysis, locationSummary, ocrResult));
   }
 
   private ReprocessingDiff buildReprocessingDiff(SemanticAnalysis prevAnalysis,
@@ -675,23 +682,5 @@ public class IngestionPipeline
         prevOcr != null ? prevOcr.getExtractedText() : null,
         newOcr != null ? newOcr.getExtractedText() : null
     );
-  }
-
-  private String buildEmbeddingText(SemanticAnalysis analysis) {
-    StringBuilder sb = new StringBuilder();
-    if (analysis.getSummary() != null) sb.append(analysis.getSummary());
-    if (analysis.getTags() != null && !analysis.getTags().isEmpty())
-      sb.append(" Tags: ").append(String.join(", ", analysis.getTags()));
-    if (analysis.getSeasonHint() != null)
-      sb.append(" Season: ").append(analysis.getSeasonHint().name());
-    if (analysis.getSourceCategory() != null)
-      sb.append(" Category: ").append(analysis.getSourceCategory().name());
-    if (analysis.getSecondaryCategories() != null && !analysis.getSecondaryCategories().isEmpty()) {
-      String secCats = analysis.getSecondaryCategories().stream()
-          .map(Enum::name)
-          .collect(java.util.stream.Collectors.joining(" "));
-      sb.append(" ").append(secCats);
-    }
-    return sb.toString();
   }
 }

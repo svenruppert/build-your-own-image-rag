@@ -6,6 +6,7 @@ import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.CategoryLifecycleState;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.ollama.OllamaClient;
+import com.svenruppert.imagerag.ollama.PromptTemplates;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.service.TaxonomyAnalysisProgress;
@@ -362,9 +363,9 @@ public class TaxonomyAnalysisServiceImpl
       return null;
     }
     try {
-      String prompt = REEVAL_PROMPT_TEMPLATE.formatted(
+      String prompt = PromptTemplates.fill(REEVAL_PROMPT_TEMPLATE,
           analysis.getSummary().replace("\"", "'"),
-          analysis.getSourceCategory());
+          String.valueOf(analysis.getSourceCategory()));
 
       if (!(ollamaClient.generateJson(prompt) instanceof Result.Success<String, String>(String json))) {
         return null;

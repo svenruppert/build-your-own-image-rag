@@ -7,6 +7,7 @@ import com.svenruppert.imagerag.domain.enums.CategoryGroup;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SeasonHint;
 import com.svenruppert.imagerag.ollama.OllamaClient;
+import com.svenruppert.imagerag.ollama.PromptTemplates;
 import com.svenruppert.imagerag.service.QueryUnderstandingService;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -53,13 +54,13 @@ public class QueryUnderstandingServiceImpl
 
   @Override
   public SearchPlan understand(String query) {
-    logger().info("Analyzing query: {}", query);
+    logger().debug("Analyzing query: {}", query);
 
     SearchPlan plan = new SearchPlan();
     plan.setOriginalQuery(query);
     plan.setEmbeddingText(query); // sensible default
 
-    String prompt = QUERY_PROMPT_TEMPLATE.formatted(query.replace("\"", "'"));
+    String prompt = PromptTemplates.fill(QUERY_PROMPT_TEMPLATE, query.replace("\"", "'"));
     switch (ollamaClient.generateJson(prompt)) {
       case Result.Success<String, String>(String json) -> parseSearchPlan(plan, json);
       case Result.Failure<String, String>(String reason) ->
@@ -89,7 +90,7 @@ public class QueryUnderstandingServiceImpl
       plan.setPrivacyLevel(nullableEnum(node, "privacyLevel", RiskLevel.class));
       plan.setExplanation(node.path("explanation").asText(null));
 
-      logger().info(
+      logger().debug(
           "SearchPlan: embedding='{}', person={}, vehicle={}, licensePlate={}, season={}, categoryGroup={}",
           plan.getEmbeddingText(), plan.getContainsPerson(), plan.getContainsVehicle(),
           plan.getContainsLicensePlate(), plan.getSeasonHint(), plan.getCategoryGroup());

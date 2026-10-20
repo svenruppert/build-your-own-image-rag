@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.service;
 
+import com.svenruppert.functional.result.Result;
+import com.svenruppert.functional.result.Unit;
 import com.svenruppert.imagerag.domain.PromptTemplateVersion;
 
 import java.util.List;
@@ -43,9 +45,18 @@ public interface PromptTemplateService {
    * @param content     the full prompt text
    * @param description change notes / rationale
    * @return the persisted draft
+   * @throws IllegalArgumentException if {@link #validateContent} rejects the content
    */
   PromptTemplateVersion saveDraft(String promptKey, String version,
                                   String content, String description);
+
+  /**
+   * Checks whether {@code content} can be used for {@code promptKey}: prompts that embed
+   * input text (for example {@code "semantic"}) must contain the {@code %s} placeholder.
+   *
+   * @return success, or a failure carrying a human-readable reason
+   */
+  Result<Unit, String> validateContent(String promptKey, String content);
 
   /**
    * Activates the given version.  The previously active version for the same key

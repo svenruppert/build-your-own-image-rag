@@ -3,9 +3,12 @@ package com.svenruppert.imagerag.bootstrap;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.ProcessingSettings;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
-import com.svenruppert.imagerag.dto.KeywordIndexDocument;
 import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
+import com.svenruppert.imagerag.maintenance.ImageLifecycleService;
+import com.svenruppert.imagerag.maintenance.KeywordIndexMaintenance;
+import com.svenruppert.imagerag.maintenance.StartupMigrations;
+import com.svenruppert.imagerag.maintenance.VectorIndexMaintenance;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.pipeline.IngestionPipeline;
 import com.svenruppert.imagerag.service.*;
@@ -14,8 +17,6 @@ import com.svenruppert.imagerag.service.impl.*;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.Instant;
-import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -23,9 +24,16 @@ import java.util.concurrent.Executors;
 /**
  * Manual dependency injection container.
  * All services are singletons. Initialize once at application startup via {@link #initialize()}.
+ * <p>This class only wires services together. Startup migrations, index maintenance and
+ * the delete/restore orchestration live in {@code com.svenruppert.imagerag.maintenance}.
  */
 public class ServiceRegistry
     implements HasLogger {
+
+  /**
+   * Upper bound for the number of concurrent search workers.
+   */
+  public static final int MAX_SEARCH_PARALLELISM = 4;
 
   private static volatile ServiceRegistry serviceRegistry;
 
@@ -58,6 +66,9 @@ public class ServiceRegistry
   private final WhyNotFoundService whyNotFoundService;
   private final ClusterDiscoveryService clusterDiscoveryService;
   private final SearchStrategyAutopilot searchStrategyAutopilot;
+  private final VectorIndexMaintenance vectorIndexMaintenance;
+  private final KeywordIndexMaintenance keywordIndexMaintenance;
+  private final ImageLifecycleService imageLifecycleService;
 
   /**
    * Shared executor for background search tasks across all UI sessions.
@@ -97,8 +108,10 @@ public class ServiceRegistry
     reverseGeocodingService = new ReverseGeocodingServiceImpl();
 
     // AI services
-    visionAnalysisService = new VisionAnalysisServiceImpl(ollamaClient, ollamaConfig);
-    semanticDerivationService = new SemanticDerivationServiceImpl(ollamaClient, ollamaConfig);
+    var visionAnalysis = new VisionAnalysisServiceImpl(ollamaClient, ollamaConfig);
+    var semanticDerivation = new SemanticDerivationServiceImpl(ollamaClient, ollamaConfig);
+    visionAnalysisService = visionAnalysis;
+    semanticDerivationService = semanticDerivation;
     sensitivityAssessmentService = new SensitivityAssessmentServiceImpl();
 
     // Embedding service
@@ -111,47 +124,30 @@ public class ServiceRegistry
     vectorBackendType = VectorBackendType.fromConfig();
     logger().info("Vector backend selected: {}", vectorBackendType);
 
-    if (Objects.requireNonNull(vectorBackendType) == VectorBackendType.GIGAMAP_JVECTOR) {
-      var jvectorBackend = new EclipseStoreGigaMapJVectorBackend(persistenceService);
-      vectorIndexService = jvectorBackend;
-      if (jvectorBackend.isEmpty() && !persistenceService.findAllIndexedImageIds().isEmpty()) {
-        // First run with this backend — migrate by re-embedding from analysis text.
-        logger().info("GIGAMAP_JVECTOR backend: no persisted raw vectors found " + "— running one-time migration by re-embedding existing analyses.");
-        migrateToGigaMapJVector(jvectorBackend);
-      } else if (!persistenceService.findAllIndexedImageIds().isEmpty()) {
-        // Subsequent startups: detect if the configured embedding model changed since
-        // vectors were last written.  Mixed-model vectors would produce nonsensical
-        // search results, so we proactively re-embed before building the HNSW index.
-        migrateStaleVectors();
-      }
-      // Build the JVector HNSW index from (possibly freshly updated) raw vectors.
-      jvectorBackend.initialize();
-    } else { // IN_MEMORY backend: existing implementation, re-embed on each restart.
-      vectorIndexService = new VectorIndexServiceImpl();
-      restoreVectorIndex();
-    }
+    vectorIndexService = (vectorBackendType == VectorBackendType.GIGAMAP_JVECTOR)
+        ? new EclipseStoreGigaMapJVectorBackend(persistenceService)
+        : new VectorIndexServiceImpl();
+    vectorIndexMaintenance = new VectorIndexMaintenance(
+        persistenceService, embeddingService, vectorIndexService, ollamaConfig, vectorBackendType);
+    vectorIndexMaintenance.prepareAtStartup();
 
     // Keyword index — BM25 via Lucene, stored on disk
     try {
       keywordIndexService = new KeywordIndexServiceImpl(projectDir.resolve("_data_keyword_index"));
-      restoreKeywordIndex();
     } catch (IOException e) {
       throw new IOException("Failed to initialize keyword index: " + e.getMessage(), e);
     }
+    keywordIndexMaintenance = new KeywordIndexMaintenance(persistenceService, keywordIndexService);
+    keywordIndexMaintenance.restoreAll();
+
+    imageLifecycleService = new ImageLifecycleService(
+        persistenceService, vectorIndexService, keywordIndexService, keywordIndexMaintenance,
+        previewService, imageStorageService);
 
     // Audit service
     auditService = new AuditServiceImpl(persistenceService);
 
-    // Approve all existing SAFE images (migration for data ingested before approval feature)
-    migrateApprovals();
-
-    // Rebuild hash index from any images already in the store
-    // (covers images ingested before the duplicate-detection feature was added)
-    persistenceService.rebuildHashIndex();
-
-    // Normalize category assignments — removes primary-in-secondary duplicates and
-    // deduplicates secondary lists for any records persisted before this check existed.
-    persistenceService.normalizeAllCategoryAssignments();
+    new StartupMigrations(persistenceService).run();
 
     // Search
     queryUnderstandingService = new QueryUnderstandingServiceImpl(ollamaClient);
@@ -177,11 +173,12 @@ public class ServiceRegistry
 
     // Import built-in prompts on first startup (idempotent)
     promptTemplateService.importBuiltInIfAbsent(VisionAnalysisServiceImpl.PROMPT_KEY, VisionAnalysisServiceImpl.PROMPT_VERSION, VisionAnalysisServiceImpl.VISION_PROMPT);
+    promptTemplateService.importBuiltInIfAbsent(VisionAnalysisServiceImpl.OCR_PROMPT_KEY, VisionAnalysisServiceImpl.OCR_PROMPT_VERSION, VisionAnalysisServiceImpl.OCR_PROMPT);
     promptTemplateService.importBuiltInIfAbsent(SemanticDerivationServiceImpl.PROMPT_KEY, SemanticDerivationServiceImpl.DERIVATION_PROMPT_VERSION, SemanticDerivationServiceImpl.DERIVATION_PROMPT_TEMPLATE);
 
     // Wire PromptTemplateService into analysis services
-    ((VisionAnalysisServiceImpl) visionAnalysisService).setPromptTemplateService(promptTemplateService);
-    ((SemanticDerivationServiceImpl) semanticDerivationService).setPromptTemplateService(promptTemplateService);
+    visionAnalysis.setPromptTemplateService(promptTemplateService);
+    semanticDerivation.setPromptTemplateService(promptTemplateService);
 
     // Why-not-found diagnostic service
     whyNotFoundService = new WhyNotFoundServiceImpl(persistenceService, embeddingService, vectorIndexService, keywordIndexService);
@@ -257,201 +254,13 @@ public class ServiceRegistry
     sr.logger().info("ServiceRegistry shut down cleanly.");
   }
 
-  // -------------------------------------------------------------------------
-  // Startup helper: re-embed persisted analyses into the in-memory vector index
-  // -------------------------------------------------------------------------
-
   private static ExecutorService buildSearchExecutor(int parallelism) {
-    int clamped = Math.clamp(parallelism, 1, 4);
+    int clamped = Math.clamp(parallelism, 1, MAX_SEARCH_PARALLELISM);
     if (clamped <= 1) {
       return Executors.newSingleThreadExecutor(Thread.ofVirtual().name("search-worker").factory());
     }
     return Executors.newFixedThreadPool(clamped, Thread.ofVirtual().name("search-", 0).factory());
   }
-
-  /**
-   * Restores the IN_MEMORY vector index by re-embedding all persisted analyses.
-   * Called only for the {@link VectorBackendType#IN_MEMORY} backend.
-   * Requires Ollama to be available.
-   */
-  private void restoreVectorIndex() {
-    var imageIds = persistenceService.findAllIndexedImageIds();
-    logger().info("Restoring in-memory vector index for {} images...", imageIds.size());
-    int restored = 0;
-
-    for (var imageId : imageIds) {
-      try {
-        var analysisOpt = persistenceService.findAnalysis(imageId);
-        if (analysisOpt.isEmpty()) continue;
-
-        var analysis = analysisOpt.get();
-        String embeddingText = buildEmbeddingText(analysis);
-        float[] vector = embeddingService.embed(embeddingText);
-
-        if (vector != null && vector.length > 0) {
-          vectorIndexService.index(imageId, vector);
-          restored++;
-        }
-      } catch (Exception e) {
-        logger().warn("Could not restore vector for image {}: {}", imageId, e.getMessage());
-      }
-    }
-    logger().info("Restored {}/{} vector entries into in-memory index", restored, imageIds.size());
-  }
-
-  /**
-   * One-time migration: re-embeds all existing analysed images and persists their
-   * raw vectors to the EclipseStore {@code rawVectorStore} (AppDataRoot) so the
-   * {@link VectorBackendType#GIGAMAP_JVECTOR} backend can rebuild its JVector index
-   * at subsequent restarts <em>without</em> calling Ollama.
-   * <p>This runs only once — when switching from the in-memory backend to the
-   * GigaMap/JVector backend for the first time.  Subsequent restarts skip this
-   * step because {@link EclipseStoreGigaMapJVectorBackend#isEmpty()} returns
-   * {@code false} once any vectors have been persisted.
-   */
-  private void migrateToGigaMapJVector(EclipseStoreGigaMapJVectorBackend backend) {
-    var imageIds = persistenceService.findAllIndexedImageIds();
-    logger().info("Migrating {} images to EclipseStore GigaMap raw-vector store...", imageIds.size());
-    int migrated = 0;
-
-    for (var imageId : imageIds) {
-      try {
-        var analysisOpt = persistenceService.findAnalysis(imageId);
-        if (analysisOpt.isEmpty()) continue;
-
-        String embeddingText = buildEmbeddingText(analysisOpt.get());
-        float[] vector = embeddingService.embed(embeddingText);
-
-        if (vector != null && vector.length > 0) {
-          // Persist directly via persistenceService — the backend.index() call
-          // would trigger a full rebuild after every image; here we batch-persist
-          // and let initialize() build the index once at the end.
-          persistenceService.saveRawVector(imageId, vector);
-          // Record which model produced this vector so migrateStaleVectors() can
-          // detect future model changes and re-embed before building the HNSW index.
-          var entry = new com.svenruppert.imagerag.domain.VectorEntry(imageId, ollamaConfig.getEmbeddingModel(), vector.length, Instant.now());
-          persistenceService.saveVectorEntry(imageId, entry);
-          migrated++;
-        }
-      } catch (Exception e) {
-        logger().warn("Could not migrate vector for image {}: {}", imageId, e.getMessage());
-      }
-    }
-    logger().info("Migration complete: {}/{} vectors written to EclipseStore GigaMap", migrated, imageIds.size());
-  }
-
-  /**
-   * Detects persisted {@link com.svenruppert.imagerag.domain.VectorEntry} objects whose
-   * {@code embeddingModel} field differs from the currently configured model
-   * ({@link com.svenruppert.imagerag.ollama.OllamaConfig#getEmbeddingModel()}).
-   * <p>If any mismatch is found, <em>all</em> images are re-embedded and their raw vectors
-   * and {@code VectorEntry} metadata are updated in EclipseStore before the caller builds
-   * the JVector HNSW index.  This prevents a scenario where stored vectors were produced
-   * by (e.g.) {@code nomic-embed-text} but queries are embedded with {@code bge-m3},
-   * which would yield garbage search results.
-   * <p>Called only for the {@link com.svenruppert.imagerag.domain.enums.VectorBackendType#GIGAMAP_JVECTOR}
-   * backend at startup, after the backend object is created but before
-   * {@link EclipseStoreGigaMapJVectorBackend#initialize()} is called.
-   */
-  private void migrateStaleVectors() {
-    String configuredModel = ollamaConfig.getEmbeddingModel();
-    boolean mismatch = persistenceService.findAllIndexedImageIds().stream().anyMatch(id -> persistenceService.findVectorEntry(id).map(e -> !Objects.equals(configuredModel, e.getEmbeddingModel())).orElse(false));
-
-    if (!mismatch) {
-      logger().info("Embedding model '{}' matches all stored vectors — no migration needed.", configuredModel);
-      return;
-    }
-
-    logger().warn("EMBEDDING MODEL MISMATCH: configured model is '{}' but some persisted " + "vectors were created by a different model. " + "Re-embedding all images before building HNSW index...", configuredModel);
-
-    var imageIds = persistenceService.findAllIndexedImageIds();
-    int migrated = 0;
-    for (var imageId : imageIds) {
-      try {
-        var analysisOpt = persistenceService.findAnalysis(imageId);
-        if (analysisOpt.isEmpty()) continue;
-        String text = buildEmbeddingText(analysisOpt.get());
-        float[] vector = embeddingService.embed(text);
-        if (vector != null && vector.length > 0) {
-          persistenceService.saveRawVector(imageId, vector);
-          // Update VectorEntry so the model is recorded correctly.
-          var entry = new com.svenruppert.imagerag.domain.VectorEntry(imageId, configuredModel, vector.length, Instant.now());
-          persistenceService.saveVectorEntry(imageId, entry);
-          migrated++;
-        }
-      } catch (Exception e) {
-        logger().warn("Could not re-embed image {} during stale-vector migration: {}", imageId, e.getMessage());
-      }
-    }
-    logger().info("Stale-vector migration complete: {}/{} images re-embedded with model '{}'", migrated, imageIds.size(), configuredModel);
-  }
-
-  private void restoreKeywordIndex() {
-    logger().info("Restoring keyword index from persisted analyses...");
-    int indexed = 0;
-    for (var asset : persistenceService.findAllImages()) {
-      try {
-        var analysis = persistenceService.findAnalysis(asset.getId()).orElse(null);
-        var location = persistenceService.findLocation(asset.getId()).orElse(null);
-        var ocr = persistenceService.findOcrResult(asset.getId()).orElse(null);
-        keywordIndexService.index(KeywordIndexDocument.from(asset, analysis, location, ocr));
-        indexed++;
-      } catch (Exception e) {
-        logger().warn("Could not restore keyword index for image {}: {}", asset.getId(), e.getMessage());
-      }
-    }
-    logger().info("Keyword index restored: {} documents", indexed);
-  }
-
-  /**
-   * One-time migration: approve all existing images that are SAFE according to their
-   * stored sensitivity assessment. Images without an assessment (or REVIEW/SENSITIVE)
-   * are left locked and must be manually approved in the Overview view.
-   * <p>This is idempotent — already-approved images are simply added again (no-op).
-   */
-  private void migrateApprovals() {
-    var allImages = persistenceService.findAllImages();
-    int approved = 0;
-    int locked = 0;
-    int pending = 0;
-
-    for (var image : allImages) {
-      var assessmentOpt = persistenceService.findAssessment(image.getId());
-      if (assessmentOpt.isEmpty()) {
-        // No assessment yet (still in pipeline or failed) — leave locked
-        pending++;
-        continue;
-      }
-      var risk = assessmentOpt.get().getRiskLevel();
-      if (risk == com.svenruppert.imagerag.domain.enums.RiskLevel.SAFE) {
-        persistenceService.approveImage(image.getId());
-        approved++;
-      } else {
-        locked++;
-      }
-    }
-
-    logger().info("Approval migration complete — auto-approved: {}, locked (REVIEW/SENSITIVE): {}, pending assessment: {}", approved, locked, pending);
-  }
-
-  // --- Accessors ---
-
-  // -------------------------------------------------------------------------
-  // Image management — orchestrated delete (vector index + file + persistence)
-  // -------------------------------------------------------------------------
-
-  private String buildEmbeddingText(com.svenruppert.imagerag.domain.SemanticAnalysis analysis) {
-    StringBuilder sb = new StringBuilder();
-    if (analysis.getSummary() != null) sb.append(analysis.getSummary());
-    if (analysis.getTags() != null && !analysis.getTags().isEmpty()) {
-      sb.append(" Tags: ").append(String.join(", ", analysis.getTags()));
-    }
-    return sb.toString();
-  }
-
-  // -------------------------------------------------------------------------
-  // Search executor — shared bounded pool across all UI sessions
-  // -------------------------------------------------------------------------
 
   /**
    * Completely removes an image from every data store:
@@ -461,46 +270,15 @@ public class ServiceRegistry
    */
   public void deleteImage(UUID imageId)
       throws IOException {
-    vectorIndexService.remove(imageId);
-    keywordIndexService.remove(imageId);
-    previewService.deletePreviewCache(imageId);
-    imageStorageService.delete(imageId);
-    persistenceService.deleteImage(imageId);
-    logger().info("Permanently deleted image imageId={}", imageId);
+    imageLifecycleService.delete(imageId);
   }
 
   /**
    * Restores a previously archived (soft-deleted) image to the active dataset.
-   * <ol>
-   *   <li>Clears the {@code deleted} flag and the {@code deletedAt}/{@code deletedReason}
-   *       fields in EclipseStore.</li>
-   *   <li>Re-approves the image if its stored sensitivity assessment is SAFE; otherwise
-   *       leaves it locked (requires manual approval in the Overview view).</li>
-   *   <li>Re-adds the image to the keyword (BM25) index, which may have been missing
-   *       if the application was restarted while the image was archived.</li>
-   * </ol>
-   * <p>The in-memory vector index entry is preserved across archive/restore cycles because
-   * soft-delete does not call {@link VectorIndexService#remove}.
-   *
-   * @param imageId the image to restore; must currently be in archived state
+   * See {@link ImageLifecycleService#restore(UUID)}.
    */
   public void restoreImage(UUID imageId) {
-    persistenceService.restoreImage(imageId);  // clears flags, conditionally re-approves
-
-    // Re-index in keyword index: the Lucene index excludes archived images after a
-    // restart (restoreKeywordIndex uses findAllImages which filters deleted).
-    // Re-indexing here is idempotent and ensures the image is always searchable after restore.
-    persistenceService.findImage(imageId).ifPresent(asset -> {
-      try {
-        var analysis = persistenceService.findAnalysis(imageId).orElse(null);
-        var location = persistenceService.findLocation(imageId).orElse(null);
-        var ocr = persistenceService.findOcrResult(imageId).orElse(null);
-        keywordIndexService.index(KeywordIndexDocument.from(asset, analysis, location, ocr));
-        logger().info("Re-indexed keyword entry for restored image imageId={}", imageId);
-      } catch (Exception e) {
-        logger().warn("Could not re-index keyword entry for restored image {}: {}", imageId, e.getMessage());
-      }
-    });
+    imageLifecycleService.restore(imageId);
   }
 
   /**
@@ -515,10 +293,10 @@ public class ServiceRegistry
   /**
    * Resizes the shared search executor to the requested parallelism.
    * The old executor is shut down gracefully (in-flight tasks complete normally).
-   * Bounded to [1, 4].
+   * Bounded to [1, {@value #MAX_SEARCH_PARALLELISM}].
    */
   public synchronized void updateSearchParallelism(int parallelism) {
-    int clamped = Math.clamp(parallelism, 1, 4);
+    int clamped = Math.clamp(parallelism, 1, MAX_SEARCH_PARALLELISM);
     ExecutorService old = searchExecutor;
     searchExecutor = buildSearchExecutor(clamped);
     old.shutdown();
@@ -637,85 +415,22 @@ public class ServiceRegistry
   }
 
   // -------------------------------------------------------------------------
-  // Vector index rebuild — explicit maintenance action triggered from the UI
+  // Index rebuilds — explicit maintenance actions triggered from the UI
   // -------------------------------------------------------------------------
 
   /**
-   * Rebuilds the active vector index from currently persisted data.
-   * <ul>
-   *   <li>For the {@link VectorBackendType#GIGAMAP_JVECTOR} backend: re-embeds all
-   *       analysed images, persists the raw vectors to EclipseStore (replacing any
-   *       previously stored ones), and rebuilds the in-memory JVector HNSW index.
-   *       This is the correct path after switching the embedding model.</li>
-   *   <li>For the {@link VectorBackendType#IN_MEMORY} backend: clears the in-memory
-   *       store and re-embeds all analysed images from Ollama.</li>
-   * </ul>
-   * <p>This method blocks until the rebuild is complete.  Call it on a background
-   * thread (the Pipeline view does this via {@link Thread#ofVirtual()}).
+   * Re-embeds all analysed images and rebuilds the active vector index.
+   * Blocks until done; call it on a background thread.
    */
   public void rebuildVectorIndex() {
-    logger().info("Vector index rebuild started (backend={})", vectorBackendType);
-    int rebuilt = 0;
-    var imageIds = persistenceService.findAllIndexedImageIds();
-
-    String activeModel = ollamaConfig.getEmbeddingModel();
-
-    if (vectorBackendType == VectorBackendType.GIGAMAP_JVECTOR) {
-      // Re-embed every image, persist raw vectors and update VectorEntry metadata.
-      // The HNSW index is rebuilt once at the end via initialize().
-      for (var imageId : imageIds) {
-        try {
-          var analysisOpt = persistenceService.findAnalysis(imageId);
-          if (analysisOpt.isEmpty()) continue;
-          String text = buildEmbeddingText(analysisOpt.get());
-          float[] vector = embeddingService.embed(text);
-          if (vector != null && vector.length > 0) {
-            persistenceService.saveRawVector(imageId, vector);
-            // Keep VectorEntry metadata in sync so the model field is always accurate.
-            var entry = new com.svenruppert.imagerag.domain.VectorEntry(imageId, activeModel, vector.length, Instant.now());
-            persistenceService.saveVectorEntry(imageId, entry);
-            rebuilt++;
-          }
-        } catch (Exception e) {
-          logger().warn("Could not re-embed image {} during vector rebuild: {}", imageId, e.getMessage());
-        }
-      }
-      // Rebuild the in-memory HNSW index from the freshly persisted vectors.
-      ((EclipseStoreGigaMapJVectorBackend) vectorIndexService).initialize();
-    } else {
-      // IN_MEMORY: replace in-memory store by re-embedding from Ollama.
-      for (var imageId : imageIds) {
-        try {
-          var analysisOpt = persistenceService.findAnalysis(imageId);
-          if (analysisOpt.isEmpty()) continue;
-          String text = buildEmbeddingText(analysisOpt.get());
-          float[] vector = embeddingService.embed(text);
-          if (vector != null && vector.length > 0) {
-            vectorIndexService.index(imageId, vector);
-            // Update VectorEntry metadata so the recorded model stays current.
-            var entry = new com.svenruppert.imagerag.domain.VectorEntry(imageId, activeModel, vector.length, Instant.now());
-            persistenceService.saveVectorEntry(imageId, entry);
-            rebuilt++;
-          }
-        } catch (Exception e) {
-          logger().warn("Could not re-embed image {} during vector rebuild: {}", imageId, e.getMessage());
-        }
-      }
-    }
-
-    logger().info("Vector index rebuild complete — {} / {} images indexed", rebuilt, imageIds.size());
+    vectorIndexMaintenance.rebuild();
   }
 
   /**
-   * Rebuilds the Lucene keyword (BM25) index from currently persisted analyses.
-   * Equivalent to what happens at startup in {@link #restoreKeywordIndex()} but
-   * callable at runtime from the Migration Center.
-   * <p>This method blocks until the rebuild is complete.  Call it on a background
-   * thread.
+   * Rebuilds the Lucene keyword (BM25) index from persisted analyses.
+   * Blocks until done; call it on a background thread.
    */
   public void rebuildKeywordIndex() {
-    logger().info("Keyword index rebuild started");
-    keywordIndexService.rebuildAll(persistenceService::findAllImages, persistenceService::findAnalysis, persistenceService::findLocation, persistenceService::findOcrResult);
-    logger().info("Keyword index rebuild complete");
+    keywordIndexMaintenance.rebuild();
   }
 }

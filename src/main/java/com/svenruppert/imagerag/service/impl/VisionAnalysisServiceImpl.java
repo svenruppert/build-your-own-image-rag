@@ -23,6 +23,25 @@ public class VisionAnalysisServiceImpl
    */
   public static final String PROMPT_VERSION = "v1";
 
+  /**
+   * The prompt key of the OCR prompt used for {@link PromptTemplateService} lookups.
+   */
+  public static final String OCR_PROMPT_KEY = "ocr";
+  public static final String OCR_PROMPT_VERSION = "v1";
+  /**
+   * Answer the OCR prompt returns when the image contains no readable text.
+   */
+  public static final String NO_TEXT_MARKER = "NO_TEXT";
+
+  public static final String OCR_PROMPT = """
+      Transcribe all readable text that is visible in this image: signs, labels,
+      captions, license plates, inscriptions, screen content.
+      Rules:
+      - Return only the transcribed text, verbatim, one text block per line.
+      - Do not describe the image and do not add explanations or translations.
+      - If no readable text is visible, answer exactly: NO_TEXT
+      """;
+
   public static final String VISION_PROMPT = """
       Analyze this image in detail for a semantic image archive.
       Describe:
@@ -78,16 +97,28 @@ public class VisionAnalysisServiceImpl
     );
   }
 
+  @Override
+  public Result<String, String> extractText(Path imagePath) {
+    logger().debug("Starting OCR for: {}", imagePath.getFileName());
+    return ollamaClient.analyzeImageWithVision(imagePath, resolvePrompt(OCR_PROMPT_KEY, OCR_PROMPT))
+        .map(String::trim)
+        .map(text -> NO_TEXT_MARKER.equalsIgnoreCase(text) ? "" : text);
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   private String resolvePrompt() {
+    return resolvePrompt(PROMPT_KEY, VISION_PROMPT);
+  }
+
+  private String resolvePrompt(String promptKey, String builtIn) {
     if (promptTemplateService != null) {
-      Optional<String> override = promptTemplateService.getActiveContent(PROMPT_KEY);
+      Optional<String> override = promptTemplateService.getActiveContent(promptKey);
       if (override.isPresent()) {
-        logger().debug("Using managed vision prompt override from PromptTemplateService");
+        logger().debug("Using managed '{}' prompt override from PromptTemplateService", promptKey);
         return override.get();
       }
     }
-    return VISION_PROMPT;
+    return builtIn;
   }
 }

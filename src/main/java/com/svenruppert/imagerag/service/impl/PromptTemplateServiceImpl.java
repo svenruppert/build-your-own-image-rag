@@ -1,5 +1,8 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.functional.result.Result;
+import com.svenruppert.functional.result.Unit;
+import com.svenruppert.imagerag.ollama.PromptTemplates;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.PromptTemplateVersion;
 import com.svenruppert.imagerag.persistence.PersistenceService;
@@ -8,15 +11,21 @@ import com.svenruppert.imagerag.service.PromptTemplateService;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 /**
  * Manages versioned prompt templates backed by {@link PersistenceService}.
- * <p>Thread-safe: all mutations go through {@code PersistenceService.store()} which is
- * synchronised at the EclipseStore level.
+ * <p>Thread-safe: all reads and mutations go through the thread-safe {@link PersistenceService}.
  */
 public class PromptTemplateServiceImpl
     implements PromptTemplateService, HasLogger {
+
+  /**
+   * Prompt keys whose templates embed input text and therefore need a placeholder.
+   */
+  private static final Set<String> KEYS_REQUIRING_PLACEHOLDER =
+      Set.of(SemanticDerivationServiceImpl.PROMPT_KEY);
 
   private final PersistenceService persistenceService;
 
@@ -49,6 +58,9 @@ public class PromptTemplateServiceImpl
   @Override
   public PromptTemplateVersion saveDraft(String promptKey, String version,
                                          String content, String description) {
+    if (validateContent(promptKey, content) instanceof Result.Failure<Unit, String>(String reason)) {
+      throw new IllegalArgumentException(reason);
+    }
     // Find the currently active version for lineage tracking
     UUID previousId = persistenceService.findActivePromptVersion(promptKey)
         .map(PromptTemplateVersion::getId).orElse(null);
@@ -58,6 +70,19 @@ public class PromptTemplateServiceImpl
     persistenceService.savePromptVersion(draft);
     logger().info("Saved prompt draft: key={} version={}", promptKey, version);
     return draft;
+  }
+
+  @Override
+  public Result<Unit, String> validateContent(String promptKey, String content) {
+    if (content == null || content.isBlank()) {
+      return Result.failure("Prompt content is empty");
+    }
+    if (KEYS_REQUIRING_PLACEHOLDER.contains(promptKey)
+        && PromptTemplates.countPlaceholders(content) == 0) {
+      return Result.failure("Prompt '" + promptKey + "' must contain the "
+                                + PromptTemplates.PLACEHOLDER + " placeholder for the input text");
+    }
+    return Result.success(Unit.INSTANCE);
   }
 
   @Override

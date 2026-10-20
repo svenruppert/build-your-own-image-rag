@@ -9,16 +9,58 @@ import org.eclipse.store.storage.embedded.types.EmbeddedStorageManager;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import static java.util.List.of;
 
+/**
+ * EclipseStore-backed persistence facade.
+ * <p>Thread-safe: every read runs under the read lock and every mutation together with
+ * its {@code storage.store(...)} call runs under the write lock, so the ingestion
+ * workers, search threads and UI threads never see a collection while it is modified.
+ * Collection getters return immutable copies.
+ */
 public class PersistenceService
     implements HasLogger {
 
   private static final int MAX_RECENT_SEARCHES = 20;
+  /**
+   * Maximum number of audit entries kept; older entries are dropped.
+   */
+  public static final int MAX_AUDIT_ENTRIES = 500;
   private final EmbeddedStorageManager storage;
   private final AppDataRoot root;
+  private final ReadWriteLock lock = new ReentrantReadWriteLock();
+
+  private <T> T read(Supplier<T> action) {
+    lock.readLock().lock();
+    try {
+      return action.get();
+    } finally {
+      lock.readLock().unlock();
+    }
+  }
+
+  private <T> T writeAndGet(Supplier<T> action) {
+    lock.writeLock().lock();
+    try {
+      return action.get();
+    } finally {
+      lock.writeLock().unlock();
+    }
+  }
+
+  private void write(Runnable action) {
+    lock.writeLock().lock();
+    try {
+      action.run();
+    } finally {
+      lock.writeLock().unlock();
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Save operations
@@ -60,28 +102,38 @@ public class PersistenceService
   }
 
   public void saveImage(ImageAsset asset) {
-    root.getImages().put(asset.getId(), asset);
-    storage.store(root.getImages());
+    write(() -> {
+      root.getImages().put(asset.getId(), asset);
+      storage.store(root.getImages());
+    });
   }
 
   public void saveMetadata(UUID imageId, ImageMetadataInfo metadata) {
-    root.getMetadata().put(imageId, metadata);
-    storage.store(root.getMetadata());
+    write(() -> {
+      root.getMetadata().put(imageId, metadata);
+      storage.store(root.getMetadata());
+    });
   }
 
   public void saveLocation(UUID imageId, LocationSummary location) {
-    root.getLocations().put(imageId, location);
-    storage.store(root.getLocations());
+    write(() -> {
+      root.getLocations().put(imageId, location);
+      storage.store(root.getLocations());
+    });
   }
 
   public void saveAnalysis(UUID imageId, SemanticAnalysis analysis) {
-    root.getAnalyses().put(imageId, analysis);
-    storage.store(root.getAnalyses());
+    write(() -> {
+      root.getAnalyses().put(imageId, analysis);
+      storage.store(root.getAnalyses());
+    });
   }
 
   public void saveAssessment(UUID imageId, SensitivityAssessment assessment) {
-    root.getAssessments().put(imageId, assessment);
-    storage.store(root.getAssessments());
+    write(() -> {
+      root.getAssessments().put(imageId, assessment);
+      storage.store(root.getAssessments());
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -89,8 +141,10 @@ public class PersistenceService
   // -------------------------------------------------------------------------
 
   public void saveVectorEntry(UUID imageId, VectorEntry entry) {
-    root.getVectorEntries().put(imageId, entry);
-    storage.store(root.getVectorEntries());
+    write(() -> {
+      root.getVectorEntries().put(imageId, entry);
+      storage.store(root.getVectorEntries());
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -103,32 +157,34 @@ public class PersistenceService
    * and in-memory index entries (vector + keyword).
    */
   public void deleteImage(UUID imageId) {
-    // Remove hash index entry before removing the asset record
-    ImageAsset asset = root.getImages().get(imageId);
-    if (asset != null && asset.getSha256() != null) {
-      root.getHashIndex().remove(asset.getSha256());
-      storage.store(root.getHashIndex());
-    }
-    root.getImages().remove(imageId);
-    root.getMetadata().remove(imageId);
-    root.getLocations().remove(imageId);
-    root.getAnalyses().remove(imageId);
-    root.getAssessments().remove(imageId);
-    root.getVectorEntries().remove(imageId);
-    root.getApprovedImageIds().remove(imageId);
-    // Also clean derived data added in later iterations
-    root.getOcrResults().remove(imageId);
-    root.getRawVectorStore().remove(imageId);
-    storage.store(root.getImages());
-    storage.store(root.getMetadata());
-    storage.store(root.getLocations());
-    storage.store(root.getAnalyses());
-    storage.store(root.getAssessments());
-    storage.store(root.getVectorEntries());
-    storage.store(root.getApprovedImageIds());
-    storage.store(root.getOcrResults());
-    storage.store(root.getRawVectorStore());
-    logger().info("Permanently deleted all persisted data for imageId={}", imageId);
+    write(() -> {
+      // Remove hash index entry before removing the asset record
+      ImageAsset asset = root.getImages().get(imageId);
+      if (asset != null && asset.getSha256() != null) {
+        root.getHashIndex().remove(asset.getSha256());
+        storage.store(root.getHashIndex());
+      }
+      root.getImages().remove(imageId);
+      root.getMetadata().remove(imageId);
+      root.getLocations().remove(imageId);
+      root.getAnalyses().remove(imageId);
+      root.getAssessments().remove(imageId);
+      root.getVectorEntries().remove(imageId);
+      root.getApprovedImageIds().remove(imageId);
+      // Also clean derived data added in later iterations
+      root.getOcrResults().remove(imageId);
+      root.getRawVectorStore().remove(imageId);
+      storage.store(root.getImages());
+      storage.store(root.getMetadata());
+      storage.store(root.getLocations());
+      storage.store(root.getAnalyses());
+      storage.store(root.getAssessments());
+      storage.store(root.getVectorEntries());
+      storage.store(root.getApprovedImageIds());
+      storage.store(root.getOcrResults());
+      storage.store(root.getRawVectorStore());
+      logger().info("Permanently deleted all persisted data for imageId={}", imageId);
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -139,18 +195,22 @@ public class PersistenceService
    * Mark an image as approved so it appears in search results.
    */
   public void approveImage(UUID imageId) {
-    root.getApprovedImageIds().add(imageId);
-    storage.store(root.getApprovedImageIds());
+    write(() -> {
+      root.getApprovedImageIds().add(imageId);
+      storage.store(root.getApprovedImageIds());
+    });
   }
 
   /**
    * Update the risk level of an existing assessment in place and persist the change.
    */
   public void updateRiskLevel(UUID imageId, RiskLevel newLevel) {
-    findAssessment(imageId).ifPresent(assessment -> {
-      assessment.setRiskLevel(newLevel);
-      storage.store(assessment);
-      logger().info("Updated riskLevel to {} for imageId={}", newLevel, imageId);
+    write(() -> {
+      findAssessment(imageId).ifPresent(assessment -> {
+        assessment.setRiskLevel(newLevel);
+        storage.store(assessment);
+        logger().info("Updated riskLevel to {} for imageId={}", newLevel, imageId);
+      });
     });
   }
 
@@ -158,10 +218,12 @@ public class PersistenceService
    * Update the source category of an existing analysis in place and persist the change.
    */
   public void updateSourceCategory(UUID imageId, SourceCategory newCategory) {
-    findAnalysis(imageId).ifPresent(analysis -> {
-      analysis.setSourceCategory(newCategory);
-      storage.store(analysis);
-      logger().info("Updated sourceCategory to {} for imageId={}", newCategory, imageId);
+    write(() -> {
+      findAnalysis(imageId).ifPresent(analysis -> {
+        analysis.setSourceCategory(newCategory);
+        storage.store(analysis);
+        logger().info("Updated sourceCategory to {} for imageId={}", newCategory, imageId);
+      });
     });
   }
 
@@ -172,11 +234,13 @@ public class PersistenceService
    */
   public void updateSecondaryCategories(UUID imageId,
                                         List<SourceCategory> categories) {
-    findAnalysis(imageId).ifPresent(analysis -> {
-      analysis.setSecondaryCategories(
-          categories != null ? categories : of());
-      storage.store(analysis);
-      logger().info("Updated secondaryCategories for imageId={}: {}", imageId, categories);
+    write(() -> {
+      findAnalysis(imageId).ifPresent(analysis -> {
+        analysis.setSecondaryCategories(
+            categories != null ? categories : of());
+        storage.store(analysis);
+        logger().info("Updated secondaryCategories for imageId={}: {}", imageId, categories);
+      });
     });
   }
 
@@ -184,8 +248,10 @@ public class PersistenceService
    * Remove approval — image will no longer appear in search results.
    */
   public void unapproveImage(UUID imageId) {
-    root.getApprovedImageIds().remove(imageId);
-    storage.store(root.getApprovedImageIds());
+    write(() -> {
+      root.getApprovedImageIds().remove(imageId);
+      storage.store(root.getApprovedImageIds());
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -196,41 +262,69 @@ public class PersistenceService
    * Returns {@code true} if the image has been approved for search.
    */
   public boolean isApproved(UUID imageId) {
-    return root.getApprovedImageIds().contains(imageId);
+    return read(() -> {
+      return root.getApprovedImageIds().contains(imageId);
+    });
+  }
+
+  /**
+   * Returns {@code true} if the image exists and has been soft-deleted (archived).
+   */
+  public boolean isDeleted(UUID imageId) {
+    return read(() -> {
+      ImageAsset asset = root.getImages().get(imageId);
+      return asset != null && asset.isDeleted();
+    });
   }
 
   public Optional<ImageAsset> findImage(UUID imageId) {
-    return Optional.ofNullable(root.getImages().get(imageId));
+    return read(() -> {
+      return Optional.ofNullable(root.getImages().get(imageId));
+    });
   }
 
   public List<ImageAsset> findAllImages() {
-    return root.getImages().values().stream()
-        .filter(a -> !a.isDeleted())
-        .collect(Collectors.toList());
+    return read(() -> {
+      return root.getImages().values().stream()
+          .filter(a -> !a.isDeleted())
+          .collect(Collectors.toList());
+    });
   }
 
   public List<ImageAsset> findAllImagesIncludingDeleted() {
-    return new ArrayList<>(root.getImages().values());
+    return read(() -> {
+      return new ArrayList<>(root.getImages().values());
+    });
   }
 
   public Optional<SemanticAnalysis> findAnalysis(UUID imageId) {
-    return Optional.ofNullable(root.getAnalyses().get(imageId));
+    return read(() -> {
+      return Optional.ofNullable(root.getAnalyses().get(imageId));
+    });
   }
 
   public Optional<SensitivityAssessment> findAssessment(UUID imageId) {
-    return Optional.ofNullable(root.getAssessments().get(imageId));
+    return read(() -> {
+      return Optional.ofNullable(root.getAssessments().get(imageId));
+    });
   }
 
   public Optional<LocationSummary> findLocation(UUID imageId) {
-    return Optional.ofNullable(root.getLocations().get(imageId));
+    return read(() -> {
+      return Optional.ofNullable(root.getLocations().get(imageId));
+    });
   }
 
   public Optional<ImageMetadataInfo> findMetadata(UUID imageId) {
-    return Optional.ofNullable(root.getMetadata().get(imageId));
+    return read(() -> {
+      return Optional.ofNullable(root.getMetadata().get(imageId));
+    });
   }
 
   public Optional<VectorEntry> findVectorEntry(UUID imageId) {
-    return Optional.ofNullable(root.getVectorEntries().get(imageId));
+    return read(() -> {
+      return Optional.ofNullable(root.getVectorEntries().get(imageId));
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -238,7 +332,9 @@ public class PersistenceService
   // -------------------------------------------------------------------------
 
   public List<UUID> findAllIndexedImageIds() {
-    return new ArrayList<>(root.getVectorEntries().keySet());
+    return read(() -> {
+      return new ArrayList<>(root.getVectorEntries().keySet());
+    });
   }
 
   /**
@@ -246,10 +342,12 @@ public class PersistenceService
    * the given SHA-256 hash, or {@link java.util.Optional#empty()} if no duplicate exists.
    */
   public Optional<UUID> findImageIdByHash(String sha256) {
-    if (sha256 == null || sha256.isBlank()) {
-      return Optional.empty();
-    }
-    return Optional.ofNullable(root.getHashIndex().get(sha256));
+    return read(() -> {
+      if (sha256 == null || sha256.isBlank()) {
+        return Optional.empty();
+      }
+      return Optional.ofNullable(root.getHashIndex().get(sha256));
+    });
   }
 
   /**
@@ -257,11 +355,13 @@ public class PersistenceService
    * Called by the ingestion pipeline after a new image has been stored successfully.
    */
   public void registerHash(String sha256, UUID imageId) {
-    if (sha256 == null || sha256.isBlank()) {
-      return;
-    }
-    root.getHashIndex().put(sha256, imageId);
-    storage.store(root.getHashIndex());
+    write(() -> {
+      if (sha256 == null || sha256.isBlank()) {
+        return;
+      }
+      root.getHashIndex().put(sha256, imageId);
+      storage.store(root.getHashIndex());
+    });
   }
 
   /**
@@ -269,11 +369,13 @@ public class PersistenceService
    * Called when an image is deleted to keep the index consistent.
    */
   public void removeHash(String sha256) {
-    if (sha256 == null || sha256.isBlank()) {
-      return;
-    }
-    root.getHashIndex().remove(sha256);
-    storage.store(root.getHashIndex());
+    write(() -> {
+      if (sha256 == null || sha256.isBlank()) {
+        return;
+      }
+      root.getHashIndex().remove(sha256);
+      storage.store(root.getHashIndex());
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -286,17 +388,19 @@ public class PersistenceService
    * that were persisted before the hash-index feature existed.
    */
   public void rebuildHashIndex() {
-    Map<String, UUID> index = root.getHashIndex();
-    index.clear();
-    int indexed = 0;
-    for (ImageAsset asset : root.getImages().values()) {
-      if (asset.getSha256() != null && !asset.getSha256().isBlank()) {
-        index.put(asset.getSha256(), asset.getId());
-        indexed++;
+    write(() -> {
+      Map<String, UUID> index = root.getHashIndex();
+      index.clear();
+      int indexed = 0;
+      for (ImageAsset asset : root.getImages().values()) {
+        if (asset.getSha256() != null && !asset.getSha256().isBlank()) {
+          index.put(asset.getSha256(), asset.getId());
+          indexed++;
+        }
       }
-    }
-    storage.store(index);
-    logger().info("Hash index rebuilt: {} entries", indexed);
+      storage.store(index);
+      logger().info("Hash index rebuilt: {} entries", indexed);
+    });
   }
 
   /**
@@ -309,24 +413,26 @@ public class PersistenceService
    * @param mode       which search mode was used
    */
   public void addRecentSearch(String query, String finalQuery, SearchMode mode) {
-    if (query == null || query.isBlank()) {
-      return;
-    }
-    String trimmed = query.trim();
-    List<RecentSearchEntry> recent = root.getRecentSearches();
-    // Remove any existing entry with the same original query (case-insensitive) so the
-    // freshly submitted one bubbles to the top.
-    for (int i = recent.size() - 1; i >= 0; i--) {
-      if (trimmed.equalsIgnoreCase(recent.get(i).getQuery())) {
-        recent.remove(i);
+    write(() -> {
+      if (query == null || query.isBlank()) {
+        return;
       }
-    }
-    recent.addFirst(new RecentSearchEntry(trimmed, finalQuery, mode, Instant.now()));
-    while (recent.size() > MAX_RECENT_SEARCHES) {
-      recent.removeLast();
-    }
-    storage.store(recent);
-    logger().debug("Recent search history updated: {} entries", recent.size());
+      String trimmed = query.trim();
+      List<RecentSearchEntry> recent = root.getRecentSearches();
+      // Remove any existing entry with the same original query (case-insensitive) so the
+      // freshly submitted one bubbles to the top.
+      for (int i = recent.size() - 1; i >= 0; i--) {
+        if (trimmed.equalsIgnoreCase(recent.get(i).getQuery())) {
+          recent.remove(i);
+        }
+      }
+      recent.addFirst(new RecentSearchEntry(trimmed, finalQuery, mode, Instant.now()));
+      while (recent.size() > MAX_RECENT_SEARCHES) {
+        recent.removeLast();
+      }
+      storage.store(recent);
+      logger().debug("Recent search history updated: {} entries", recent.size());
+    });
   }
 
   /**
@@ -335,28 +441,34 @@ public class PersistenceService
    * exact instances returned by {@link #getRecentSearches()}.
    */
   public void deleteRecentSearches(List<RecentSearchEntry> toDelete) {
-    if (toDelete == null || toDelete.isEmpty()) {
-      return;
-    }
-    root.getRecentSearches().removeAll(toDelete);
-    storage.store(root.getRecentSearches());
-    logger().info("Deleted {} recent search entries", toDelete.size());
+    write(() -> {
+      if (toDelete == null || toDelete.isEmpty()) {
+        return;
+      }
+      root.getRecentSearches().removeAll(toDelete);
+      storage.store(root.getRecentSearches());
+      logger().info("Deleted {} recent search entries", toDelete.size());
+    });
   }
 
   /**
    * Returns an unmodifiable snapshot of the recent-search list (newest first).
    */
   public List<RecentSearchEntry> getRecentSearches() {
-    return Collections.unmodifiableList(root.getRecentSearches());
+    return read(() -> {
+      return List.copyOf(root.getRecentSearches());
+    });
   }
 
   /**
    * Clears the entire recent-search history and persists the change.
    */
   public void clearRecentSearches() {
-    root.getRecentSearches().clear();
-    storage.store(root.getRecentSearches());
-    logger().info("Recent search history cleared");
+    write(() -> {
+      root.getRecentSearches().clear();
+      storage.store(root.getRecentSearches());
+      logger().info("Recent search history cleared");
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -370,8 +482,10 @@ public class PersistenceService
    * from these values at startup.
    */
   public void saveRawVector(UUID imageId, float[] vector) {
-    root.getRawVectorStore().put(imageId, vector);
-    storage.store(root.getRawVectorStore());
+    write(() -> {
+      root.getRawVectorStore().put(imageId, vector);
+      storage.store(root.getRawVectorStore());
+    });
   }
 
   /**
@@ -379,8 +493,10 @@ public class PersistenceService
    * Called on delete / remove by the {@code GIGAMAP_JVECTOR} backend.
    */
   public void removeRawVector(UUID imageId) {
-    root.getRawVectorStore().remove(imageId);
-    storage.store(root.getRawVectorStore());
+    write(() -> {
+      root.getRawVectorStore().remove(imageId);
+      storage.store(root.getRawVectorStore());
+    });
   }
 
   /**
@@ -389,7 +505,9 @@ public class PersistenceService
    * HNSW index at startup without calling the embedding model.
    */
   public Map<UUID, float[]> findAllRawVectors() {
-    return new HashMap<>(root.getRawVectorStore());
+    return read(() -> {
+      return new HashMap<>(root.getRawVectorStore());
+    });
   }
 
   /**
@@ -397,7 +515,9 @@ public class PersistenceService
    * Used to decide whether a one-time migration from the in-memory backend is needed.
    */
   public int getRawVectorCount() {
-    return root.getRawVectorStore().size();
+    return read(() -> {
+      return root.getRawVectorStore().size();
+    });
   }
 
   /**
@@ -407,7 +527,9 @@ public class PersistenceService
    * @return the stored embedding, or {@link Optional#empty()} if not persisted
    */
   public Optional<float[]> findRawVector(UUID imageId) {
-    return Optional.ofNullable(root.getRawVectorStore().get(imageId));
+    return read(() -> {
+      return Optional.ofNullable(root.getRawVectorStore().get(imageId));
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -415,12 +537,16 @@ public class PersistenceService
   // -------------------------------------------------------------------------
 
   public void saveOcrResult(UUID imageId, OcrResult result) {
-    root.getOcrResults().put(imageId, result);
-    storage.store(root.getOcrResults());
+    write(() -> {
+      root.getOcrResults().put(imageId, result);
+      storage.store(root.getOcrResults());
+    });
   }
 
   public Optional<OcrResult> findOcrResult(UUID imageId) {
-    return Optional.ofNullable(root.getOcrResults().get(imageId));
+    return read(() -> {
+      return Optional.ofNullable(root.getOcrResults().get(imageId));
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -428,17 +554,23 @@ public class PersistenceService
   // -------------------------------------------------------------------------
 
   public void saveSavedSearchView(SavedSearchView view) {
-    root.getSavedSearchViews().add(view);
-    storage.store(root.getSavedSearchViews());
+    write(() -> {
+      root.getSavedSearchViews().add(view);
+      storage.store(root.getSavedSearchViews());
+    });
   }
 
   public List<SavedSearchView> getSavedSearchViews() {
-    return Collections.unmodifiableList(root.getSavedSearchViews());
+    return read(() -> {
+      return List.copyOf(root.getSavedSearchViews());
+    });
   }
 
   public void deleteSavedSearchView(UUID viewId) {
-    root.getSavedSearchViews().removeIf(v -> viewId.equals(v.getId()));
-    storage.store(root.getSavedSearchViews());
+    write(() -> {
+      root.getSavedSearchViews().removeIf(v -> viewId.equals(v.getId()));
+      storage.store(root.getSavedSearchViews());
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -446,15 +578,18 @@ public class PersistenceService
   // -------------------------------------------------------------------------
 
   public void addAuditEntry(AuditEntry entry) {
-    List<AuditEntry> log = root.getAuditLog();
-    log.addFirst(entry);
-    // Keep last 500 entries
-    while (log.size() > 500) log.removeLast();
-    storage.store(log);
+    write(() -> {
+      List<AuditEntry> log = root.getAuditLog();
+      log.addFirst(entry);
+      while (log.size() > MAX_AUDIT_ENTRIES) log.removeLast();
+      storage.store(log);
+    });
   }
 
   public List<AuditEntry> getAuditLog() {
-    return Collections.unmodifiableList(root.getAuditLog());
+    return read(() -> {
+      return List.copyOf(root.getAuditLog());
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -462,32 +597,36 @@ public class PersistenceService
   // -------------------------------------------------------------------------
 
   public void softDeleteImage(UUID imageId, String reason) {
-    findImage(imageId).ifPresent(asset -> {
-      asset.setDeleted(true);
-      asset.setDeletedAt(java.time.Instant.now());
-      asset.setDeletedReason(reason);
-      storage.store(asset);
+    write(() -> {
+      findImage(imageId).ifPresent(asset -> {
+        asset.setDeleted(true);
+        asset.setDeletedAt(java.time.Instant.now());
+        asset.setDeletedReason(reason);
+        storage.store(asset);
+      });
+      unapproveImage(imageId);
     });
-    unapproveImage(imageId);
   }
 
   public void restoreImage(UUID imageId) {
-    findImage(imageId).ifPresent(asset -> {
-      asset.setDeleted(false);
-      asset.setDeletedAt(null);
-      asset.setDeletedReason(null);
-      storage.store(asset);
-    });
-    // Re-approve only if the stored sensitivity assessment is SAFE.
-    // REVIEW / SENSITIVE images remain locked and require manual approval in the Overview.
-    findAssessment(imageId).ifPresent(assessment -> {
-      if (assessment.getRiskLevel() == RiskLevel.SAFE) {
-        approveImage(imageId);
-        logger().info("Auto-approved restored image {} (SAFE risk)", imageId);
-      } else {
-        logger().info("Restored image {} remains locked ({} risk) — manual approval required",
-                      imageId, assessment.getRiskLevel());
-      }
+    write(() -> {
+      findImage(imageId).ifPresent(asset -> {
+        asset.setDeleted(false);
+        asset.setDeletedAt(null);
+        asset.setDeletedReason(null);
+        storage.store(asset);
+      });
+      // Re-approve only if the stored sensitivity assessment is SAFE.
+      // REVIEW / SENSITIVE images remain locked and require manual approval in the Overview.
+      findAssessment(imageId).ifPresent(assessment -> {
+        if (assessment.getRiskLevel() == RiskLevel.SAFE) {
+          approveImage(imageId);
+          logger().info("Auto-approved restored image {} (SAFE risk)", imageId);
+        } else {
+          logger().info("Restored image {} remains locked ({} risk) — manual approval required",
+                        imageId, assessment.getRiskLevel());
+        }
+      });
     });
   }
 
@@ -496,12 +635,14 @@ public class PersistenceService
    * approval state or risk level.  Used by the Archive view.
    */
   public List<ImageAsset> findArchivedImages() {
-    return root.getImages().values().stream()
-        .filter(ImageAsset::isDeleted)
-        .sorted(Comparator.comparing(
-            a -> a.getDeletedAt() != null ? a.getDeletedAt() : Instant.EPOCH,
-            Comparator.reverseOrder()))
-        .collect(Collectors.toList());
+    return read(() -> {
+      return root.getImages().values().stream()
+          .filter(ImageAsset::isDeleted)
+          .sorted(Comparator.comparing(
+              a -> a.getDeletedAt() != null ? a.getDeletedAt() : Instant.EPOCH,
+              Comparator.reverseOrder()))
+          .collect(Collectors.toList());
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -513,35 +654,43 @@ public class PersistenceService
    * exists it is replaced; otherwise the suggestion is appended.
    */
   public void saveTaxonomySuggestion(TaxonomySuggestion suggestion) {
-    List<TaxonomySuggestion> list = root.getTaxonomySuggestions();
-    list.removeIf(s -> suggestion.getId().equals(s.getId()));
-    list.add(suggestion);
-    storage.store(list);
+    write(() -> {
+      List<TaxonomySuggestion> list = root.getTaxonomySuggestions();
+      list.removeIf(s -> suggestion.getId().equals(s.getId()));
+      list.add(suggestion);
+      storage.store(list);
+    });
   }
 
   /**
    * Returns an unmodifiable snapshot of all stored taxonomy suggestions (newest first).
    */
   public List<TaxonomySuggestion> findAllSuggestions() {
-    return Collections.unmodifiableList(root.getTaxonomySuggestions());
+    return read(() -> {
+      return List.copyOf(root.getTaxonomySuggestions());
+    });
   }
 
   /**
    * Returns suggestions filtered by status.
    */
   public List<TaxonomySuggestion> findSuggestionsByStatus(SuggestionStatus status) {
-    return root.getTaxonomySuggestions().stream()
-        .filter(s -> s.getStatus() == status)
-        .collect(Collectors.toList());
+    return read(() -> {
+      return root.getTaxonomySuggestions().stream()
+          .filter(s -> s.getStatus() == status)
+          .collect(Collectors.toList());
+    });
   }
 
   /**
    * Returns a single suggestion by id.
    */
   public Optional<TaxonomySuggestion> findSuggestion(java.util.UUID suggestionId) {
-    return root.getTaxonomySuggestions().stream()
-        .filter(s -> suggestionId.equals(s.getId()))
-        .findFirst();
+    return read(() -> {
+      return root.getTaxonomySuggestions().stream()
+          .filter(s -> suggestionId.equals(s.getId()))
+          .findFirst();
+    });
   }
 
   /**
@@ -549,8 +698,10 @@ public class PersistenceService
    * the user sees only the most recent batch of proposals.
    */
   public void clearTaxonomySuggestions() {
-    root.getTaxonomySuggestions().clear();
-    storage.store(root.getTaxonomySuggestions());
+    write(() -> {
+      root.getTaxonomySuggestions().clear();
+      storage.store(root.getTaxonomySuggestions());
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -561,8 +712,10 @@ public class PersistenceService
    * Persists (creates or replaces) category lifecycle metadata for the given category.
    */
   public void saveCategoryMetadata(CategoryMetadata meta) {
-    root.getCategoryMetadata().put(meta.getCategory().name(), meta);
-    storage.store(root.getCategoryMetadata());
+    write(() -> {
+      root.getCategoryMetadata().put(meta.getCategory().name(), meta);
+      storage.store(root.getCategoryMetadata());
+    });
   }
 
   /**
@@ -570,15 +723,19 @@ public class PersistenceService
    * no metadata record has been created (the category is implicitly ACTIVE).
    */
   public Optional<CategoryMetadata> findCategoryMetadata(SourceCategory category) {
-    if (category == null) return Optional.empty();
-    return Optional.ofNullable(root.getCategoryMetadata().get(category.name()));
+    return read(() -> {
+      if (category == null) return Optional.empty();
+      return Optional.ofNullable(root.getCategoryMetadata().get(category.name()));
+    });
   }
 
   /**
    * Returns an unmodifiable snapshot of all stored category metadata records.
    */
   public List<CategoryMetadata> findAllCategoryMetadata() {
-    return Collections.unmodifiableList(new ArrayList<>(root.getCategoryMetadata().values()));
+    return read(() -> {
+      return Collections.unmodifiableList(new ArrayList<>(root.getCategoryMetadata().values()));
+    });
   }
 
   // ── Search Tuning Lab presets ─────────────────────────────────────────────
@@ -589,21 +746,23 @@ public class PersistenceService
    * is replaced; a fresh preset (never saved before) is appended.
    */
   public void saveTuningPreset(com.svenruppert.imagerag.domain.SearchTuningPreset preset) {
-    List<com.svenruppert.imagerag.domain.SearchTuningPreset> list = root.getTuningPresets();
-    // Replace existing entry with matching id, or append
-    boolean replaced = false;
-    for (int i = 0; i < list.size(); i++) {
-      if (preset.getId().equals(list.get(i).getId())) {
-        list.set(i, preset);
-        replaced = true;
-        break;
+    write(() -> {
+      List<com.svenruppert.imagerag.domain.SearchTuningPreset> list = root.getTuningPresets();
+      // Replace existing entry with matching id, or append
+      boolean replaced = false;
+      for (int i = 0; i < list.size(); i++) {
+        if (preset.getId().equals(list.get(i).getId())) {
+          list.set(i, preset);
+          replaced = true;
+          break;
+        }
       }
-    }
-    if (!replaced) {
-      list.add(preset);
-    }
-    storage.store(list);
-    logger().info("Saved tuning preset '{}' (id={})", preset.getName(), preset.getId());
+      if (!replaced) {
+        list.add(preset);
+      }
+      storage.store(list);
+      logger().info("Saved tuning preset '{}' (id={})", preset.getName(), preset.getId());
+    });
   }
 
   /**
@@ -611,32 +770,40 @@ public class PersistenceService
    * ordered by insertion (oldest first).
    */
   public List<com.svenruppert.imagerag.domain.SearchTuningPreset> findAllTuningPresets() {
-    return List.copyOf(root.getTuningPresets());
+    return read(() -> {
+      return List.copyOf(root.getTuningPresets());
+    });
   }
 
   /**
    * Removes the tuning preset with the given id.  No-op if not found.
    */
   public void deleteTuningPreset(java.util.UUID presetId) {
-    boolean removed = root.getTuningPresets().removeIf(p -> presetId.equals(p.getId()));
-    if (removed) {
-      storage.store(root.getTuningPresets());
-      logger().info("Deleted tuning preset id={}", presetId);
-    }
+    write(() -> {
+      boolean removed = root.getTuningPresets().removeIf(p -> presetId.equals(p.getId()));
+      if (removed) {
+        storage.store(root.getTuningPresets());
+        logger().info("Deleted tuning preset id={}", presetId);
+      }
+    });
   }
 
   // ── Cluster suggestions ──────────────────────────────────────────────────
 
   public void saveClusterSuggestion(com.svenruppert.imagerag.domain.CategoryClusterSuggestion s) {
-    List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> list = root.getClusterSuggestions();
-    list.removeIf(x -> s.getId().equals(x.getId()));
-    list.add(s);
-    storage.store(list);
-    logger().debug("Saved cluster suggestion id={}", s.getId());
+    write(() -> {
+      List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> list = root.getClusterSuggestions();
+      list.removeIf(x -> s.getId().equals(x.getId()));
+      list.add(s);
+      storage.store(list);
+      logger().debug("Saved cluster suggestion id={}", s.getId());
+    });
   }
 
   public List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> findAllClusterSuggestions() {
-    return List.copyOf(root.getClusterSuggestions());
+    return read(() -> {
+      return List.copyOf(root.getClusterSuggestions());
+    });
   }
 
   /**
@@ -644,47 +811,61 @@ public class PersistenceService
    */
   public void replaceAllClusterSuggestions(
       List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> suggestions) {
-    root.getClusterSuggestions().clear();
-    root.getClusterSuggestions().addAll(suggestions);
-    storage.store(root.getClusterSuggestions());
-    logger().info("Replaced cluster suggestions: {} entries", suggestions.size());
+    write(() -> {
+      root.getClusterSuggestions().clear();
+      root.getClusterSuggestions().addAll(suggestions);
+      storage.store(root.getClusterSuggestions());
+      logger().info("Replaced cluster suggestions: {} entries", suggestions.size());
+    });
   }
 
   public void deleteClusterSuggestion(java.util.UUID id) {
-    boolean removed = root.getClusterSuggestions().removeIf(s -> id.equals(s.getId()));
-    if (removed) storage.store(root.getClusterSuggestions());
+    write(() -> {
+      boolean removed = root.getClusterSuggestions().removeIf(s -> id.equals(s.getId()));
+      if (removed) storage.store(root.getClusterSuggestions());
+    });
   }
 
   // ── Prompt template versions ─────────────────────────────────────────────
 
   public void savePromptVersion(com.svenruppert.imagerag.domain.PromptTemplateVersion v) {
-    List<com.svenruppert.imagerag.domain.PromptTemplateVersion> list = root.getPromptVersions();
-    list.removeIf(x -> v.getId().equals(x.getId()));
-    list.add(v);
-    storage.store(list);
-    logger().info("Saved prompt version: key={} version={} active={}",
-                  v.getPromptKey(), v.getVersion(), v.isActive());
+    write(() -> {
+      List<com.svenruppert.imagerag.domain.PromptTemplateVersion> list = root.getPromptVersions();
+      list.removeIf(x -> v.getId().equals(x.getId()));
+      list.add(v);
+      storage.store(list);
+      logger().info("Saved prompt version: key={} version={} active={}",
+                    v.getPromptKey(), v.getVersion(), v.isActive());
+    });
   }
 
   public List<com.svenruppert.imagerag.domain.PromptTemplateVersion> findPromptVersions(String promptKey) {
-    return root.getPromptVersions().stream()
-        .filter(v -> promptKey.equals(v.getPromptKey()))
-        .collect(Collectors.toList());
+    return read(() -> {
+      return root.getPromptVersions().stream()
+          .filter(v -> promptKey.equals(v.getPromptKey()))
+          .collect(Collectors.toList());
+    });
   }
 
   public List<com.svenruppert.imagerag.domain.PromptTemplateVersion> findAllPromptVersions() {
-    return List.copyOf(root.getPromptVersions());
+    return read(() -> {
+      return List.copyOf(root.getPromptVersions());
+    });
   }
 
   public Optional<com.svenruppert.imagerag.domain.PromptTemplateVersion> findActivePromptVersion(String promptKey) {
-    return root.getPromptVersions().stream()
-        .filter(v -> promptKey.equals(v.getPromptKey()) && v.isActive())
-        .findFirst();
+    return read(() -> {
+      return root.getPromptVersions().stream()
+          .filter(v -> promptKey.equals(v.getPromptKey()) && v.isActive())
+          .findFirst();
+    });
   }
 
   public void deletePromptVersion(java.util.UUID id) {
-    boolean removed = root.getPromptVersions().removeIf(v -> id.equals(v.getId()));
-    if (removed) storage.store(root.getPromptVersions());
+    write(() -> {
+      boolean removed = root.getPromptVersions().removeIf(v -> id.equals(v.getId()));
+      if (removed) storage.store(root.getPromptVersions());
+    });
   }
 
   public void shutdown() {
@@ -705,18 +886,20 @@ public class PersistenceService
    * @return number of analyses that were actually changed and re-persisted
    */
   public int normalizeAllCategoryAssignments() {
-    int changed = 0;
-    for (SemanticAnalysis analysis : root.getAnalyses().values()) {
-      if (analysis == null) continue;
-      if (com.svenruppert.imagerag.domain.CategoryAssignmentNormalizer.normalize(analysis)) {
-        storage.store(analysis);
-        changed++;
+    return writeAndGet(() -> {
+      int changed = 0;
+      for (SemanticAnalysis analysis : root.getAnalyses().values()) {
+        if (analysis == null) continue;
+        if (com.svenruppert.imagerag.domain.CategoryAssignmentNormalizer.normalize(analysis)) {
+          storage.store(analysis);
+          changed++;
+        }
       }
-    }
-    if (changed > 0) {
-      logger().info("Normalized category assignments for {} analysis record(s)", changed);
-    }
-    return changed;
+      if (changed > 0) {
+        logger().info("Normalized category assignments for {} analysis record(s)", changed);
+      }
+      return changed;
+    });
   }
 
   // -------------------------------------------------------------------------

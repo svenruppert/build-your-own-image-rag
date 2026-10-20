@@ -8,6 +8,10 @@ public class OllamaConfig {
    * Default model for both vision analysis and text generation.
    */
   private static final String DEFAULT_GENERATION_MODEL = "gemma4:31b";
+  /**
+   * Default request timeout in seconds; large models need generous limits.
+   */
+  public static final int DEFAULT_TIMEOUT_SECONDS = 300;
 
   private String host;
   private int port;
@@ -24,7 +28,17 @@ public class OllamaConfig {
     this.textModel = cfg.get("ollama.text.model", DEFAULT_GENERATION_MODEL);
     // embedding.model: read via AppConfig so -Dembedding.model=... or imagerag.properties override works.
     this.embeddingModel = cfg.getEmbeddingModel();
-    this.timeoutSeconds = 300; // large models need more time; override with ollama.timeout.seconds
+    this.timeoutSeconds = parseTimeout(cfg.get("ollama.timeout.seconds",
+                                                String.valueOf(DEFAULT_TIMEOUT_SECONDS)));
+  }
+
+  private static int parseTimeout(String value) {
+    try {
+      int seconds = Integer.parseInt(value.trim());
+      return seconds > 0 ? seconds : DEFAULT_TIMEOUT_SECONDS;
+    } catch (NumberFormatException e) {
+      return DEFAULT_TIMEOUT_SECONDS;
+    }
   }
 
   public String baseUrl() {

@@ -54,6 +54,18 @@ public class SensitivityAssessmentServiceImpl
         flags.add(SensitivityFlag.READABLE_SIGN_OR_TEXT);
         notes.add("Readable text or signage visible");
       }
+
+      // Heuristic until the derivation prompt reports these flags explicitly:
+      // whole-word matches in the vision description.
+      String description = semanticAnalysis.getSummary();
+      if (DescriptionKeywords.matches(DescriptionKeywords.CHILD, description)) {
+        flags.add(SensitivityFlag.CHILD_VISIBLE);
+        notes.add("Description mentions a child");
+      }
+      if (DescriptionKeywords.matches(DescriptionKeywords.PRIVATE_PROPERTY, description)) {
+        flags.add(SensitivityFlag.PRIVATE_PROPERTY_HINT);
+        notes.add("Description hints at private property (house number, doorbell, mailbox, plate)");
+      }
     }
 
     if (flags.isEmpty()) {
@@ -87,7 +99,8 @@ public class SensitivityAssessmentServiceImpl
     }
     if (flags.contains(SensitivityFlag.PERSON_VISIBLE)
         || flags.contains(SensitivityFlag.GPS_DATA_PRESENT)
-        || flags.contains(SensitivityFlag.READABLE_SIGN_OR_TEXT)) {
+        || flags.contains(SensitivityFlag.READABLE_SIGN_OR_TEXT)
+        || flags.contains(SensitivityFlag.PRIVATE_PROPERTY_HINT)) {
       return RiskLevel.REVIEW;
     }
     return RiskLevel.SAFE;

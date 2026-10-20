@@ -9,6 +9,7 @@ import com.svenruppert.imagerag.domain.enums.SeasonHint;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.dto.VisionAnalysisResponse;
 import com.svenruppert.imagerag.ollama.OllamaClient;
+import com.svenruppert.imagerag.ollama.PromptTemplates;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
 import com.svenruppert.imagerag.service.PromptTemplateService;
 import com.svenruppert.imagerag.service.SemanticDerivationService;
@@ -111,8 +112,8 @@ public class SemanticDerivationServiceImpl
         ? promptTemplateService.getActiveContent(PROMPT_KEY).orElse(DERIVATION_PROMPT_TEMPLATE)
         : DERIVATION_PROMPT_TEMPLATE;
 
-    String prompt = promptTemplate.formatted(
-        response.rawDescription().replace("\"", "'"));
+    String prompt = PromptTemplates.fill(promptTemplate,
+                                         response.rawDescription().replace("\"", "'"));
 
     switch (ollamaClient.generateJson(prompt)) {
       case Result.Success<String, String>(String json) -> parseStructuredFields(analysis, json);
@@ -211,13 +212,10 @@ public class SemanticDerivationServiceImpl
   private void applyFallbackHeuristics(SemanticAnalysis analysis, String description) {
     String lower = description != null ? description.toLowerCase() : "";
 
-    analysis.setContainsPerson(lower.contains("person") || lower.contains("people")
-                                   || lower.contains("man") || lower.contains("woman") || lower.contains("child"));
-    analysis.setContainsVehicle(lower.contains("car") || lower.contains("vehicle")
-                                    || lower.contains("truck") || lower.contains("bus"));
-    analysis.setContainsReadableText(lower.contains("sign") || lower.contains("text")
-                                         || lower.contains("inscription") || lower.contains("label"));
-    analysis.setContainsLicensePlateHint(lower.contains("license plate") || lower.contains("number plate"));
+    analysis.setContainsPerson(DescriptionKeywords.matches(DescriptionKeywords.PERSON, lower));
+    analysis.setContainsVehicle(DescriptionKeywords.matches(DescriptionKeywords.VEHICLE, lower));
+    analysis.setContainsReadableText(DescriptionKeywords.matches(DescriptionKeywords.READABLE_TEXT, lower));
+    analysis.setContainsLicensePlateHint(DescriptionKeywords.matches(DescriptionKeywords.LICENSE_PLATE, lower));
 
     if (lower.contains("flower") || lower.contains("blossom") || lower.contains("petal")) {
       analysis.setSourceCategory(SourceCategory.FLOWER);

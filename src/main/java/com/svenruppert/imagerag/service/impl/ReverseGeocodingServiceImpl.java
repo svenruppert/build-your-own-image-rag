@@ -12,6 +12,8 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Reverse geocoding via Nominatim (OSM) — no API key required, rate-limited to 1 req/s.
@@ -21,14 +23,29 @@ public class ReverseGeocodingServiceImpl
     implements ReverseGeocodingService, HasLogger {
 
   private static final String NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse";
+  /**
+   * Minimum gap between two Nominatim requests (usage policy: at most 1 request/s).
+   */
+  public static final long MIN_REQUEST_INTERVAL_MILLIS = 1100;
+  /**
+   * Connect and request timeout for Nominatim calls.
+   */
+  public static final int REQUEST_TIMEOUT_SECONDS = 10;
 
   private final HttpClient httpClient;
   private final ObjectMapper objectMapper;
-  private long lastRequestTime = 0L;
+  /**
+   * Serializes requests across ingestion workers so the rate limit holds globally.
+   */
+  private final ReentrantLock rateLimitLock = new ReentrantLock(true);
+  /**
+   * Monotonic timestamp of the last request; guarded by {@link #rateLimitLock}.
+   */
+  private long lastRequestNanos = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(MIN_REQUEST_INTERVAL_MILLIS);
 
   public ReverseGeocodingServiceImpl() {
     this.httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(10))
+        .connectTimeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
         .build();
     this.objectMapper = new ObjectMapper();
   }
@@ -36,20 +53,14 @@ public class ReverseGeocodingServiceImpl
   @Override
   public LocationSummary reverseGeocode(double latitude, double longitude) {
     try {
-      // Nominatim rate limit: 1 request/second
-      long now = System.currentTimeMillis();
-      long elapsed = now - lastRequestTime;
-      if (elapsed < 1100) {
-        Thread.sleep(1100 - elapsed);
-      }
-      lastRequestTime = System.currentTimeMillis();
+      awaitRequestSlot();
 
       String url = NOMINATIM_URL + "?lat=" + latitude + "&lon=" + longitude
           + "&format=json&accept-language=en";
 
       HttpRequest request = HttpRequest.newBuilder()
           .uri(URI.create(url))
-          .timeout(Duration.ofSeconds(10))
+          .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
           .header("User-Agent", "ImageRAG-Demo/1.0")
           .GET()
           .build();
@@ -77,6 +88,24 @@ public class ReverseGeocodingServiceImpl
     } catch (Exception e) {
       logger().error("Reverse geocoding failed for ({}, {}): {}", latitude, longitude, e.getMessage());
       return fallback(latitude, longitude);
+    }
+  }
+
+  /**
+   * Blocks until the next request is allowed by the Nominatim rate limit.
+   */
+  private void awaitRequestSlot()
+      throws InterruptedException {
+    rateLimitLock.lockInterruptibly();
+    try {
+      long minGap = TimeUnit.MILLISECONDS.toNanos(MIN_REQUEST_INTERVAL_MILLIS);
+      long wait = lastRequestNanos + minGap - System.nanoTime();
+      if (wait > 0) {
+        TimeUnit.NANOSECONDS.sleep(wait);
+      }
+      lastRequestNanos = System.nanoTime();
+    } finally {
+      rateLimitLock.unlock();
     }
   }
 

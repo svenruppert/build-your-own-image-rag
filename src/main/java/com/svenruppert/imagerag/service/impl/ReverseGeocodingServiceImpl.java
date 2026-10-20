@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.dependencies.core.net.HttpStatus;
 import com.svenruppert.imagerag.domain.LocationSummary;
@@ -24,15 +26,9 @@ public class ReverseGeocodingServiceImpl
 
   private static final String NOMINATIM_URL = "https://nominatim.openstreetmap.org/reverse";
   /**
-   * Minimum gap between two Nominatim requests (usage policy: at most 1 request/s).
+   * Rebuilt when the timeout setting changes.
    */
-  public static final long MIN_REQUEST_INTERVAL_MILLIS = 1100;
-  /**
-   * Connect and request timeout for Nominatim calls.
-   */
-  public static final int REQUEST_TIMEOUT_SECONDS = 10;
-
-  private final HttpClient httpClient;
+  private volatile HttpClient httpClient;
   private final ObjectMapper objectMapper;
   /**
    * Serializes requests across ingestion workers so the rate limit holds globally.
@@ -41,13 +37,37 @@ public class ReverseGeocodingServiceImpl
   /**
    * Monotonic timestamp of the last request; guarded by {@link #rateLimitLock}.
    */
-  private long lastRequestNanos = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(MIN_REQUEST_INTERVAL_MILLIS);
+  private long lastRequestNanos = System.nanoTime() - TimeUnit.MILLISECONDS.toNanos(minRequestIntervalMillis());
 
   public ReverseGeocodingServiceImpl() {
-    this.httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
-        .build();
+    this.httpClient = buildHttpClient();
     this.objectMapper = new ObjectMapper();
+    SettingsService.getInstance().addListener(change -> {
+      if (change.setting() == Settings.GEOCODING_TIMEOUT_SECONDS) {
+        httpClient = buildHttpClient();
+      }
+    });
+  }
+
+  private static HttpClient buildHttpClient() {
+    return HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(requestTimeoutSeconds()))
+        .build();
+  }
+
+  /**
+   * Minimum gap between two Nominatim requests (usage policy: at most one request per
+   * second); see {@link Settings#GEOCODING_MIN_INTERVAL_MILLIS}.
+   */
+  private static long minRequestIntervalMillis() {
+    return SettingsService.getInstance().get(Settings.GEOCODING_MIN_INTERVAL_MILLIS);
+  }
+
+  /**
+   * Connect and request timeout for Nominatim calls ({@link Settings#GEOCODING_TIMEOUT_SECONDS}).
+   */
+  private static int requestTimeoutSeconds() {
+    return SettingsService.getInstance().get(Settings.GEOCODING_TIMEOUT_SECONDS);
   }
 
   @Override
@@ -60,7 +80,7 @@ public class ReverseGeocodingServiceImpl
 
       HttpRequest request = HttpRequest.newBuilder()
           .uri(URI.create(url))
-          .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SECONDS))
+          .timeout(Duration.ofSeconds(requestTimeoutSeconds()))
           .header("User-Agent", "ImageRAG-Demo/1.0")
           .GET()
           .build();
@@ -98,7 +118,7 @@ public class ReverseGeocodingServiceImpl
       throws InterruptedException {
     rateLimitLock.lockInterruptibly();
     try {
-      long minGap = TimeUnit.MILLISECONDS.toNanos(MIN_REQUEST_INTERVAL_MILLIS);
+      long minGap = TimeUnit.MILLISECONDS.toNanos(minRequestIntervalMillis());
       long wait = lastRequestNanos + minGap - System.nanoTime();
       if (wait > 0) {
         TimeUnit.NANOSECONDS.sleep(wait);

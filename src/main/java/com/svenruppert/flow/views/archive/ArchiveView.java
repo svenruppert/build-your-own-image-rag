@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.archive;
 
+import com.svenruppert.imagerag.domain.enums.AuditAction;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
@@ -247,7 +248,7 @@ public class ArchiveView
     try {
       services.restoreImage(asset.getId());
       services.audit()
-          .log("RESTORE", asset.getId(), asset.getOriginalFilename(),
+          .log(AuditAction.RESTORE, asset.getId(), asset.getOriginalFilename(),
                "Restored from archive view");
       Notification n = Notification.show(
           getTranslation("archive.restore.success", asset.getOriginalFilename()),
@@ -296,7 +297,7 @@ public class ArchiveView
     try {
       services.deleteImage(asset.getId());
       services.audit()
-          .log("PERMANENT_DELETE", asset.getId(), asset.getOriginalFilename(),
+          .log(AuditAction.PERMANENT_DELETE, asset.getId(), asset.getOriginalFilename(),
                "Permanently deleted from archive view");
       Notification n = Notification.show(
           getTranslation("archive.deleted.success", asset.getOriginalFilename()),
@@ -319,7 +320,7 @@ public class ArchiveView
       try {
         services.restoreImage(asset.getId());
         services.audit()
-            .log("RESTORE", asset.getId(), asset.getOriginalFilename(),
+            .log(AuditAction.RESTORE, asset.getId(), asset.getOriginalFilename(),
                  "Batch restored from archive view");
         succeeded++;
       } catch (Exception ex) {
@@ -370,7 +371,7 @@ public class ArchiveView
       try {
         services.deleteImage(asset.getId());
         services.audit()
-            .log("PERMANENT_DELETE", asset.getId(), asset.getOriginalFilename(),
+            .log(AuditAction.PERMANENT_DELETE, asset.getId(), asset.getOriginalFilename(),
                  "Batch permanently deleted from archive view");
         succeeded++;
       } catch (Exception ex) {

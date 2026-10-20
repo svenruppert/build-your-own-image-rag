@@ -1,7 +1,7 @@
 package com.svenruppert.flow.views.shared;
 
+import com.svenruppert.imagerag.settings.SettingsService;
 import com.svenruppert.imagerag.bootstrap.ServiceRegistry;
-import com.svenruppert.imagerag.domain.ProcessingSettings;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
 import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
@@ -37,8 +37,8 @@ public class ViewServices {
     return imagePreviews;
   }
 
-  public ProcessingSettings processingSettings() {
-    return registry.getProcessingSettings();
+  public SettingsService settings() {
+    return registry.getSettingsService();
   }
 
   public PersistenceService persistence() {
@@ -132,9 +132,5 @@ public class ViewServices {
 
   public void rebuildKeywordIndex() {
     registry.rebuildKeywordIndex();
-  }
-
-  public void updateSearchParallelism(int parallelism) {
-    registry.updateSearchParallelism(parallelism);
   }
 }

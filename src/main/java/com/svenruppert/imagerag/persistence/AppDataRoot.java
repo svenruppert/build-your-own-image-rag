@@ -103,6 +103,12 @@ public class AppDataRoot {
    */
   private List<PromptTemplateVersion> promptVersions;
 
+  /**
+   * User overrides of runtime settings, keyed by setting key (value as text).
+   * Not declared final for EclipseStore Unsafe reconstruction compatibility.
+   */
+  private Map<String, String> settingOverrides;
+
   public Map<UUID, ImageAsset> getImages() {
     return images;
   }
@@ -252,5 +258,15 @@ public class AppDataRoot {
       promptVersions = new ArrayList<>();
     }
     return promptVersions;
+  }
+
+  /**
+   * Returns the setting-override map, lazily initialising it if null.
+   */
+  public Map<String, String> getSettingOverrides() {
+    if (settingOverrides == null) {
+      settingOverrides = new HashMap<>();
+    }
+    return settingOverrides;
   }
 }

@@ -3,6 +3,9 @@ package com.svenruppert.imagerag.persistence;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.*;
+import com.svenruppert.imagerag.settings.Settings;
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.SettingsStore;
 import org.eclipse.store.storage.embedded.types.EmbeddedStorage;
 import org.eclipse.store.storage.embedded.types.EmbeddedStorageManager;
 
@@ -24,13 +27,8 @@ import static java.util.List.of;
  * Collection getters return immutable copies.
  */
 public class PersistenceService
-    implements HasLogger {
+    implements HasLogger, SettingsStore {
 
-  private static final int MAX_RECENT_SEARCHES = 20;
-  /**
-   * Maximum number of audit entries kept; older entries are dropped.
-   */
-  public static final int MAX_AUDIT_ENTRIES = 500;
   private final EmbeddedStorageManager storage;
   private final AppDataRoot root;
   private final ReadWriteLock lock = new ReentrantReadWriteLock();
@@ -88,6 +86,7 @@ public class PersistenceService
       existingRoot.getTuningPresets();       // lazy init if null (added for Search Tuning Lab)
       existingRoot.getClusterSuggestions();  // lazy init if null (added for cluster discovery)
       existingRoot.getPromptVersions();      // lazy init if null (added for migration center)
+      existingRoot.getSettingOverrides();    // lazy init if null (added for runtime settings)
       storage.store(existingRoot);           // persist updated field references
       migrateEnumSets();                  // fix any EnumSet fields broken by Unsafe reconstruction
       logger().info("EclipseStore loaded existing data: {} images, {} approved, {} recent searches",
@@ -405,7 +404,8 @@ public class PersistenceService
 
   /**
    * Prepends the search entry to the recent-search list (case-insensitive deduplication
-   * on the original query), then trims the list to {@value #MAX_RECENT_SEARCHES} entries
+   * on the original query), then trims the list to the configured
+   * {@link Settings#SEARCH_RECENT_MAX} number of entries
    * and persists.
    *
    * @param query      the original user query
@@ -427,7 +427,8 @@ public class PersistenceService
         }
       }
       recent.addFirst(new RecentSearchEntry(trimmed, finalQuery, mode, Instant.now()));
-      while (recent.size() > MAX_RECENT_SEARCHES) {
+      int maxRecent = SettingsService.getInstance().get(Settings.SEARCH_RECENT_MAX);
+      while (recent.size() > maxRecent) {
         recent.removeLast();
       }
       storage.store(recent);
@@ -581,7 +582,8 @@ public class PersistenceService
     write(() -> {
       List<AuditEntry> log = root.getAuditLog();
       log.addFirst(entry);
-      while (log.size() > MAX_AUDIT_ENTRIES) log.removeLast();
+      int maxEntries = SettingsService.getInstance().get(Settings.AUDIT_MAX_ENTRIES);
+      while (log.size() > maxEntries) log.removeLast();
       storage.store(log);
     });
   }
@@ -589,6 +591,40 @@ public class PersistenceService
   public List<AuditEntry> getAuditLog() {
     return read(() -> {
       return List.copyOf(root.getAuditLog());
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Runtime setting overrides
+  // -------------------------------------------------------------------------
+
+  @Override
+  public Map<String, String> loadSettingOverrides() {
+    return read(() -> Map.copyOf(root.getSettingOverrides()));
+  }
+
+  @Override
+  public void putSettingOverride(String key, String value) {
+    write(() -> {
+      root.getSettingOverrides().put(key, value);
+      storage.store(root.getSettingOverrides());
+    });
+  }
+
+  @Override
+  public void removeSettingOverride(String key) {
+    write(() -> {
+      if (root.getSettingOverrides().remove(key) != null) {
+        storage.store(root.getSettingOverrides());
+      }
+    });
+  }
+
+  @Override
+  public void clearSettingOverrides() {
+    write(() -> {
+      root.getSettingOverrides().clear();
+      storage.store(root.getSettingOverrides());
     });
   }
 

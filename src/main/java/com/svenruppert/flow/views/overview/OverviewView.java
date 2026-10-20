@@ -11,6 +11,7 @@ import com.svenruppert.flow.views.shared.RiskBadge;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.shared.ViewModeToggle;
 import com.svenruppert.imagerag.domain.*;
+import com.svenruppert.imagerag.domain.enums.AuditAction;
 import com.svenruppert.imagerag.domain.enums.RiskLevel;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
 import com.svenruppert.imagerag.persistence.PersistenceService;
@@ -59,6 +60,13 @@ public class OverviewView
   public static final String PATH = "overview";
   private static final int PAGE_SIZE = 30;
   private static final String VIS_ALL = "all";
+  // Audit and archive reasons are stored data: fixed English text, never UI-language dependent.
+  private static final String REASON_BATCH = "Batch action from overview";
+  private static final String REASON_BATCH_ARCHIVE = "Batch archive from overview";
+  private static final String REASON_SINGLE_ARCHIVE = "User archived from overview";
+  private static final String REASON_MANUAL = "Manual change from overview";
+  private static final String REASON_RISK_SAFE = "Risk level set to SAFE in overview";
+  private static final String REASON_RISK_NOT_SAFE = "Risk level set above SAFE in overview";
   private static final String VIS_APPROVED = "approved";
   private static final String VIS_LOCKED = "locked";
   private final Grid<ImageAsset> grid = new Grid<>(ImageAsset.class, false);
@@ -230,7 +238,10 @@ public class OverviewView
   private void batchApprove() {
     PersistenceService ps = services.persistence();
     Set<ImageAsset> selected = grid.getSelectedItems();
-    selected.forEach(a -> ps.approveImage(a.getId()));
+    selected.forEach(a -> {
+      ps.approveImage(a.getId());
+      services.audit().log(AuditAction.APPROVE, a.getId(), a.getOriginalFilename(), REASON_BATCH);
+    });
     showNotification(getTranslation("overview.batch.approved", selected.size()), true);
     loadData();
   }
@@ -238,7 +249,10 @@ public class OverviewView
   private void batchLock() {
     PersistenceService ps = services.persistence();
     Set<ImageAsset> selected = grid.getSelectedItems();
-    selected.forEach(a -> ps.unapproveImage(a.getId()));
+    selected.forEach(a -> {
+      ps.unapproveImage(a.getId());
+      services.audit().log(AuditAction.UNAPPROVE, a.getId(), a.getOriginalFilename(), REASON_BATCH);
+    });
     showNotification(getTranslation("overview.batch.locked", selected.size()), false);
     loadData();
   }
@@ -247,9 +261,9 @@ public class OverviewView
     PersistenceService ps = services.persistence();
     Set<ImageAsset> selected = grid.getSelectedItems();
     selected.forEach(a -> {
-      ps.softDeleteImage(a.getId(), getTranslation("overview.archive.reason.batch"));
+      ps.softDeleteImage(a.getId(), REASON_BATCH_ARCHIVE);
       services.audit()
-          .log("SOFT_DELETE", a.getId(), a.getOriginalFilename(), "Batch archive from overview");
+          .log(AuditAction.SOFT_DELETE, a.getId(), a.getOriginalFilename(), REASON_BATCH_ARCHIVE);
     });
     showNotification(getTranslation("overview.batch.archived", selected.size()), false);
     loadData();
@@ -593,8 +607,17 @@ public class OverviewView
     sel.addValueChangeListener(e -> {
       if (e.getValue() != null && e.getValue() != e.getOldValue()) {
         ps.updateRiskLevel(asset.getId(), e.getValue());
-        if (e.getValue() == RiskLevel.SAFE) ps.approveImage(asset.getId());
-        else ps.unapproveImage(asset.getId());
+        services.audit().log(AuditAction.RISK_CHANGE, asset.getId(), asset.getOriginalFilename(),
+                             e.getOldValue() + " -> " + e.getValue());
+        if (e.getValue() == RiskLevel.SAFE) {
+          ps.approveImage(asset.getId());
+          services.audit().log(AuditAction.APPROVE, asset.getId(), asset.getOriginalFilename(),
+                               REASON_RISK_SAFE);
+        } else {
+          ps.unapproveImage(asset.getId());
+          services.audit().log(AuditAction.UNAPPROVE, asset.getId(), asset.getOriginalFilename(),
+                               REASON_RISK_NOT_SAFE);
+        }
         showNotification(getTranslation("overview.risk.updated", e.getValue().name()), true);
         loadData();
       }
@@ -623,9 +646,13 @@ public class OverviewView
     btn.addClickListener(e -> {
       if (approved) {
         ps.unapproveImage(asset.getId());
+        services.audit().log(AuditAction.UNAPPROVE, asset.getId(), asset.getOriginalFilename(),
+                             REASON_MANUAL);
         showNotification(getTranslation("overview.locked", asset.getOriginalFilename()), false);
       } else {
         ps.approveImage(asset.getId());
+        services.audit().log(AuditAction.APPROVE, asset.getId(), asset.getOriginalFilename(),
+                             REASON_MANUAL);
         showNotification(getTranslation("overview.approved", asset.getOriginalFilename()), true);
       }
       loadData();
@@ -685,9 +712,9 @@ public class OverviewView
 
   private void softDeleteImage(ImageAsset asset) {
     PersistenceService ps = services.persistence();
-    ps.softDeleteImage(asset.getId(), getTranslation("overview.archive.reason.single"));
+    ps.softDeleteImage(asset.getId(), REASON_SINGLE_ARCHIVE);
     services.audit()
-        .log("SOFT_DELETE", asset.getId(), asset.getOriginalFilename(), "User archived from overview");
+        .log(AuditAction.SOFT_DELETE, asset.getId(), asset.getOriginalFilename(), REASON_SINGLE_ARCHIVE);
     showNotification(getTranslation("overview.archived", asset.getOriginalFilename()), false);
     loadData();
   }
@@ -696,7 +723,8 @@ public class OverviewView
     try {
       services.deleteImage(asset.getId());
       services.audit()
-          .log("HARD_DELETE", asset.getId(), asset.getOriginalFilename(), "User permanently deleted");
+          .log(AuditAction.PERMANENT_DELETE, asset.getId(), asset.getOriginalFilename(),
+               "Permanently deleted from overview");
       showNotification(getTranslation("overview.deleted", asset.getOriginalFilename()), false);
       loadData();
     } catch (Exception ex) {

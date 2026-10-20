@@ -2,6 +2,7 @@ package com.svenruppert.flow.views.migration;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
+import com.svenruppert.flow.views.settings.SettingsView;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.ollama.PromptTemplates;
@@ -34,6 +35,7 @@ import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
 import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
+import com.vaadin.flow.router.RouterLink;
 
 import java.nio.file.Files;
 import java.time.ZoneId;
@@ -217,6 +219,11 @@ public class MigrationCenterView
 
   private Component buildSystemConfigTab() {
     VerticalLayout tab = tabLayout();
+
+    Span settingsHint = new Span(getTranslation("migration.config.settings.hint") + " ");
+    settingsHint.add(new RouterLink(getTranslation("nav.settings"), SettingsView.class));
+    settingsHint.getStyle().set("font-size", "var(--lumo-font-size-s)");
+    tab.add(settingsHint);
 
     tab.add(sectionHeading(getTranslation("migration.config.models")));
     tab.add(configRow(getTranslation("migration.config.vision.model"),

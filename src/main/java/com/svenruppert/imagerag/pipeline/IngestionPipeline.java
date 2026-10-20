@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.pipeline;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.functional.result.Result;
 import com.svenruppert.imagerag.domain.*;
@@ -15,7 +17,6 @@ import com.svenruppert.imagerag.service.*;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -27,22 +28,15 @@ import java.util.concurrent.*;
 /**
  * Asynchronous ingestion pipeline for uploads and reprocessing jobs.
  * <p>Jobs run on a bounded executor of virtual threads; the number of concurrent workers
- * is set via {@link #updateParallelism} (1 to {@value #MAX_PARALLELISM}). Each job can be
+ * is set via {@link #updateParallelism} (bounded by {@link Settings#PIPELINE_INGESTION_PARALLELISM}). Each job can be
  * cancelled via {@link #cancel}, and the whole pipeline can be paused between steps.
  * <p>Jobs are kept in a {@link CopyOnWriteArrayList} so the pipeline view can read them
- * without locks. Only the most recent {@value #MAX_FINISHED_JOBS} finished jobs are kept.
+ * without locks. Only the most recent finished jobs are kept
+ * ({@link com.svenruppert.imagerag.settings.Settings#PIPELINE_MAX_FINISHED_JOBS}).
  */
 public class IngestionPipeline
     implements HasLogger {
 
-  /**
-   * Upper bound for the number of concurrent ingestion workers.
-   */
-  public static final int MAX_PARALLELISM = 6;
-  /**
-   * Number of finished (terminal) jobs kept for display; older ones are pruned.
-   */
-  public static final int MAX_FINISHED_JOBS = 200;
   /**
    * Note added to the sensitivity assessment when the vision analysis failed.
    */
@@ -181,22 +175,6 @@ public class IngestionPipeline
   }
 
   /**
-   * Submits an image for async processing.
-   * The InputStream is buffered immediately so the caller (Vaadin Upload handler)
-   * can return without risk of the stream being closed.
-   *
-   * @return the created {@link IngestionJob} for status tracking
-   */
-  public IngestionJob submit(InputStream inputStream, String filename, String mimeType)
-      throws IOException {
-    byte[] data = inputStream.readAllBytes();
-    IngestionJob job = new IngestionJob(filename, mimeType);
-    enqueue(job, () -> process(job, data), null);
-    logger().info("Job queued: {} ({})", filename, job.getJobId());
-    return job;
-  }
-
-  /**
    * Submits an image for processing from a temp file written by the upload component.
    * <p>No bytes are read here — the pipeline reads the file only when the job starts,
    * keeping peak memory at {@code parallelism × max_file_size}. The temp file is deleted
@@ -266,20 +244,18 @@ public class IngestionPipeline
     return Collections.unmodifiableList(jobs);
   }
 
-  public long countByStep(JobStep step) {
-    return jobs.stream().filter(j -> j.getCurrentStep() == step).count();
-  }
-
   /**
    * Dynamically changes the number of concurrent ingestion workers.
    * <p>The current executor is shut down gracefully (already-running and queued
    * jobs still complete on it). A new executor with the requested thread count is
-   * installed for future submissions. The value is clamped to [1, {@value #MAX_PARALLELISM}].
+   * installed for future submissions. The value is clamped to the bounds of
+   * {@link Settings#PIPELINE_INGESTION_PARALLELISM}.
    *
    * @param parallelism desired number of concurrent workers
    */
   public synchronized void updateParallelism(int parallelism) {
-    int clamped = Math.clamp(parallelism, 1, MAX_PARALLELISM);
+    int clamped = Math.clamp(parallelism, Settings.PIPELINE_INGESTION_PARALLELISM.min(),
+                             Settings.PIPELINE_INGESTION_PARALLELISM.max());
     ThreadPoolExecutor old = executor;
     // A fresh queue lets the old executor drain its queue without interference.
     // promote() reads workQueue via a volatile read, so new submissions use the new queue.
@@ -349,11 +325,12 @@ public class IngestionPipeline
   }
 
   /**
-   * Drops the oldest finished jobs so that at most {@value #MAX_FINISHED_JOBS} remain.
+   * Drops the oldest finished jobs so that at most
+   * {@link Settings#PIPELINE_MAX_FINISHED_JOBS} remain.
    */
   private void pruneFinishedJobs() {
     List<IngestionJob> finished = jobs.stream().filter(IngestionJob::isTerminal).toList();
-    int excess = finished.size() - MAX_FINISHED_JOBS;
+    int excess = finished.size() - SettingsService.getInstance().get(Settings.PIPELINE_MAX_FINISHED_JOBS);
     if (excess > 0) {
       jobs.removeAll(finished.subList(0, excess));
     }

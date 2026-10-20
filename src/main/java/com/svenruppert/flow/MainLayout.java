@@ -9,6 +9,7 @@ import com.svenruppert.flow.views.multimodal.MultimodalSearchView;
 import com.svenruppert.flow.views.overview.OverviewView;
 import com.svenruppert.flow.views.pipeline.PipelineView;
 import com.svenruppert.flow.views.search.SearchView;
+import com.svenruppert.flow.views.settings.SettingsView;
 import com.svenruppert.flow.views.taxonomy.TaxonomyMaintenanceView;
 import com.svenruppert.flow.views.tuning.SearchTuningView;
 import com.svenruppert.flow.views.upload.UploadView;
@@ -105,40 +106,11 @@ public class MainLayout
         new SideNavItem(getTranslation("nav.taxonomy"), "/" + TaxonomyMaintenanceView.PATH, TAG.create()),
         new SideNavItem(getTranslation("nav.tuning"), "/" + SearchTuningView.PATH, CHART_LINE.create()),
         new SideNavItem(getTranslation("nav.migration"), "/" + MigrationCenterView.PATH, COG.create()),
+        new SideNavItem(getTranslation("nav.settings"), "/" + SettingsView.PATH, SLIDERS.create()),
         new SideNavItem(getTranslation("nav.dashboard"), "/" + DashboardView.PATH, DASHBOARD.create()),
         new SideNavItem(getTranslation("nav.youtube"), "/" + YoutubeView.PATH, CART.create()),
         new SideNavItem(getTranslation("nav.about"), "/" + AboutView.PATH, USER_HEART.create())
     );
     return sideNav;
   }
-
-  //  private HorizontalLayout getSecondaryNavigation() {
-  //    HorizontalLayout navigation = new HorizontalLayout();
-  //    navigation.addClassNames(LumoUtility.JustifyContent.CENTER,
-  //                             LumoUtility.Gap.SMALL, LumoUtility.Height.MEDIUM);
-  //    //TODO i18n
-  //    RouterLink all = createLink("All");
-  //    RouterLink open = createLink("Open");
-  //    RouterLink completed = createLink("Completed");
-  //    RouterLink cancelled = createLink("Cancelled");
-  //
-  //    navigation.add(all, open, completed, cancelled);
-  //    return navigation;
-  //  }
-  //
-  //  private RouterLink createLink(String viewName) {
-  //    RouterLink link = new RouterLink();
-  //    link.add(viewName);
-  //    // Demo has no routes
-  //     //link.setRoute(YoutubeView.class);
-  //
-  //    link.addClassNames(LumoUtility.Display.FLEX,
-  //                       LumoUtility.AlignItems.CENTER,
-  //                       LumoUtility.Padding.Horizontal.MEDIUM,
-  //                       LumoUtility.TextColor.SECONDARY,
-  //                       LumoUtility.FontWeight.MEDIUM);
-  //    link.getStyle().set("text-decoration", "none");
-  //
-  //    return link;
-  //  }
 }

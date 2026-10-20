@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.imagerag.domain.CategoryConfidence;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SearchTuningConfig;
@@ -15,22 +17,38 @@ import java.util.UUID;
  */
 final class SearchScoring {
 
-  /**
-   * Number of vector candidates retrieved per query.
-   */
-  static final int VECTOR_CANDIDATES = 50;
-  /**
-   * Number of BM25 candidates retrieved per query.
-   */
-  static final int KEYWORD_CANDIDATES = VECTOR_CANDIDATES * 2;
-  /**
-   * Confidence-boost weight used by the standard (non-tuning) search.
-   */
-  static final double STANDARD_CONFIDENCE_WEIGHT = 0.15;
 
   private static final QueryIntentResolver INTENT_RESOLVER = new QueryIntentResolver();
 
   private SearchScoring() {
+  }
+
+  /**
+   * Number of vector candidates retrieved per query ({@link Settings#SEARCH_VECTOR_CANDIDATES}).
+   */
+  static int vectorCandidates() {
+    return SettingsService.getInstance().get(Settings.SEARCH_VECTOR_CANDIDATES);
+  }
+
+  /**
+   * Number of BM25 candidates retrieved per query ({@link Settings#SEARCH_KEYWORD_CANDIDATES}).
+   */
+  static int keywordCandidates() {
+    return SettingsService.getInstance().get(Settings.SEARCH_KEYWORD_CANDIDATES);
+  }
+
+  /**
+   * Confidence-boost weight of the standard search ({@link Settings#SEARCH_CONFIDENCE_WEIGHT}).
+   */
+  static double standardConfidenceWeight() {
+    return SettingsService.getInstance().get(Settings.SEARCH_CONFIDENCE_WEIGHT);
+  }
+
+  /**
+   * RRF rank constant k ({@link Settings#SEARCH_RRF_K}).
+   */
+  static int rrfK() {
+    return SettingsService.getInstance().get(Settings.SEARCH_RRF_K);
   }
 
   /**

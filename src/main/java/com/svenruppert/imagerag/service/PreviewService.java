@@ -42,32 +42,6 @@ public interface PreviewService {
                             PreviewSize size);
 
   /**
-   * @deprecated Use {@link #previewPath(UUID, PreviewSize)} with {@link PreviewSize#TILE}.
-   */
-  @Deprecated
-  default Path tilePreviewPath(UUID imageId) {
-    return previewPath(imageId, PreviewSize.TILE);
-  }
-
-  // ── Convenience shorthands ────────────────────────────────────────────────
-
-  /**
-   * @deprecated Use {@link #previewExists(UUID, PreviewSize)} with {@link PreviewSize#TILE}.
-   */
-  @Deprecated
-  default boolean tilePreviewExists(UUID imageId) {
-    return previewExists(imageId, PreviewSize.TILE);
-  }
-
-  /**
-   * Returns a {@link StreamResource} for the TILE-sized preview.
-   * Kept for backward compatibility — delegates to {@link #getPreview} with {@link PreviewSize#TILE}.
-   */
-  default StreamResource getTilePreview(UUID imageId, Path originalPath, String resourceName) {
-    return getPreview(imageId, originalPath, resourceName, PreviewSize.TILE);
-  }
-
-  /**
    * Deletes all cached preview files for the given image from disk.
    * <p>Called as part of permanent image deletion to reclaim disk space.
    * Safe to call even if no cached previews exist — missing files are silently ignored.

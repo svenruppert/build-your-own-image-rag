@@ -63,20 +63,4 @@ public enum VectorBackendType {
       default -> IN_MEMORY;
     };
   }
-
-  /**
-   * Resolves the backend type from the {@value #PROPERTY_KEY} JVM system property only.
-   * Falls back to {@link #IN_MEMORY} when the property is absent or unrecognised.
-   *
-   * @return the resolved backend type, never {@code null}
-   * @deprecated Prefer {@link #fromConfig()} which also reads {@code imagerag.properties}.
-   */
-  @Deprecated
-  public static VectorBackendType fromSystemProperty() {
-    String raw = System.getProperty(PROPERTY_KEY, VALUE_IN_MEMORY).trim().toLowerCase();
-    return switch (raw) {
-      case VALUE_GIGAMAP_JVECTOR -> GIGAMAP_JVECTOR;
-      default -> IN_MEMORY;
-    };
-  }
 }

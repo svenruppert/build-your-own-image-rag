@@ -10,17 +10,12 @@ import com.vaadin.flow.shared.communication.PushMode;
 import com.vaadin.flow.theme.Theme;
 
 /**
- * Typical use cases of AppShell
- * ✅ Viewport & mobile optimization
- * ✅ Setting metadata (SEO, security)
- * ✅ Favicons, touch icons
- * ✅ Global JavaScript snippets (analytics, monitoring)
- * ✅ Global CSS (e.g., corporate branding)
- * ✅ Selecting a theme for the entire app
+ * Application shell: page metadata, viewport, PWA manifest, theme and server push
+ * for the whole application.
  */
 @Meta(name = "author", content = "Sven Ruppert")
 @Viewport("width=device-width, initial-scale=1.0")
-@PWA(name = "Project Base for Vaadin", shortName = "Project Base")
+@PWA(name = "Image RAG", shortName = "Image RAG")
 @Theme("my-theme")
 @Push(PushMode.AUTOMATIC)
 public class AppShell
@@ -28,18 +23,6 @@ public class AppShell
 
   @Override
   public void configurePage(AppShellSettings settings) {
-
-    //    settings.addFavIcon("icon",
-    //                        "icons/my-favicon.png",
-    //                        "32x32");
-    //
-    //    // Externes CSS
-    //    settings.addLink("stylesheet",
-    //                     "https://cdn.example.com/styles/global.css");
-    //
-    //    // Externes Script
-    //    settings.addInlineWithContents(
-    //        "console.log('Hello from AppShell!');",
-    //        Inline.Wrapping.AUTOMATIC);
+    // No additional page settings; the annotations above configure the shell.
   }
 }

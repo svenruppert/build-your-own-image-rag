@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.upload;
 
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.dependencies.core.net.MediaType;
 import com.svenruppert.flow.MainLayout;
@@ -53,8 +54,9 @@ public class UploadView
     // MediaType has no IMAGE_BMP constant yet, so that one stays a literal.
     upload.setAcceptedFileTypes(MediaType.IMAGE_JPEG.mime(), MediaType.IMAGE_PNG.mime(),
         MediaType.IMAGE_WEBP.mime(), MediaType.IMAGE_GIF.mime(), "image/bmp");
-    upload.setMaxFiles(200);
-    upload.setMaxFileSize(50 * 1024 * 1024); // 50 MB per file
+    // Limits are read when the view is created (Settings view, category PIPELINE)
+    upload.setMaxFiles(services.settings().get(Settings.UPLOAD_MAX_FILES));
+    upload.setMaxFileSize(services.settings().get(Settings.UPLOAD_MAX_FILE_SIZE_MB) * 1024 * 1024);
     upload.setWidthFull();
 
     upload.addAllFinishedListener(event ->

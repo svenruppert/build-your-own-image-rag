@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.RetrievalMode;
@@ -16,18 +18,6 @@ import java.util.*;
 public class SearchServiceImpl
     implements SearchService, HasLogger {
 
-  /**
-   * Minimum normalised RRF score for a candidate to be included in results.
-   * bge-m3 produces dense 1024-dim vectors; typical unrelated pairs score well
-   * below 0.5 after RRF normalisation, while semantically related pairs sit
-   * between 0.6–1.0.  A threshold of 0.65 removes clearly unrelated images
-   * while keeping semantically adjacent results.
-   */
-  private static final double MIN_SCORE = 0.65;
-  /**
-   * Maximum number of results returned by the standard search.
-   */
-  private static final int MAX_RESULTS = 5;
   /**
    * Fusion weight of each channel in the standard (unweighted) search.
    */
@@ -69,22 +59,22 @@ public class SearchServiceImpl
 
     // Step 2: Vector similarity search — candidates sorted by descending score
     List<VectorSearchHit> vectorHits = VectorMath.isUsable(queryVector)
-        ? vectorIndexService.search(queryVector, SearchScoring.VECTOR_CANDIDATES)
+        ? vectorIndexService.search(queryVector, SearchScoring.vectorCandidates())
         : List.of();
     logger().info("Vector search returned {} candidates for query: {}", vectorHits.size(), plan.getOriginalQuery());
 
     // Step 3: BM25 keyword search for hybrid retrieval
-    List<KeywordSearchHit> keywordHits = keywordIndexService.search(plan.getEmbeddingText(), SearchScoring.KEYWORD_CANDIDATES);
+    List<KeywordSearchHit> keywordHits = keywordIndexService.search(plan.getEmbeddingText(), SearchScoring.keywordCandidates());
     logger().info("Keyword search returned {} candidates", keywordHits.size());
 
     // Step 4: Reciprocal Rank Fusion — merge vector and keyword rankings
     List<RrfFusion.Candidate> fused = RrfFusion.fuse(vectorIds(vectorHits), keywordIds(keywordHits),
                                                      STANDARD_CHANNEL_WEIGHT, STANDARD_CHANNEL_WEIGHT,
-                                                     RrfFusion.DEFAULT_K);
+                                                     SearchScoring.rrfK());
     double norm = RrfFusion.normalizer(fused);
 
     // Step 5: Apply score threshold + structural filters.
-    double effectiveMin = (plan.getMinScore() != null) ? Math.clamp(plan.getMinScore(), 0.0, 1.0) : MIN_SCORE;
+    double effectiveMin = (plan.getMinScore() != null) ? Math.clamp(plan.getMinScore(), 0.0, 1.0) : settings().get(Settings.SEARCH_MIN_SCORE);
 
     List<SearchResultItem> results = new ArrayList<>();
     for (RrfFusion.Candidate candidate : fused) {
@@ -102,7 +92,7 @@ public class SearchServiceImpl
           if (cc != null
               && CategoryRegistry.getGroup(cc.getPrimaryCategory()) == plan.getCategoryGroup()) {
             normalizedScore = SearchScoring.boosted(normalizedScore,
-                                                    SearchScoring.STANDARD_CONFIDENCE_WEIGHT, cc);
+                                                    SearchScoring.standardConfidenceWeight(), cc);
           }
         }
       }
@@ -133,7 +123,7 @@ public class SearchServiceImpl
       results.add(new SearchResultItem(imageId, title, analysis.getShortSummary(), normalizedScore, analysis.getSourceCategory(), analysis.getSeasonHint(), analysis.getContainsPerson(), riskLevel));
     }
 
-    List<SearchResultItem> finalResults = results.subList(0, Math.min(MAX_RESULTS, results.size()));
+    List<SearchResultItem> finalResults = results.subList(0, Math.min(settings().get(Settings.SEARCH_MAX_RESULTS), results.size()));
     logger().info("Search returned {} results after score+filter pass (threshold={})", finalResults.size(), effectiveMin);
     return new SearchResult(finalResults, vectorHits.size(), keywordHits.size());
   }
@@ -175,20 +165,20 @@ public class SearchServiceImpl
     // ── Step 2: retrieve vector candidates (skip for BM25_ONLY) ──────────
     List<VectorSearchHit> vectorHits = List.of();
     if (config.getRetrievalMode() != RetrievalMode.BM25_ONLY && VectorMath.isUsable(queryVector)) {
-      vectorHits = vectorIndexService.search(queryVector, SearchScoring.VECTOR_CANDIDATES,
+      vectorHits = vectorIndexService.search(queryVector, SearchScoring.vectorCandidates(),
                                              config.getSimilarityFunction());
     }
 
     // ── Step 3: retrieve BM25 candidates (skip for SEMANTIC_ONLY) ────────
     List<KeywordSearchHit> keywordHits = List.of();
     if (config.getRetrievalMode() != RetrievalMode.SEMANTIC_ONLY) {
-      keywordHits = keywordIndexService.search(query, SearchScoring.KEYWORD_CANDIDATES);
+      keywordHits = keywordIndexService.search(query, SearchScoring.keywordCandidates());
     }
 
     // ── Step 4: weighted RRF fusion + normalisation ───────────────────────
     List<RrfFusion.Candidate> fused = RrfFusion.fuse(vectorIds(vectorHits), keywordIds(keywordHits),
                                                      weights.semantic(), weights.keyword(),
-                                                     RrfFusion.DEFAULT_K);
+                                                     SearchScoring.rrfK());
     double norm = RrfFusion.normalizer(fused);
 
     // ── Step 5: prepare relevance-feedback session snapshot ───────────────
@@ -325,20 +315,20 @@ public class SearchServiceImpl
     // ── Step 3: vector and BM25 retrieval ────────────────────────────────
     List<VectorSearchHit> vectorHits = List.of();
     if (config.getRetrievalMode() != RetrievalMode.BM25_ONLY && VectorMath.isUsable(combinedVector)) {
-      vectorHits = vectorIndexService.search(combinedVector, SearchScoring.VECTOR_CANDIDATES,
+      vectorHits = vectorIndexService.search(combinedVector, SearchScoring.vectorCandidates(),
                                              config.getSimilarityFunction());
     }
 
     List<KeywordSearchHit> keywordHits = List.of();
     if (config.getRetrievalMode() != RetrievalMode.SEMANTIC_ONLY
         && !bm25Query.isEmpty()) {
-      keywordHits = keywordIndexService.search(bm25Query.toString(), SearchScoring.KEYWORD_CANDIDATES);
+      keywordHits = keywordIndexService.search(bm25Query.toString(), SearchScoring.keywordCandidates());
     }
 
     // ── Step 4: RRF fusion ────────────────────────────────────────────────
     List<RrfFusion.Candidate> fused = RrfFusion.fuse(vectorIds(vectorHits), keywordIds(keywordHits),
                                                      config.getSemanticWeight(), config.getBm25Weight(),
-                                                     RrfFusion.DEFAULT_K);
+                                                     SearchScoring.rrfK());
     double norm = RrfFusion.normalizer(fused);
 
     // ── Step 5: category-filter signal ────────────────────────────────────
@@ -545,5 +535,9 @@ public class SearchServiceImpl
     double weightSum() {
       return weightSum;
     }
+  }
+
+  private static SettingsService settings() {
+    return SettingsService.getInstance();
   }
 }

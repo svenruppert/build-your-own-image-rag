@@ -1,5 +1,7 @@
 package com.svenruppert.flow.views.taxonomy;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ImagePreviewFactory;
@@ -68,11 +70,6 @@ public class TaxonomyMaintenanceView
 
   private static final DateTimeFormatter DATE_FMT =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
-  /**
-   * Default confidence threshold — read once from imagerag.properties at startup.
-   */
-  private static final double DEFAULT_CONFIDENCE_THRESHOLD =
-      com.svenruppert.imagerag.bootstrap.AppConfig.getInstance().getTaxonomyConfidenceThreshold();
   // ── Services ──────────────────────────────────────────────────────────────
   private final TaxonomyAnalysisService analysisService;
   private final TaxonomySuggestionService suggestionService;
@@ -228,7 +225,7 @@ public class TaxonomyMaintenanceView
 
     // Confidence threshold (visible only in LOW_CONFIDENCE mode)
     thresholdField.setLabel(getTranslation("taxonomy.scope.threshold"));
-    thresholdField.setValue(DEFAULT_CONFIDENCE_THRESHOLD);
+    thresholdField.setValue(defaultConfidenceThreshold());
     thresholdField.setMin(0.0);
     thresholdField.setMax(1.0);
     thresholdField.setStep(0.05);
@@ -353,7 +350,7 @@ public class TaxonomyMaintenanceView
       }
       case LOW_CONFIDENCE -> {
         Double thr = thresholdField.getValue();
-        double threshold = thr != null ? thr : DEFAULT_CONFIDENCE_THRESHOLD;
+        double threshold = thr != null ? thr : defaultConfidenceThreshold();
         long count = persistenceService.findAllImages().stream()
             .filter(a -> {
               Optional<com.svenruppert.imagerag.domain.SemanticAnalysis> an =
@@ -1140,7 +1137,7 @@ public class TaxonomyMaintenanceView
 
       case LOW_CONFIDENCE -> {
         Double threshold = thresholdField.getValue();
-        yield TaxonomyAnalysisScope.lowConfidence(threshold != null ? threshold : DEFAULT_CONFIDENCE_THRESHOLD);
+        yield TaxonomyAnalysisScope.lowConfidence(threshold != null ? threshold : defaultConfidenceThreshold());
       }
     };
   }
@@ -1254,5 +1251,12 @@ public class TaxonomyMaintenanceView
   @Override
   public String getPageTitle() {
     return getTranslation("taxonomy.page.title");
+  }
+
+  /**
+   * Default LOW_CONFIDENCE threshold ({@link Settings#TAXONOMY_CONFIDENCE_THRESHOLD}).
+   */
+  private static double defaultConfidenceThreshold() {
+    return SettingsService.getInstance().get(Settings.TAXONOMY_CONFIDENCE_THRESHOLD);
   }
 }

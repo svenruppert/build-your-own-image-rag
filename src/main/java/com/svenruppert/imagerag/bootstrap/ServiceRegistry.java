@@ -1,7 +1,7 @@
 package com.svenruppert.imagerag.bootstrap;
 
+import com.svenruppert.imagerag.domain.enums.AuditAction;
 import com.svenruppert.dependencies.core.logger.HasLogger;
-import com.svenruppert.imagerag.domain.ProcessingSettings;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
 import com.svenruppert.imagerag.ollama.OllamaClient;
 import com.svenruppert.imagerag.ollama.OllamaConfig;
@@ -13,6 +13,9 @@ import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.pipeline.IngestionPipeline;
 import com.svenruppert.imagerag.service.*;
 import com.svenruppert.imagerag.service.impl.*;
+import com.svenruppert.imagerag.settings.SettingChange;
+import com.svenruppert.imagerag.settings.Settings;
+import com.svenruppert.imagerag.settings.SettingsService;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -30,14 +33,10 @@ import java.util.concurrent.Executors;
 public class ServiceRegistry
     implements HasLogger {
 
-  /**
-   * Upper bound for the number of concurrent search workers.
-   */
-  public static final int MAX_SEARCH_PARALLELISM = 4;
 
   private static volatile ServiceRegistry serviceRegistry;
 
-  private final ProcessingSettings processingSettings;
+  private final SettingsService settingsService;
   private final OllamaConfig ollamaConfig;
   private final OllamaClient ollamaClient;
   private final PersistenceService persistenceService;
@@ -72,17 +71,13 @@ public class ServiceRegistry
 
   /**
    * Shared executor for background search tasks across all UI sessions.
-   * Sized by {@link ProcessingSettings#getSearchParallelism()}.
-   * Resized dynamically via {@link #updateSearchParallelism(int)}.
+   * Sized by {@link Settings#SEARCH_PARALLELISM} and resized whenever that setting changes.
    */
   private volatile ExecutorService searchExecutor;
 
   private ServiceRegistry()
       throws IOException {
     Path projectDir = Paths.get(System.getProperty("user.dir"));
-
-    // Runtime settings (parallelism, etc.) — not persisted, reset on restart
-    processingSettings = new ProcessingSettings();
 
     // Infrastructure
     ollamaConfig = new OllamaConfig();
@@ -96,6 +91,10 @@ public class ServiceRegistry
 
     // Persistence — EclipseStore under <project>/_data
     persistenceService = new PersistenceService(projectDir.resolve("_data"));
+
+    // Runtime settings — user overrides are persisted in EclipseStore
+    settingsService = SettingsService.getInstance();
+    settingsService.attachStore(persistenceService);
 
     // Storage — image files under <project>/_data_images
     imageStorageService = new ImageStorageServiceImpl(projectDir.resolve("_data_images"));
@@ -153,12 +152,13 @@ public class ServiceRegistry
     queryUnderstandingService = new QueryUnderstandingServiceImpl(ollamaClient);
     searchService = new SearchServiceImpl(queryUnderstandingService, embeddingService, vectorIndexService, persistenceService, keywordIndexService);
 
-    // Shared search executor — initial size = configured search parallelism (default 1)
-    searchExecutor = buildSearchExecutor(processingSettings.getSearchParallelism());
+    // Shared search executor — initial size = configured search parallelism
+    searchExecutor = buildSearchExecutor(settingsService.get(Settings.SEARCH_PARALLELISM));
 
     // Async ingestion pipeline — handles uploads AND reprocessing jobs.
     // Must be constructed before reprocessingService so the latter can delegate to it.
     ingestionPipeline = new IngestionPipeline(imageStorageService, metadataExtractionService, reverseGeocodingService, visionAnalysisService, semanticDerivationService, sensitivityAssessmentService, embeddingService, vectorIndexService, persistenceService, keywordIndexService, ollamaConfig);
+    ingestionPipeline.updateParallelism(settingsService.get(Settings.PIPELINE_INGESTION_PARALLELISM));
 
     // Reprocessing service — thin facade that delegates to the pipeline for visibility.
     // Reprocessing jobs appear in the Pipeline view just like upload jobs.
@@ -188,6 +188,8 @@ public class ServiceRegistry
 
     // Search-strategy autopilot — heuristic advisor (stateless, no constructor args)
     searchStrategyAutopilot = new SearchStrategyAutopilot();
+
+    settingsService.addListener(this::onSettingChanged);
 
     logger().info("ServiceRegistry initialized. {} images in store.", persistenceService.findAllImages().size());
   }
@@ -246,6 +248,7 @@ public class ServiceRegistry
     } catch (Exception e) {
       sr.logger().warn("Error closing Lucene keyword index: {}", e.getMessage());
     }
+    SettingsService.getInstance().detach();
     try {
       sr.persistenceService.shutdown();
     } catch (Exception e) {
@@ -255,7 +258,7 @@ public class ServiceRegistry
   }
 
   private static ExecutorService buildSearchExecutor(int parallelism) {
-    int clamped = Math.clamp(parallelism, 1, MAX_SEARCH_PARALLELISM);
+    int clamped = Math.clamp(parallelism, Settings.SEARCH_PARALLELISM.min(), Settings.SEARCH_PARALLELISM.max());
     if (clamped <= 1) {
       return Executors.newSingleThreadExecutor(Thread.ofVirtual().name("search-worker").factory());
     }
@@ -293,21 +296,32 @@ public class ServiceRegistry
   /**
    * Resizes the shared search executor to the requested parallelism.
    * The old executor is shut down gracefully (in-flight tasks complete normally).
-   * Bounded to [1, {@value #MAX_SEARCH_PARALLELISM}].
    */
-  public synchronized void updateSearchParallelism(int parallelism) {
-    int clamped = Math.clamp(parallelism, 1, MAX_SEARCH_PARALLELISM);
+  private synchronized void resizeSearchExecutor(int parallelism) {
     ExecutorService old = searchExecutor;
-    searchExecutor = buildSearchExecutor(clamped);
+    searchExecutor = buildSearchExecutor(parallelism);
     old.shutdown();
-    processingSettings.setSearchParallelism(clamped);
-    logger().info("Search executor resized to {} worker(s)", clamped);
+    logger().info("Search executor resized to {} worker(s)", parallelism);
+  }
+
+  /**
+   * Applies settings that need active reconfiguration and records every change
+   * in the audit log.
+   */
+  private void onSettingChanged(SettingChange change) {
+    if (change.setting() == Settings.SEARCH_PARALLELISM) {
+      resizeSearchExecutor(settingsService.get(Settings.SEARCH_PARALLELISM));
+    } else if (change.setting() == Settings.PIPELINE_INGESTION_PARALLELISM) {
+      ingestionPipeline.updateParallelism(settingsService.get(Settings.PIPELINE_INGESTION_PARALLELISM));
+    }
+    auditService.log(change.reset() ? AuditAction.SETTING_RESET : AuditAction.SETTING_CHANGED, null, null,
+                     change.setting().key() + ": " + change.oldValue() + " -> " + change.newValue());
   }
 
   // --- Accessors ---
 
-  public ProcessingSettings getProcessingSettings() {
-    return processingSettings;
+  public SettingsService getSettingsService() {
+    return settingsService;
   }
 
   public PreviewService getPreviewService() {

@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.imagerag.domain.CategoryConfidence;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SearchTuningConfig;
@@ -40,11 +42,6 @@ import java.util.UUID;
  */
 public class WhyNotFoundServiceImpl
     implements WhyNotFoundService {
-
-  /**
-   * Category-confidence ratio below which the primary category counts as ambiguous.
-   */
-  private static final double AMBIGUITY_THRESHOLD = 0.6;
 
   private final PersistenceService persistenceService;
   private final EmbeddingService embeddingService;
@@ -100,7 +97,7 @@ public class WhyNotFoundServiceImpl
         if (!VectorMath.isUsable(queryVec)) {
           diagnosticNotes.add("Query embedding unavailable — semantic channel skipped.");
         } else {
-          vectorHits = vectorIndexService.search(queryVec, SearchScoring.VECTOR_CANDIDATES,
+          vectorHits = vectorIndexService.search(queryVec, SearchScoring.vectorCandidates(),
                                                  config.getSimilarityFunction());
           if (vectorAvailable) {
             float[] imageVec = rawVec.get();
@@ -116,7 +113,7 @@ public class WhyNotFoundServiceImpl
           if (vectorRank < 0) {
             diagnosticNotes.add(String.format(
                 "Not in top %d vector candidates (semantic score %.3f — below retrieval threshold).",
-                SearchScoring.VECTOR_CANDIDATES, semanticScore));
+                SearchScoring.vectorCandidates(), semanticScore));
           } else {
             diagnosticNotes.add(String.format(
                 "Vector rank: %d of %d candidates (semantic score %.3f).",
@@ -133,7 +130,7 @@ public class WhyNotFoundServiceImpl
     List<KeywordSearchHit> keywordHits = List.of();
     if (hasQuery && config.getRetrievalMode() != RetrievalMode.SEMANTIC_ONLY) {
       try {
-        keywordHits = keywordIndexService.search(query, SearchScoring.KEYWORD_CANDIDATES);
+        keywordHits = keywordIndexService.search(query, SearchScoring.keywordCandidates());
         for (KeywordSearchHit hit : keywordHits) {
           if (imageId.equals(hit.imageId())) {
             bm25Score = hit.score();
@@ -143,7 +140,7 @@ public class WhyNotFoundServiceImpl
         if (bm25Score <= 0) {
           diagnosticNotes.add(String.format(
               "Not in top %d BM25 keyword candidates — no keyword overlap with query.",
-              SearchScoring.KEYWORD_CANDIDATES));
+              SearchScoring.keywordCandidates()));
         } else {
           diagnosticNotes.add(String.format("BM25 raw score: %.3f", bm25Score));
         }
@@ -159,7 +156,7 @@ public class WhyNotFoundServiceImpl
       List<RrfFusion.Candidate> fused = RrfFusion.fuse(
           vectorHits.stream().map(VectorSearchHit::imageId).toList(),
           keywordHits.stream().map(KeywordSearchHit::imageId).toList(),
-          weights.semantic(), weights.keyword(), RrfFusion.DEFAULT_K);
+          weights.semantic(), weights.keyword(), SearchScoring.rrfK());
       double norm = RrfFusion.normalizer(fused);
       Optional<RrfFusion.Candidate> candidate = fused.stream()
           .filter(c -> c.id().equals(imageId)).findFirst();
@@ -199,7 +196,7 @@ public class WhyNotFoundServiceImpl
         diagnosticNotes.add("Primary category: " + analysis.getSourceCategory().name());
       }
       var conf = analysis.getCategoryConfidence();
-      if (conf != null && conf.isAmbiguous(AMBIGUITY_THRESHOLD)) {
+      if (conf != null && conf.isAmbiguous(SettingsService.getInstance().get(Settings.WHY_NOT_FOUND_AMBIGUITY_THRESHOLD))) {
         conf.getBetterAlternative().ifPresent(alt ->
                                                   diagnosticNotes.add(String.format(
                                                       "Ambiguous category confidence — alternative: %s (%.0f%%)",

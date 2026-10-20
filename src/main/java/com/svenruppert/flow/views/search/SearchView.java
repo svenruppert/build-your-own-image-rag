@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.search;
 
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
@@ -85,8 +86,6 @@ public class SearchView
   private static final int POLL_INTERVAL_MS = 800;
   private static final int MAX_VISIBLE_CHIPS = 3;
   private static final int PAGE_SIZE = 30;
-  private static final double DEFAULT_MIN_SCORE =
-      com.svenruppert.imagerag.bootstrap.AppConfig.getInstance().getSearchMinScore();
   // ── Boolean select values ─────────────────────────────────────────────────
   private static final String BOOL_ANY = "any";
   private static final String BOOL_YES = "yes";
@@ -420,7 +419,7 @@ public class SearchView
     scoreField.setMin(0.0);
     scoreField.setMax(1.0);
     scoreField.setStep(0.05);
-    scoreField.setValue(DEFAULT_MIN_SCORE);
+    scoreField.setValue(services.settings().get(Settings.SEARCH_MIN_SCORE));
     scoreField.setWidth("130px");
 
     // "Refine Search" — skip LLM and use the edited plan directly

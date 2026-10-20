@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.CategoryClusterSuggestion;
 import com.svenruppert.imagerag.domain.CategoryClusterSuggestion.SuggestionType;
@@ -19,34 +21,17 @@ import java.util.stream.Collectors;
  * <p>Uses cosine distance (converted to a similarity-like measure) as the distance
  * metric since all stored embeddings are produced by the same model.  No external
  * ML library is required — the implementation is self-contained.
- * <p>The algorithm runs a fixed number of iterations (default 15) or until
+ * <p>The algorithm runs a configurable number of iterations ({@link Settings#CLUSTER_MAX_ITERATIONS}) or until
  * centroid movement falls below a convergence threshold.
  */
 public class ClusterDiscoveryServiceImpl
     implements ClusterDiscoveryService, HasLogger {
 
-  private static final int MAX_ITERATIONS = 15;
   private static final double CONVERGENCE_THRESHOLD = 1e-4;
   /**
    * k-means needs at least two clusters to produce a meaningful split.
    */
   private static final int MIN_CLUSTERS = 2;
-  /**
-   * Global discovery: one cluster per this many images (before clamping).
-   */
-  private static final int IMAGES_PER_CLUSTER = 10;
-  /**
-   * Per-category discovery: one cluster per this many images (before clamping).
-   */
-  private static final int CATEGORY_IMAGES_PER_CLUSTER = 8;
-  /**
-   * Upper bound for k in per-category discovery.
-   */
-  private static final int CATEGORY_MAX_CLUSTERS = 5;
-  /**
-   * Intra-cluster similarity threshold for subcategory proposals in per-category discovery.
-   */
-  private static final double CATEGORY_SIMILARITY_THRESHOLD = 0.70;
   /**
    * Maximum number of cluster members sampled for the intra-cluster similarity.
    */
@@ -91,7 +76,7 @@ public class ClusterDiscoveryServiceImpl
       logger().warn("maxClusters={} is below {} — using {}", maxClusters, MIN_CLUSTERS, MIN_CLUSTERS);
     }
     int upper = Math.max(MIN_CLUSTERS, maxClusters);
-    int k = Math.clamp(vectors.size() / IMAGES_PER_CLUSTER, MIN_CLUSTERS, upper);
+    int k = Math.clamp(vectors.size() / settings().get(Settings.CLUSTER_IMAGES_PER_CLUSTER), MIN_CLUSTERS, upper);
     notify(progress, String.format("Running k-means with k=%d over %d images…", k, vectors.size()));
 
     List<UUID> ids = new ArrayList<>(vectors.keySet());
@@ -128,12 +113,14 @@ public class ClusterDiscoveryServiceImpl
     Map<UUID, float[]> consistent = withDominantDimension(vectors);
     if (consistent.size() < minClusterSize * 2) return List.of();
 
-    int k = Math.clamp(consistent.size() / CATEGORY_IMAGES_PER_CLUSTER, MIN_CLUSTERS, CATEGORY_MAX_CLUSTERS);
+    int k = Math.clamp(consistent.size() / settings().get(Settings.CLUSTER_CATEGORY_IMAGES_PER_CLUSTER), MIN_CLUSTERS,
+                       settings().get(Settings.CLUSTER_CATEGORY_MAX_CLUSTERS));
     List<UUID> ids = new ArrayList<>(consistent.keySet());
     List<float[]> vecs = ids.stream().map(consistent::get).toList();
 
     int[] assignments = kMeans(vecs, k, null);
-    return buildSuggestions(ids, vecs, assignments, k, minClusterSize, CATEGORY_SIMILARITY_THRESHOLD);
+    return buildSuggestions(ids, vecs, assignments, k, minClusterSize,
+                            settings().get(Settings.CLUSTER_CATEGORY_SIMILARITY_THRESHOLD));
   }
 
   private int[] kMeans(List<float[]> vectors, int k, Consumer<String> progress) {
@@ -144,7 +131,8 @@ public class ClusterDiscoveryServiceImpl
     float[][] centroids = initCentroids(vectors, k);
     int[] assignments = new int[n];
 
-    for (int iter = 0; iter < MAX_ITERATIONS; iter++) {
+    int maxIterations = settings().get(Settings.CLUSTER_MAX_ITERATIONS);
+    for (int iter = 0; iter < maxIterations; iter++) {
       // Assign step
       boolean changed = false;
       for (int i = 0; i < n; i++) {
@@ -361,5 +349,9 @@ public class ClusterDiscoveryServiceImpl
         .map(Map.Entry::getKey)
         .collect(Collectors.joining(", "));
     return topTags.isBlank() ? dominant.name() : dominant.name() + " — " + topTags;
+  }
+
+  private static SettingsService settings() {
+    return SettingsService.getInstance();
   }
 }

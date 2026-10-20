@@ -5,7 +5,9 @@ import com.svenruppert.flow.views.detail.DetailDialog;
 import com.svenruppert.flow.views.detail.ReprocessingDiffDialog;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.LocationSummary;
-import com.svenruppert.imagerag.domain.ProcessingSettings;
+import com.svenruppert.imagerag.settings.Setting;
+import com.svenruppert.imagerag.settings.Settings;
+import com.svenruppert.imagerag.settings.SettingsService;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
 import com.svenruppert.imagerag.domain.SensitivityAssessment;
 import com.svenruppert.imagerag.persistence.PersistenceService;
@@ -44,6 +46,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 
 /**
  * Live pipeline monitor.
@@ -290,19 +293,26 @@ public class PipelineView
   // Search parallelism selector
   // -------------------------------------------------------------------------
 
+  /**
+   * All integer values allowed by the bounds of a setting, for a selection list.
+   */
+  private static List<Integer> range(Setting<Integer> setting) {
+    return IntStream.rangeClosed(setting.min(), setting.max()).boxed().toList();
+  }
+
   private HorizontalLayout buildParallelismSelector() {
-    ProcessingSettings settings = services.processingSettings();
+    SettingsService settings = services.settings();
 
     Select<Integer> parallelismSelect = new Select<>();
     parallelismSelect.setLabel(getTranslation("pipeline.parallelism.label"));
-    parallelismSelect.setItems(1, 2, 4);
-    parallelismSelect.setValue(settings.getIngestionParallelism());
+    parallelismSelect.setItems(range(Settings.PIPELINE_INGESTION_PARALLELISM));
+    parallelismSelect.setValue(settings.get(Settings.PIPELINE_INGESTION_PARALLELISM));
     parallelismSelect.setWidth("160px");
 
     parallelismSelect.addValueChangeListener(e -> {
-      if (e.getValue() == null) return;
-      settings.setIngestionParallelism(e.getValue());
-      services.ingestionPipeline().updateParallelism(e.getValue());
+      if (e.getValue() == null || !e.isFromClient()) return;
+      // The settings service persists the value and resizes the ingestion executor
+      settings.set(Settings.PIPELINE_INGESTION_PARALLELISM, e.getValue());
       Notification n = Notification.show(
           getTranslation("pipeline.parallelism.updated", e.getValue()),
           3000, Notification.Position.BOTTOM_END);
@@ -326,20 +336,20 @@ public class PipelineView
   // -------------------------------------------------------------------------
 
   private HorizontalLayout buildSearchParallelismSelector() {
-    ProcessingSettings settings = services.processingSettings();
+    SettingsService settings = services.settings();
 
     Select<Integer> searchSelect = new Select<>();
     searchSelect.setLabel(getTranslation("pipeline.search.parallelism.label"));
-    searchSelect.setItems(1, 2, 4);
-    searchSelect.setValue(settings.getSearchParallelism());
+    searchSelect.setItems(range(Settings.SEARCH_PARALLELISM));
+    searchSelect.setValue(settings.get(Settings.SEARCH_PARALLELISM));
     searchSelect.setWidth("160px");
 
     searchSelect.addValueChangeListener(e -> {
-      if (e.getValue() == null) {
+      if (e.getValue() == null || !e.isFromClient()) {
         return;
       }
-      // Resize the shared search executor — makes the setting immediately effective
-      services.updateSearchParallelism(e.getValue());
+      // The settings service persists the value and resizes the shared search executor
+      settings.set(Settings.SEARCH_PARALLELISM, e.getValue());
       Notification n = Notification.show(
           getTranslation("pipeline.search.parallelism.updated", e.getValue()),
           3000, Notification.Position.BOTTOM_END);

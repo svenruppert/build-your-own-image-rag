@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.ollama;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.dependencies.core.net.HttpStatus;
 import com.svenruppert.dependencies.core.net.MediaType;
@@ -23,21 +25,36 @@ import java.util.Base64;
 public class OllamaClient
     implements HasLogger {
 
-  /**
-   * Safety cap on image bytes sent to the vision model (50 MiB).
-   */
-  private static final long MAX_VISION_IMAGE_BYTES = 50L * 1024 * 1024;
-
   private final OllamaConfig config;
-  private final HttpClient httpClient;
+  /**
+   * Rebuilt when the connect timeout setting changes.
+   */
+  private volatile HttpClient httpClient;
   private final ObjectMapper objectMapper;
 
   public OllamaClient(OllamaConfig config) {
     this.config = config;
-    this.httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(30))
-        .build();
+    this.httpClient = buildHttpClient();
     this.objectMapper = new ObjectMapper();
+    SettingsService.getInstance().addListener(change -> {
+      if (change.setting() == Settings.OLLAMA_CONNECT_TIMEOUT_SECONDS) {
+        httpClient = buildHttpClient();
+      }
+    });
+  }
+
+  private static HttpClient buildHttpClient() {
+    return HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(
+            SettingsService.getInstance().get(Settings.OLLAMA_CONNECT_TIMEOUT_SECONDS)))
+        .build();
+  }
+
+  /**
+   * Safety cap on image bytes sent to the vision model ({@link Settings#OLLAMA_VISION_MAX_IMAGE_MB}).
+   */
+  private static long maxVisionImageBytes() {
+    return SettingsService.getInstance().get(Settings.OLLAMA_VISION_MAX_IMAGE_MB) * 1024L * 1024L;
   }
 
   /**
@@ -48,10 +65,10 @@ public class OllamaClient
     CheckedSupplier<Long> size = () -> Files.size(imagePath);
     return size.get()
         .mapError(OllamaClient::describe)
-        .flatMap(bytes -> bytes <= MAX_VISION_IMAGE_BYTES
+        .flatMap(bytes -> bytes <= maxVisionImageBytes()
             ? Result.<Long, String>success(bytes)
             : Result.<Long, String>failure(
-                "size " + bytes + " exceeds limit " + MAX_VISION_IMAGE_BYTES))
+                "size " + bytes + " exceeds limit " + maxVisionImageBytes()))
         .flatMap(ignored -> generate(() -> {
           ObjectNode body = objectMapper.createObjectNode();
           body.put("model", config.getVisionModel());
@@ -130,7 +147,8 @@ public class OllamaClient
     try {
       HttpRequest request = HttpRequest.newBuilder()
           .uri(URI.create(config.baseUrl() + "/api/tags"))
-          .timeout(Duration.ofSeconds(5))
+          .timeout(Duration.ofSeconds(
+              SettingsService.getInstance().get(Settings.OLLAMA_PING_TIMEOUT_SECONDS)))
           .GET()
           .build();
       HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());

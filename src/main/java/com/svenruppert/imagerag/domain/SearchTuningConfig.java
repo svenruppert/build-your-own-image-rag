@@ -20,7 +20,7 @@ import java.util.UUID;
  *   <li>BM25 weight:       1.0</li>
  *   <li>Confidence weight: 0.15 (matches the production search boost)</li>
  *   <li>Feedback:          disabled; weight 0.5</li>
- *   <li>Score cutoff:      0.45 (lower than production 0.65 to surface more candidates)</li>
+ *   <li>Score cutoff:      0.45 (lower than the production default of search.min.score to surface more candidates)</li>
  *   <li>Max results:       20</li>
  * </ul>
  * <h3>Transient fields</h3>

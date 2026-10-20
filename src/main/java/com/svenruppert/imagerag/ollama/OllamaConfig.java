@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.ollama;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.imagerag.bootstrap.AppConfig;
 
 public class OllamaConfig {
@@ -8,17 +10,12 @@ public class OllamaConfig {
    * Default model for both vision analysis and text generation.
    */
   private static final String DEFAULT_GENERATION_MODEL = "gemma4:31b";
-  /**
-   * Default request timeout in seconds; large models need generous limits.
-   */
-  public static final int DEFAULT_TIMEOUT_SECONDS = 300;
 
   private String host;
   private int port;
   private String visionModel;
   private String textModel;
   private String embeddingModel;
-  private int timeoutSeconds;
 
   public OllamaConfig() {
     AppConfig cfg = AppConfig.getInstance();
@@ -28,17 +25,6 @@ public class OllamaConfig {
     this.textModel = cfg.get("ollama.text.model", DEFAULT_GENERATION_MODEL);
     // embedding.model: read via AppConfig so -Dembedding.model=... or imagerag.properties override works.
     this.embeddingModel = cfg.getEmbeddingModel();
-    this.timeoutSeconds = parseTimeout(cfg.get("ollama.timeout.seconds",
-                                                String.valueOf(DEFAULT_TIMEOUT_SECONDS)));
-  }
-
-  private static int parseTimeout(String value) {
-    try {
-      int seconds = Integer.parseInt(value.trim());
-      return seconds > 0 ? seconds : DEFAULT_TIMEOUT_SECONDS;
-    } catch (NumberFormatException e) {
-      return DEFAULT_TIMEOUT_SECONDS;
-    }
   }
 
   public String baseUrl() {
@@ -85,11 +71,11 @@ public class OllamaConfig {
     this.embeddingModel = embeddingModel;
   }
 
+  /**
+   * Request timeout for generation and embedding calls ({@link Settings#OLLAMA_TIMEOUT_SECONDS});
+   * large models need generous limits.
+   */
   public int getTimeoutSeconds() {
-    return timeoutSeconds;
-  }
-
-  public void setTimeoutSeconds(int timeoutSeconds) {
-    this.timeoutSeconds = timeoutSeconds;
+    return SettingsService.getInstance().get(Settings.OLLAMA_TIMEOUT_SECONDS);
   }
 }

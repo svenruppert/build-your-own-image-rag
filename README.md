@@ -117,9 +117,32 @@ Application configuration is loaded from:
 src/main/resources/imagerag.properties
 ```
 
-Every key can be overridden with a JVM system property. System properties have
-the highest precedence, followed by `imagerag.properties`, followed by hard-coded
-defaults.
+Values are resolved in this order (highest precedence first):
+
+1. A value changed in the running application on the **Settings** view. It is
+   stored in EclipseStore and survives restarts.
+2. A JVM system property (`-Dkey=value`).
+3. `imagerag.properties` on the classpath.
+4. The built-in default.
+
+### Settings view
+
+The Settings view (`/settings`, "Settings" in the navigation) lists every tunable
+parameter grouped by area: search, diagnostics and taxonomy, cluster discovery,
+vector index (HNSW), pipeline and upload, history limits, Ollama and reverse
+geocoding. Each row shows the effective value, where it comes from and the value it
+falls back to. **Save** stores an override, **Reset** removes it, and
+**Reset all to defaults** removes every override after a confirmation. Changes are
+recorded in the audit log.
+
+Most values apply to the next operation that reads them. HNSW parameters apply with
+the next index rebuild, which runs before the next search. Upload limits apply when
+the upload view is opened again. The ingestion and search worker counts resize their
+executors immediately; the Pipeline view's parallelism selectors write the same
+settings.
+
+Model names, the Ollama address and the vector backend are shown read-only: changing
+them needs a restart, and changing a model or the backend requires a reindex.
 
 Important settings:
 
@@ -131,6 +154,11 @@ Important settings:
 | `taxonomy.confidence.threshold` | Low-confidence taxonomy threshold | `0.60` |
 | `ollama.host` | Ollama host | `localhost` |
 | `ollama.port` | Ollama port | `11434` |
+| `ollama.timeout.seconds` | Timeout for Ollama generation and embedding requests | `300` |
+
+All keys shown on the Settings view, for example `search.max.results`,
+`search.rrf.k` or `hnsw.m`, can also be set in `imagerag.properties` or as system
+properties.
 
 Example override:
 

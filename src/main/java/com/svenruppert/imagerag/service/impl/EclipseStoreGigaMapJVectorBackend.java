@@ -1,5 +1,8 @@
 package com.svenruppert.imagerag.service.impl;
 
+import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.settings.SettingCategory;
+import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.enums.SimilarityFunction;
 import com.svenruppert.imagerag.dto.VectorSearchHit;
@@ -66,24 +69,6 @@ import java.util.stream.Collectors;
 public class EclipseStoreGigaMapJVectorBackend
     implements VectorIndexService, HasLogger {
 
-  // ── JVector 4.x HNSW tuning parameters ───────────────────────────────────
-  /**
-   * Max graph connections per node (DiskANN M). Higher = better recall, more RAM.
-   */
-  private static final int HNSW_M = 16;
-  /**
-   * Construction beam width (efConstruction). Higher = better quality, slower build.
-   */
-  private static final int HNSW_EF_CONSTRUCTION = 100;
-  /**
-   * DiskANN neighborOverflow — candidate pool multiplier during build (1.2 = typical).
-   */
-  private static final float HNSW_NEIGHBOR_OVERFLOW = 1.2f;
-  /**
-   * DiskANN alpha — long-range pruning parameter (1.2 = typical production value).
-   */
-  private static final float HNSW_ALPHA = 1.2f;
-
   /**
    * JVector {@link VectorTypeSupport} singleton.
    * Selects the best float-vector implementation at JVM startup (Panama SIMD or plain array).
@@ -108,6 +93,14 @@ public class EclipseStoreGigaMapJVectorBackend
 
   public EclipseStoreGigaMapJVectorBackend(PersistenceService persistenceService) {
     this.persistenceService = persistenceService;
+    // Changed HNSW parameters take effect with the next rebuild, which the next search triggers.
+    SettingsService.getInstance().addListener(change -> {
+      if (change.setting().category() == SettingCategory.VECTOR_INDEX) {
+        stale = true;
+        logger().info("HNSW parameter '{}' changed — index rebuilds before the next search",
+                      change.setting().key());
+      }
+    });
   }
 
   // ── VectorIndexService ────────────────────────────────────────────────────
@@ -337,9 +330,16 @@ public class EclipseStoreGigaMapJVectorBackend
 
       // JVector 4.x constructor: boolean addHierarchy enables the HNSW multi-layer structure
       // on top of the Vamana base graph, improving recall especially for larger collections.
+      // HNSW tuning parameters are read at build time (Settings view, category VECTOR_INDEX):
+      // M = max connections per node, efConstruction = construction beam width,
+      // neighborOverflow = candidate pool multiplier, alpha = long-range pruning.
+      SettingsService settings = SettingsService.getInstance();
       GraphIndexBuilder builder = new GraphIndexBuilder(
           ravv, VectorSimilarityFunction.COSINE,
-          HNSW_M, HNSW_EF_CONSTRUCTION, HNSW_NEIGHBOR_OVERFLOW, HNSW_ALPHA,
+          settings.get(Settings.HNSW_M),
+          settings.get(Settings.HNSW_EF_CONSTRUCTION),
+          settings.get(Settings.HNSW_NEIGHBOR_OVERFLOW).floatValue(),
+          settings.get(Settings.HNSW_ALPHA).floatValue(),
           true /* addHierarchy */);
 
       for (int nodeId = 0; nodeId < size; nodeId++) {

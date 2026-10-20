@@ -48,16 +48,21 @@ public class AboutView
     hero.setSpacing(false);
     hero.setAlignItems(Alignment.START);
 
-    Span versionBadge = new Span(getTranslation("about.version", "1.0.0"));
-    versionBadge.getElement().setAttribute("theme", "badge primary pill");
-
     H1 title = new H1(getTranslation("about.title"));
     Paragraph subtitle = new Paragraph(getTranslation("about.subtitle"));
     Paragraph description = new Paragraph(
         getTranslation("about.description")
     );
 
-    HorizontalLayout heroHeader = new HorizontalLayout(title, versionBadge);
+    HorizontalLayout heroHeader = new HorizontalLayout(title);
+    // The version is only known when running from a packaged WAR whose manifest
+    // carries Implementation-Version; during development no badge is shown.
+    String version = AboutView.class.getPackage().getImplementationVersion();
+    if (version != null && !version.isBlank()) {
+      Span versionBadge = new Span(getTranslation("about.version", version));
+      versionBadge.getElement().setAttribute("theme", "badge primary pill");
+      heroHeader.add(versionBadge);
+    }
     heroHeader.setAlignItems(Alignment.CENTER);
     heroHeader.setSpacing(true);
 
@@ -105,13 +110,25 @@ public class AboutView
     );
 
     UnorderedList featureList = new UnorderedList(
-        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.layout"))),
-        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.badges"))),
-        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.typography"))),
-        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.accessibility")))
+        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.ingestion"))),
+        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.search"))),
+        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.privacy"))),
+        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.local")))
     );
 
-    aboutCard.add(projectTitle, projectText, featureList);
+    HorizontalLayout techBadges = new HorizontalLayout();
+    techBadges.setWrap(true);
+    techBadges.setSpacing(true);
+    techBadges.add(
+        badge("Java 26"),
+        badge("Vaadin Flow"),
+        badge("Ollama"),
+        badge("EclipseStore"),
+        badge("Lucene BM25"),
+        badge("JVector")
+    );
+
+    aboutCard.add(projectTitle, projectText, featureList, techBadges);
 
     // --- GRID ---
     FlexLayout grid = new FlexLayout(profileCard, aboutCard);

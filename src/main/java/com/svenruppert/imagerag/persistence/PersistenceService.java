@@ -2,981 +2,376 @@ package com.svenruppert.imagerag.persistence;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.*;
-import com.svenruppert.imagerag.domain.enums.*;
-import com.svenruppert.imagerag.settings.Settings;
-import com.svenruppert.imagerag.settings.SettingsService;
+import com.svenruppert.imagerag.domain.enums.RiskLevel;
+import com.svenruppert.imagerag.domain.enums.SearchMode;
+import com.svenruppert.imagerag.domain.enums.SourceCategory;
+import com.svenruppert.imagerag.domain.enums.SuggestionStatus;
 import com.svenruppert.imagerag.settings.SettingsStore;
-import org.eclipse.store.storage.embedded.types.EmbeddedStorage;
-import org.eclipse.store.storage.embedded.types.EmbeddedStorageManager;
 
 import java.nio.file.Path;
-import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
-import java.util.function.Supplier;
-import java.util.stream.Collectors;
-
-import static java.util.List.of;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * EclipseStore-backed persistence facade.
- * <p>Thread-safe: every read runs under the read lock and every mutation together with
- * its {@code storage.store(...)} call runs under the write lock, so the ingestion
+ * <p>The work is split across cohesive repositories ({@link ImageRepository},
+ * {@link AnalysisRepository}, {@link VectorStore}, {@link SearchHistoryStore},
+ * {@link TaxonomyStore}, {@link AuditStore}, {@link PromptVersionStore},
+ * {@link SettingsOverrideStore}) that share one {@link PersistenceContext}.
+ * <p>Thread-safe: every read runs under the shared read lock and every mutation together
+ * with its {@code store(...)} call runs under the shared write lock, so the ingestion
  * workers, search threads and UI threads never see a collection while it is modified.
  * Collection getters return immutable copies.
  */
 public class PersistenceService
     implements HasLogger, SettingsStore {
 
-  private final EmbeddedStorageManager storage;
-  private final AppDataRoot root;
-  private final ReadWriteLock lock = new ReentrantReadWriteLock();
-
-  private <T> T read(Supplier<T> action) {
-    lock.readLock().lock();
-    try {
-      return action.get();
-    } finally {
-      lock.readLock().unlock();
-    }
-  }
-
-  private <T> T writeAndGet(Supplier<T> action) {
-    lock.writeLock().lock();
-    try {
-      return action.get();
-    } finally {
-      lock.writeLock().unlock();
-    }
-  }
-
-  private void write(Runnable action) {
-    lock.writeLock().lock();
-    try {
-      action.run();
-    } finally {
-      lock.writeLock().unlock();
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Save operations
-  // -------------------------------------------------------------------------
+  private final PersistenceContext ctx;
+  private final ImageRepository images;
+  private final AnalysisRepository analyses;
+  private final VectorStore vectors;
+  private final SearchHistoryStore searchHistory;
+  private final TaxonomyStore taxonomy;
+  private final AuditStore audit;
+  private final PromptVersionStore prompts;
+  private final SettingsOverrideStore settingOverrides;
 
   public PersistenceService(Path storagePath) {
-    AppDataRoot candidate = new AppDataRoot();
-    storage = EmbeddedStorage.start(candidate, storagePath);
-    Object loadedRoot = storage.root();
-    if (loadedRoot instanceof AppDataRoot existingRoot) {
-      root = existingRoot;
-      // EclipseStore reconstructs objects via Unsafe, bypassing constructors.
-      // Any field added after the first persistence run will be null in loaded data.
-      // Calling getApprovedImageIds() triggers lazy init (creates the HashSet if null),
-      // then we persist the root once to save the new field reference.
-      existingRoot.getApprovedImageIds();    // lazy init if null
-      existingRoot.getRecentSearches();      // lazy init if null (added later)
-      existingRoot.getHashIndex();           // lazy init if null (added later)
-      existingRoot.getOcrResults();          // lazy init if null (added later)
-      existingRoot.getSavedSearchViews();    // lazy init if null (added later)
-      existingRoot.getAuditLog();            // lazy init if null (added later)
-      existingRoot.getRawVectorStore();      // lazy init if null (added for GIGAMAP_JVECTOR backend)
-      existingRoot.getTaxonomySuggestions(); // lazy init if null (added for taxonomy maintenance)
-      existingRoot.getCategoryMetadata();    // lazy init if null (added for taxonomy maintenance)
-      existingRoot.getTuningPresets();       // lazy init if null (added for Search Tuning Lab)
-      existingRoot.getClusterSuggestions();  // lazy init if null (added for cluster discovery)
-      existingRoot.getPromptVersions();      // lazy init if null (added for migration center)
-      existingRoot.getSettingOverrides();    // lazy init if null (added for runtime settings)
-      storage.store(existingRoot);           // persist updated field references
-      migrateEnumSets();                  // fix any EnumSet fields broken by Unsafe reconstruction
-      logger().info("EclipseStore loaded existing data: {} images, {} approved, {} recent searches",
-                    root.getImages().size(), root.getApprovedImageIds().size(),
-                    root.getRecentSearches().size());
-    } else {
-      root = candidate;
-      storage.setRoot(root);
-      storage.storeRoot();
-      logger().info("EclipseStore initialized with fresh root");
+    ctx = new PersistenceContext(storagePath);
+    images = new ImageRepository(ctx);
+    analyses = new AnalysisRepository(ctx);
+    vectors = new VectorStore(ctx);
+    searchHistory = new SearchHistoryStore(ctx);
+    taxonomy = new TaxonomyStore(ctx);
+    audit = new AuditStore(ctx);
+    prompts = new PromptVersionStore(ctx);
+    settingOverrides = new SettingsOverrideStore(ctx);
+    if (ctx.loadedExistingData()) {
+      analyses.migrateBrokenFlagSets();
+      ctx.read(() -> {
+        logger().info("EclipseStore loaded existing data: {} images, {} approved, {} recent searches",
+                      ctx.root().getImages().size(), ctx.root().getApprovedImageIds().size(),
+                      ctx.root().getRecentSearches().size());
+        return null;
+      });
     }
   }
 
+  public void shutdown() {
+    ctx.shutdown();
+    logger().info("EclipseStore shut down");
+  }
+
+  // ── Images, approval, archive ─────────────────────────────────────────────
+
   public void saveImage(ImageAsset asset) {
-    write(() -> {
-      root.getImages().put(asset.getId(), asset);
-      storage.store(root.getImages());
-    });
+    images.saveImage(asset);
   }
-
-  public void saveMetadata(UUID imageId, ImageMetadataInfo metadata) {
-    write(() -> {
-      root.getMetadata().put(imageId, metadata);
-      storage.store(root.getMetadata());
-    });
-  }
-
-  public void saveLocation(UUID imageId, LocationSummary location) {
-    write(() -> {
-      root.getLocations().put(imageId, location);
-      storage.store(root.getLocations());
-    });
-  }
-
-  public void saveAnalysis(UUID imageId, SemanticAnalysis analysis) {
-    write(() -> {
-      root.getAnalyses().put(imageId, analysis);
-      storage.store(root.getAnalyses());
-    });
-  }
-
-  public void saveAssessment(UUID imageId, SensitivityAssessment assessment) {
-    write(() -> {
-      root.getAssessments().put(imageId, assessment);
-      storage.store(root.getAssessments());
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Delete — removes all data associated with an image across all collections
-  // -------------------------------------------------------------------------
-
-  public void saveVectorEntry(UUID imageId, VectorEntry entry) {
-    write(() -> {
-      root.getVectorEntries().put(imageId, entry);
-      storage.store(root.getVectorEntries());
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Privacy / approval
-  // -------------------------------------------------------------------------
 
   /**
-   * Permanently removes all persisted data for the given image.
-   * Caller is responsible for also removing the image file, preview cache,
-   * and in-memory index entries (vector + keyword).
+   * Permanently removes all persisted data for the given image. Caller is responsible for
+   * also removing the image file, preview cache and in-memory index entries.
    */
   public void deleteImage(UUID imageId) {
-    write(() -> {
-      // Remove hash index entry before removing the asset record
-      ImageAsset asset = root.getImages().get(imageId);
-      if (asset != null && asset.getSha256() != null) {
-        root.getHashIndex().remove(asset.getSha256());
-        storage.store(root.getHashIndex());
-      }
-      root.getImages().remove(imageId);
-      root.getMetadata().remove(imageId);
-      root.getLocations().remove(imageId);
-      root.getAnalyses().remove(imageId);
-      root.getAssessments().remove(imageId);
-      root.getVectorEntries().remove(imageId);
-      root.getApprovedImageIds().remove(imageId);
-      // Also clean derived data added in later iterations
-      root.getOcrResults().remove(imageId);
-      root.getRawVectorStore().remove(imageId);
-      storage.store(root.getImages());
-      storage.store(root.getMetadata());
-      storage.store(root.getLocations());
-      storage.store(root.getAnalyses());
-      storage.store(root.getAssessments());
-      storage.store(root.getVectorEntries());
-      storage.store(root.getApprovedImageIds());
-      storage.store(root.getOcrResults());
-      storage.store(root.getRawVectorStore());
-      logger().info("Permanently deleted all persisted data for imageId={}", imageId);
-    });
+    images.deleteImage(imageId);
   }
 
-  // -------------------------------------------------------------------------
-  // In-place updates for user corrections
-  // -------------------------------------------------------------------------
-
-  /**
-   * Mark an image as approved so it appears in search results.
-   */
   public void approveImage(UUID imageId) {
-    write(() -> {
-      root.getApprovedImageIds().add(imageId);
-      storage.store(root.getApprovedImageIds());
-    });
+    images.approveImage(imageId);
   }
 
-  /**
-   * Update the risk level of an existing assessment in place and persist the change.
-   */
-  public void updateRiskLevel(UUID imageId, RiskLevel newLevel) {
-    write(() -> {
-      findAssessment(imageId).ifPresent(assessment -> {
-        assessment.setRiskLevel(newLevel);
-        storage.store(assessment);
-        logger().info("Updated riskLevel to {} for imageId={}", newLevel, imageId);
-      });
-    });
-  }
-
-  /**
-   * Update the source category of an existing analysis in place and persist the change.
-   */
-  public void updateSourceCategory(UUID imageId, SourceCategory newCategory) {
-    write(() -> {
-      findAnalysis(imageId).ifPresent(analysis -> {
-        analysis.setSourceCategory(newCategory);
-        storage.store(analysis);
-        logger().info("Updated sourceCategory to {} for imageId={}", newCategory, imageId);
-      });
-    });
-  }
-
-  /**
-   * Update the secondary (additional) categories of an existing analysis and persist.
-   * <p>The list replaces any previously stored secondary categories. Pass an empty list
-   * to clear all secondary categories.
-   */
-  public void updateSecondaryCategories(UUID imageId,
-                                        List<SourceCategory> categories) {
-    write(() -> {
-      findAnalysis(imageId).ifPresent(analysis -> {
-        analysis.setSecondaryCategories(
-            categories != null ? categories : of());
-        storage.store(analysis);
-        logger().info("Updated secondaryCategories for imageId={}: {}", imageId, categories);
-      });
-    });
-  }
-
-  /**
-   * Remove approval — image will no longer appear in search results.
-   */
   public void unapproveImage(UUID imageId) {
-    write(() -> {
-      root.getApprovedImageIds().remove(imageId);
-      storage.store(root.getApprovedImageIds());
-    });
+    images.unapproveImage(imageId);
   }
 
-  // -------------------------------------------------------------------------
-  // Find / query
-  // -------------------------------------------------------------------------
-
-  /**
-   * Returns {@code true} if the image has been approved for search.
-   */
   public boolean isApproved(UUID imageId) {
-    return read(() -> {
-      return root.getApprovedImageIds().contains(imageId);
-    });
+    return images.isApproved(imageId);
   }
 
-  /**
-   * Returns {@code true} if the image exists and has been soft-deleted (archived).
-   */
   public boolean isDeleted(UUID imageId) {
-    return read(() -> {
-      ImageAsset asset = root.getImages().get(imageId);
-      return asset != null && asset.isDeleted();
-    });
+    return images.isDeleted(imageId);
   }
 
   public Optional<ImageAsset> findImage(UUID imageId) {
-    return read(() -> {
-      return Optional.ofNullable(root.getImages().get(imageId));
-    });
+    return images.findImage(imageId);
   }
 
   public List<ImageAsset> findAllImages() {
-    return read(() -> {
-      return root.getImages().values().stream()
-          .filter(a -> !a.isDeleted())
-          .collect(Collectors.toList());
-    });
+    return images.findAllImages();
   }
 
   public List<ImageAsset> findAllImagesIncludingDeleted() {
-    return read(() -> {
-      return new ArrayList<>(root.getImages().values());
-    });
+    return images.findAllImagesIncludingDeleted();
+  }
+
+  public List<ImageAsset> findArchivedImages() {
+    return images.findArchivedImages();
+  }
+
+  public void softDeleteImage(UUID imageId, String reason) {
+    images.softDeleteImage(imageId, reason);
+  }
+
+  public void restoreImage(UUID imageId) {
+    images.restoreImage(imageId);
+  }
+
+  public Optional<UUID> findImageIdByHash(String sha256) {
+    return images.findImageIdByHash(sha256);
+  }
+
+  public void registerHash(String sha256, UUID imageId) {
+    images.registerHash(sha256, imageId);
+  }
+
+  public void removeHash(String sha256) {
+    images.removeHash(sha256);
+  }
+
+  public void rebuildHashIndex() {
+    images.rebuildHashIndex();
+  }
+
+  // ── Analysis results and corrections ──────────────────────────────────────
+
+  public void saveMetadata(UUID imageId, ImageMetadataInfo metadata) {
+    analyses.saveMetadata(imageId, metadata);
+  }
+
+  public void saveLocation(UUID imageId, LocationSummary location) {
+    analyses.saveLocation(imageId, location);
+  }
+
+  public void saveAnalysis(UUID imageId, SemanticAnalysis analysis) {
+    analyses.saveAnalysis(imageId, analysis);
+  }
+
+  public void saveAssessment(UUID imageId, SensitivityAssessment assessment) {
+    analyses.saveAssessment(imageId, assessment);
+  }
+
+  public void saveOcrResult(UUID imageId, OcrResult result) {
+    analyses.saveOcrResult(imageId, result);
   }
 
   public Optional<SemanticAnalysis> findAnalysis(UUID imageId) {
-    return read(() -> {
-      return Optional.ofNullable(root.getAnalyses().get(imageId));
-    });
+    return analyses.findAnalysis(imageId);
   }
 
   public Optional<SensitivityAssessment> findAssessment(UUID imageId) {
-    return read(() -> {
-      return Optional.ofNullable(root.getAssessments().get(imageId));
-    });
+    return analyses.findAssessment(imageId);
   }
 
   public Optional<LocationSummary> findLocation(UUID imageId) {
-    return read(() -> {
-      return Optional.ofNullable(root.getLocations().get(imageId));
-    });
+    return analyses.findLocation(imageId);
   }
 
   public Optional<ImageMetadataInfo> findMetadata(UUID imageId) {
-    return read(() -> {
-      return Optional.ofNullable(root.getMetadata().get(imageId));
-    });
-  }
-
-  public Optional<VectorEntry> findVectorEntry(UUID imageId) {
-    return read(() -> {
-      return Optional.ofNullable(root.getVectorEntries().get(imageId));
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Hash-based duplicate detection
-  // -------------------------------------------------------------------------
-
-  public List<UUID> findAllIndexedImageIds() {
-    return read(() -> {
-      return new ArrayList<>(root.getVectorEntries().keySet());
-    });
-  }
-
-  /**
-   * Returns the imageId of an already-stored asset whose file content matches
-   * the given SHA-256 hash, or {@link java.util.Optional#empty()} if no duplicate exists.
-   */
-  public Optional<UUID> findImageIdByHash(String sha256) {
-    return read(() -> {
-      if (sha256 == null || sha256.isBlank()) {
-        return Optional.empty();
-      }
-      return Optional.ofNullable(root.getHashIndex().get(sha256));
-    });
-  }
-
-  /**
-   * Registers a sha256 → imageId mapping in the hash index and persists the change.
-   * Called by the ingestion pipeline after a new image has been stored successfully.
-   */
-  public void registerHash(String sha256, UUID imageId) {
-    write(() -> {
-      if (sha256 == null || sha256.isBlank()) {
-        return;
-      }
-      root.getHashIndex().put(sha256, imageId);
-      storage.store(root.getHashIndex());
-    });
-  }
-
-  /**
-   * Removes the given hash from the index.
-   * Called when an image is deleted to keep the index consistent.
-   */
-  public void removeHash(String sha256) {
-    write(() -> {
-      if (sha256 == null || sha256.isBlank()) {
-        return;
-      }
-      root.getHashIndex().remove(sha256);
-      storage.store(root.getHashIndex());
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Recent search history
-  // -------------------------------------------------------------------------
-
-  /**
-   * Rebuilds the hash index from scratch by iterating all stored {@link ImageAsset}s.
-   * Call once on application startup to make the index consistent with any images
-   * that were persisted before the hash-index feature existed.
-   */
-  public void rebuildHashIndex() {
-    write(() -> {
-      Map<String, UUID> index = root.getHashIndex();
-      index.clear();
-      int indexed = 0;
-      for (ImageAsset asset : root.getImages().values()) {
-        if (asset.getSha256() != null && !asset.getSha256().isBlank()) {
-          index.put(asset.getSha256(), asset.getId());
-          indexed++;
-        }
-      }
-      storage.store(index);
-      logger().info("Hash index rebuilt: {} entries", indexed);
-    });
-  }
-
-  /**
-   * Prepends the search entry to the recent-search list (case-insensitive deduplication
-   * on the original query), then trims the list to the configured
-   * {@link Settings#SEARCH_RECENT_MAX} number of entries
-   * and persists.
-   *
-   * @param query      the original user query
-   * @param finalQuery the LLM-transformed embedding text (may be null for transform-only runs)
-   * @param mode       which search mode was used
-   */
-  public void addRecentSearch(String query, String finalQuery, SearchMode mode) {
-    write(() -> {
-      if (query == null || query.isBlank()) {
-        return;
-      }
-      String trimmed = query.trim();
-      List<RecentSearchEntry> recent = root.getRecentSearches();
-      // Remove any existing entry with the same original query (case-insensitive) so the
-      // freshly submitted one bubbles to the top.
-      for (int i = recent.size() - 1; i >= 0; i--) {
-        if (trimmed.equalsIgnoreCase(recent.get(i).getQuery())) {
-          recent.remove(i);
-        }
-      }
-      recent.addFirst(new RecentSearchEntry(trimmed, finalQuery, mode, Instant.now()));
-      int maxRecent = SettingsService.getInstance().get(Settings.SEARCH_RECENT_MAX);
-      while (recent.size() > maxRecent) {
-        recent.removeLast();
-      }
-      storage.store(recent);
-      logger().debug("Recent search history updated: {} entries", recent.size());
-    });
-  }
-
-  /**
-   * Removes the specified entries from the recent-search history and persists the change.
-   * Uses object identity ({@link Object#equals}) for matching — callers should pass the
-   * exact instances returned by {@link #getRecentSearches()}.
-   */
-  public void deleteRecentSearches(List<RecentSearchEntry> toDelete) {
-    write(() -> {
-      if (toDelete == null || toDelete.isEmpty()) {
-        return;
-      }
-      root.getRecentSearches().removeAll(toDelete);
-      storage.store(root.getRecentSearches());
-      logger().info("Deleted {} recent search entries", toDelete.size());
-    });
-  }
-
-  /**
-   * Returns an unmodifiable snapshot of the recent-search list (newest first).
-   */
-  public List<RecentSearchEntry> getRecentSearches() {
-    return read(() -> {
-      return List.copyOf(root.getRecentSearches());
-    });
-  }
-
-  /**
-   * Clears the entire recent-search history and persists the change.
-   */
-  public void clearRecentSearches() {
-    write(() -> {
-      root.getRecentSearches().clear();
-      storage.store(root.getRecentSearches());
-      logger().info("Recent search history cleared");
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Raw vector store — used by the GIGAMAP_JVECTOR backend
-  // -------------------------------------------------------------------------
-
-  /**
-   * Persists a raw embedding vector for the given image.
-   * Called by {@code EclipseStoreGigaMapJVectorBackend} whenever a vector is indexed.
-   * EclipseStore is the durable source of truth; the JVector HNSW index is rebuilt
-   * from these values at startup.
-   */
-  public void saveRawVector(UUID imageId, float[] vector) {
-    write(() -> {
-      root.getRawVectorStore().put(imageId, vector);
-      storage.store(root.getRawVectorStore());
-    });
-  }
-
-  /**
-   * Removes the raw embedding vector for the given image.
-   * Called on delete / remove by the {@code GIGAMAP_JVECTOR} backend.
-   */
-  public void removeRawVector(UUID imageId) {
-    write(() -> {
-      root.getRawVectorStore().remove(imageId);
-      storage.store(root.getRawVectorStore());
-    });
-  }
-
-  /**
-   * Returns a snapshot of all persisted raw vectors.
-   * Used by {@code EclipseStoreGigaMapJVectorBackend} to rebuild the JVector
-   * HNSW index at startup without calling the embedding model.
-   */
-  public Map<UUID, float[]> findAllRawVectors() {
-    return read(() -> {
-      return new HashMap<>(root.getRawVectorStore());
-    });
-  }
-
-  /**
-   * Returns the number of raw vectors currently persisted.
-   * Used to decide whether a one-time migration from the in-memory backend is needed.
-   */
-  public int getRawVectorCount() {
-    return read(() -> {
-      return root.getRawVectorStore().size();
-    });
-  }
-
-  /**
-   * Looks up a single raw embedding vector by imageId without copying the entire map.
-   * Used by the tuning-lab feedback scorer to fetch candidate vectors on demand.
-   *
-   * @return the stored embedding, or {@link Optional#empty()} if not persisted
-   */
-  public Optional<float[]> findRawVector(UUID imageId) {
-    return read(() -> {
-      return Optional.ofNullable(root.getRawVectorStore().get(imageId));
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // OcrResult
-  // -------------------------------------------------------------------------
-
-  public void saveOcrResult(UUID imageId, OcrResult result) {
-    write(() -> {
-      root.getOcrResults().put(imageId, result);
-      storage.store(root.getOcrResults());
-    });
+    return analyses.findMetadata(imageId);
   }
 
   public Optional<OcrResult> findOcrResult(UUID imageId) {
-    return read(() -> {
-      return Optional.ofNullable(root.getOcrResults().get(imageId));
-    });
+    return analyses.findOcrResult(imageId);
   }
 
-  // -------------------------------------------------------------------------
-  // SavedSearchView
-  // -------------------------------------------------------------------------
+  public void updateRiskLevel(UUID imageId, RiskLevel newLevel) {
+    analyses.updateRiskLevel(imageId, newLevel);
+  }
+
+  public void updateSourceCategory(UUID imageId, SourceCategory newCategory) {
+    analyses.updateSourceCategory(imageId, newCategory);
+  }
+
+  public void updateSecondaryCategories(UUID imageId, List<SourceCategory> categories) {
+    analyses.updateSecondaryCategories(imageId, categories);
+  }
+
+  /**
+   * @return number of analyses whose category assignment was normalized
+   */
+  public int normalizeAllCategoryAssignments() {
+    return analyses.normalizeAllCategoryAssignments();
+  }
+
+  // ── Vectors ───────────────────────────────────────────────────────────────
+
+  public void saveVectorEntry(UUID imageId, VectorEntry entry) {
+    vectors.saveVectorEntry(imageId, entry);
+  }
+
+  public Optional<VectorEntry> findVectorEntry(UUID imageId) {
+    return vectors.findVectorEntry(imageId);
+  }
+
+  public List<UUID> findAllIndexedImageIds() {
+    return vectors.findAllIndexedImageIds();
+  }
+
+  public void saveRawVector(UUID imageId, float[] vector) {
+    vectors.saveRawVector(imageId, vector);
+  }
+
+  public void removeRawVector(UUID imageId) {
+    vectors.removeRawVector(imageId);
+  }
+
+  public Map<UUID, float[]> findAllRawVectors() {
+    return vectors.findAllRawVectors();
+  }
+
+  public int getRawVectorCount() {
+    return vectors.getRawVectorCount();
+  }
+
+  public Optional<float[]> findRawVector(UUID imageId) {
+    return vectors.findRawVector(imageId);
+  }
+
+  // ── Search history, saved views, tuning presets ───────────────────────────
+
+  public void addRecentSearch(String query, String finalQuery, SearchMode mode) {
+    searchHistory.addRecentSearch(query, finalQuery, mode);
+  }
+
+  public void deleteRecentSearches(List<RecentSearchEntry> toDelete) {
+    searchHistory.deleteRecentSearches(toDelete);
+  }
+
+  public List<RecentSearchEntry> getRecentSearches() {
+    return searchHistory.getRecentSearches();
+  }
+
+  public void clearRecentSearches() {
+    searchHistory.clearRecentSearches();
+  }
 
   public void saveSavedSearchView(SavedSearchView view) {
-    write(() -> {
-      root.getSavedSearchViews().add(view);
-      storage.store(root.getSavedSearchViews());
-    });
+    searchHistory.saveSavedSearchView(view);
   }
 
   public List<SavedSearchView> getSavedSearchViews() {
-    return read(() -> {
-      return List.copyOf(root.getSavedSearchViews());
-    });
+    return searchHistory.getSavedSearchViews();
   }
 
   public void deleteSavedSearchView(UUID viewId) {
-    write(() -> {
-      root.getSavedSearchViews().removeIf(v -> viewId.equals(v.getId()));
-      storage.store(root.getSavedSearchViews());
-    });
+    searchHistory.deleteSavedSearchView(viewId);
   }
 
-  // -------------------------------------------------------------------------
-  // AuditEntry
-  // -------------------------------------------------------------------------
+  public void saveTuningPreset(SearchTuningPreset preset) {
+    searchHistory.saveTuningPreset(preset);
+  }
+
+  public List<SearchTuningPreset> findAllTuningPresets() {
+    return searchHistory.findAllTuningPresets();
+  }
+
+  public void deleteTuningPreset(UUID presetId) {
+    searchHistory.deleteTuningPreset(presetId);
+  }
+
+  // ── Taxonomy maintenance ──────────────────────────────────────────────────
+
+  public void saveTaxonomySuggestion(TaxonomySuggestion suggestion) {
+    taxonomy.saveTaxonomySuggestion(suggestion);
+  }
+
+  public List<TaxonomySuggestion> findAllSuggestions() {
+    return taxonomy.findAllSuggestions();
+  }
+
+  public List<TaxonomySuggestion> findSuggestionsByStatus(SuggestionStatus status) {
+    return taxonomy.findSuggestionsByStatus(status);
+  }
+
+  public Optional<TaxonomySuggestion> findSuggestion(UUID suggestionId) {
+    return taxonomy.findSuggestion(suggestionId);
+  }
+
+  public void clearTaxonomySuggestions() {
+    taxonomy.clearTaxonomySuggestions();
+  }
+
+  public void saveCategoryMetadata(CategoryMetadata meta) {
+    taxonomy.saveCategoryMetadata(meta);
+  }
+
+  public Optional<CategoryMetadata> findCategoryMetadata(SourceCategory category) {
+    return taxonomy.findCategoryMetadata(category);
+  }
+
+  public List<CategoryMetadata> findAllCategoryMetadata() {
+    return taxonomy.findAllCategoryMetadata();
+  }
+
+  public void saveClusterSuggestion(CategoryClusterSuggestion suggestion) {
+    taxonomy.saveClusterSuggestion(suggestion);
+  }
+
+  public List<CategoryClusterSuggestion> findAllClusterSuggestions() {
+    return taxonomy.findAllClusterSuggestions();
+  }
+
+  public void replaceAllClusterSuggestions(List<CategoryClusterSuggestion> suggestions) {
+    taxonomy.replaceAllClusterSuggestions(suggestions);
+  }
+
+  public void deleteClusterSuggestion(UUID id) {
+    taxonomy.deleteClusterSuggestion(id);
+  }
+
+  // ── Audit log ─────────────────────────────────────────────────────────────
 
   public void addAuditEntry(AuditEntry entry) {
-    write(() -> {
-      List<AuditEntry> log = root.getAuditLog();
-      log.addFirst(entry);
-      int maxEntries = SettingsService.getInstance().get(Settings.AUDIT_MAX_ENTRIES);
-      while (log.size() > maxEntries) log.removeLast();
-      storage.store(log);
-    });
+    audit.addAuditEntry(entry);
   }
 
   public List<AuditEntry> getAuditLog() {
-    return read(() -> {
-      return List.copyOf(root.getAuditLog());
-    });
+    return audit.getAuditLog();
   }
 
-  // -------------------------------------------------------------------------
-  // Runtime setting overrides
-  // -------------------------------------------------------------------------
+  // ── Prompt template versions ──────────────────────────────────────────────
+
+  public void savePromptVersion(PromptTemplateVersion version) {
+    prompts.savePromptVersion(version);
+  }
+
+  public List<PromptTemplateVersion> findPromptVersions(String promptKey) {
+    return prompts.findPromptVersions(promptKey);
+  }
+
+  public List<PromptTemplateVersion> findAllPromptVersions() {
+    return prompts.findAllPromptVersions();
+  }
+
+  public Optional<PromptTemplateVersion> findActivePromptVersion(String promptKey) {
+    return prompts.findActivePromptVersion(promptKey);
+  }
+
+  public void deletePromptVersion(UUID id) {
+    prompts.deletePromptVersion(id);
+  }
+
+  // ── Runtime setting overrides (SettingsStore) ─────────────────────────────
 
   @Override
   public Map<String, String> loadSettingOverrides() {
-    return read(() -> Map.copyOf(root.getSettingOverrides()));
+    return settingOverrides.loadSettingOverrides();
   }
 
   @Override
   public void putSettingOverride(String key, String value) {
-    write(() -> {
-      root.getSettingOverrides().put(key, value);
-      storage.store(root.getSettingOverrides());
-    });
+    settingOverrides.putSettingOverride(key, value);
   }
 
   @Override
   public void removeSettingOverride(String key) {
-    write(() -> {
-      if (root.getSettingOverrides().remove(key) != null) {
-        storage.store(root.getSettingOverrides());
-      }
-    });
+    settingOverrides.removeSettingOverride(key);
   }
 
   @Override
   public void clearSettingOverrides() {
-    write(() -> {
-      root.getSettingOverrides().clear();
-      storage.store(root.getSettingOverrides());
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Soft delete / restore
-  // -------------------------------------------------------------------------
-
-  public void softDeleteImage(UUID imageId, String reason) {
-    write(() -> {
-      findImage(imageId).ifPresent(asset -> {
-        asset.setDeleted(true);
-        asset.setDeletedAt(java.time.Instant.now());
-        asset.setDeletedReason(reason);
-        storage.store(asset);
-      });
-      unapproveImage(imageId);
-    });
-  }
-
-  public void restoreImage(UUID imageId) {
-    write(() -> {
-      findImage(imageId).ifPresent(asset -> {
-        asset.setDeleted(false);
-        asset.setDeletedAt(null);
-        asset.setDeletedReason(null);
-        storage.store(asset);
-      });
-      // Re-approve only if the stored sensitivity assessment is SAFE.
-      // REVIEW / SENSITIVE images remain locked and require manual approval in the Overview.
-      findAssessment(imageId).ifPresent(assessment -> {
-        if (assessment.getRiskLevel() == RiskLevel.SAFE) {
-          approveImage(imageId);
-          logger().info("Auto-approved restored image {} (SAFE risk)", imageId);
-        } else {
-          logger().info("Restored image {} remains locked ({} risk) — manual approval required",
-                        imageId, assessment.getRiskLevel());
-        }
-      });
-    });
-  }
-
-  /**
-   * Returns all images that have been soft-deleted (archived), regardless of their
-   * approval state or risk level.  Used by the Archive view.
-   */
-  public List<ImageAsset> findArchivedImages() {
-    return read(() -> {
-      return root.getImages().values().stream()
-          .filter(ImageAsset::isDeleted)
-          .sorted(Comparator.comparing(
-              a -> a.getDeletedAt() != null ? a.getDeletedAt() : Instant.EPOCH,
-              Comparator.reverseOrder()))
-          .collect(Collectors.toList());
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Taxonomy suggestions
-  // -------------------------------------------------------------------------
-
-  /**
-   * Persists a {@link TaxonomySuggestion}.  If a suggestion with the same id already
-   * exists it is replaced; otherwise the suggestion is appended.
-   */
-  public void saveTaxonomySuggestion(TaxonomySuggestion suggestion) {
-    write(() -> {
-      List<TaxonomySuggestion> list = root.getTaxonomySuggestions();
-      list.removeIf(s -> suggestion.getId().equals(s.getId()));
-      list.add(suggestion);
-      storage.store(list);
-    });
-  }
-
-  /**
-   * Returns an unmodifiable snapshot of all stored taxonomy suggestions (newest first).
-   */
-  public List<TaxonomySuggestion> findAllSuggestions() {
-    return read(() -> {
-      return List.copyOf(root.getTaxonomySuggestions());
-    });
-  }
-
-  /**
-   * Returns suggestions filtered by status.
-   */
-  public List<TaxonomySuggestion> findSuggestionsByStatus(SuggestionStatus status) {
-    return read(() -> {
-      return root.getTaxonomySuggestions().stream()
-          .filter(s -> s.getStatus() == status)
-          .collect(Collectors.toList());
-    });
-  }
-
-  /**
-   * Returns a single suggestion by id.
-   */
-  public Optional<TaxonomySuggestion> findSuggestion(java.util.UUID suggestionId) {
-    return read(() -> {
-      return root.getTaxonomySuggestions().stream()
-          .filter(s -> suggestionId.equals(s.getId()))
-          .findFirst();
-    });
-  }
-
-  /**
-   * Removes all stored taxonomy suggestions.  Used before a fresh analysis run so
-   * the user sees only the most recent batch of proposals.
-   */
-  public void clearTaxonomySuggestions() {
-    write(() -> {
-      root.getTaxonomySuggestions().clear();
-      storage.store(root.getTaxonomySuggestions());
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Category lifecycle metadata
-  // -------------------------------------------------------------------------
-
-  /**
-   * Persists (creates or replaces) category lifecycle metadata for the given category.
-   */
-  public void saveCategoryMetadata(CategoryMetadata meta) {
-    write(() -> {
-      root.getCategoryMetadata().put(meta.getCategory().name(), meta);
-      storage.store(root.getCategoryMetadata());
-    });
-  }
-
-  /**
-   * Returns the stored {@link CategoryMetadata} for the given category, or empty if
-   * no metadata record has been created (the category is implicitly ACTIVE).
-   */
-  public Optional<CategoryMetadata> findCategoryMetadata(SourceCategory category) {
-    return read(() -> {
-      if (category == null) return Optional.empty();
-      return Optional.ofNullable(root.getCategoryMetadata().get(category.name()));
-    });
-  }
-
-  /**
-   * Returns an unmodifiable snapshot of all stored category metadata records.
-   */
-  public List<CategoryMetadata> findAllCategoryMetadata() {
-    return read(() -> {
-      return Collections.unmodifiableList(new ArrayList<>(root.getCategoryMetadata().values()));
-    });
-  }
-
-  // ── Search Tuning Lab presets ─────────────────────────────────────────────
-
-  /**
-   * Persists a new or updated tuning preset.
-   * Any existing preset with the same {@link com.svenruppert.imagerag.domain.SearchTuningPreset#getId()}
-   * is replaced; a fresh preset (never saved before) is appended.
-   */
-  public void saveTuningPreset(com.svenruppert.imagerag.domain.SearchTuningPreset preset) {
-    write(() -> {
-      List<com.svenruppert.imagerag.domain.SearchTuningPreset> list = root.getTuningPresets();
-      // Replace existing entry with matching id, or append
-      boolean replaced = false;
-      for (int i = 0; i < list.size(); i++) {
-        if (preset.getId().equals(list.get(i).getId())) {
-          list.set(i, preset);
-          replaced = true;
-          break;
-        }
-      }
-      if (!replaced) {
-        list.add(preset);
-      }
-      storage.store(list);
-      logger().info("Saved tuning preset '{}' (id={})", preset.getName(), preset.getId());
-    });
-  }
-
-  /**
-   * Returns an unmodifiable snapshot of all saved tuning presets,
-   * ordered by insertion (oldest first).
-   */
-  public List<com.svenruppert.imagerag.domain.SearchTuningPreset> findAllTuningPresets() {
-    return read(() -> {
-      return List.copyOf(root.getTuningPresets());
-    });
-  }
-
-  /**
-   * Removes the tuning preset with the given id.  No-op if not found.
-   */
-  public void deleteTuningPreset(java.util.UUID presetId) {
-    write(() -> {
-      boolean removed = root.getTuningPresets().removeIf(p -> presetId.equals(p.getId()));
-      if (removed) {
-        storage.store(root.getTuningPresets());
-        logger().info("Deleted tuning preset id={}", presetId);
-      }
-    });
-  }
-
-  // ── Cluster suggestions ──────────────────────────────────────────────────
-
-  public void saveClusterSuggestion(com.svenruppert.imagerag.domain.CategoryClusterSuggestion s) {
-    write(() -> {
-      List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> list = root.getClusterSuggestions();
-      list.removeIf(x -> s.getId().equals(x.getId()));
-      list.add(s);
-      storage.store(list);
-      logger().debug("Saved cluster suggestion id={}", s.getId());
-    });
-  }
-
-  public List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> findAllClusterSuggestions() {
-    return read(() -> {
-      return List.copyOf(root.getClusterSuggestions());
-    });
-  }
-
-  /**
-   * Replaces all cluster suggestions with the given list (used after a discovery run).
-   */
-  public void replaceAllClusterSuggestions(
-      List<com.svenruppert.imagerag.domain.CategoryClusterSuggestion> suggestions) {
-    write(() -> {
-      root.getClusterSuggestions().clear();
-      root.getClusterSuggestions().addAll(suggestions);
-      storage.store(root.getClusterSuggestions());
-      logger().info("Replaced cluster suggestions: {} entries", suggestions.size());
-    });
-  }
-
-  public void deleteClusterSuggestion(java.util.UUID id) {
-    write(() -> {
-      boolean removed = root.getClusterSuggestions().removeIf(s -> id.equals(s.getId()));
-      if (removed) storage.store(root.getClusterSuggestions());
-    });
-  }
-
-  // ── Prompt template versions ─────────────────────────────────────────────
-
-  public void savePromptVersion(com.svenruppert.imagerag.domain.PromptTemplateVersion v) {
-    write(() -> {
-      List<com.svenruppert.imagerag.domain.PromptTemplateVersion> list = root.getPromptVersions();
-      list.removeIf(x -> v.getId().equals(x.getId()));
-      list.add(v);
-      storage.store(list);
-      logger().info("Saved prompt version: key={} version={} active={}",
-                    v.getPromptKey(), v.getVersion(), v.isActive());
-    });
-  }
-
-  public List<com.svenruppert.imagerag.domain.PromptTemplateVersion> findPromptVersions(String promptKey) {
-    return read(() -> {
-      return root.getPromptVersions().stream()
-          .filter(v -> promptKey.equals(v.getPromptKey()))
-          .collect(Collectors.toList());
-    });
-  }
-
-  public List<com.svenruppert.imagerag.domain.PromptTemplateVersion> findAllPromptVersions() {
-    return read(() -> {
-      return List.copyOf(root.getPromptVersions());
-    });
-  }
-
-  public Optional<com.svenruppert.imagerag.domain.PromptTemplateVersion> findActivePromptVersion(String promptKey) {
-    return read(() -> {
-      return root.getPromptVersions().stream()
-          .filter(v -> promptKey.equals(v.getPromptKey()) && v.isActive())
-          .findFirst();
-    });
-  }
-
-  public void deletePromptVersion(java.util.UUID id) {
-    write(() -> {
-      boolean removed = root.getPromptVersions().removeIf(v -> id.equals(v.getId()));
-      if (removed) storage.store(root.getPromptVersions());
-    });
-  }
-
-  public void shutdown() {
-    storage.shutdown();
-    logger().info("EclipseStore shut down");
-  }
-
-  // -------------------------------------------------------------------------
-  // Category assignment normalization
-  // -------------------------------------------------------------------------
-
-  /**
-   * Normalizes multi-category assignments across all stored analyses.
-   * Removes duplicates in secondary categories and ensures the primary category
-   * is never also listed as a secondary.
-   * <p>Safe to call repeatedly — idempotent.  Intended for startup cleanup.
-   *
-   * @return number of analyses that were actually changed and re-persisted
-   */
-  public int normalizeAllCategoryAssignments() {
-    return writeAndGet(() -> {
-      int changed = 0;
-      for (SemanticAnalysis analysis : root.getAnalyses().values()) {
-        if (analysis == null) continue;
-        if (com.svenruppert.imagerag.domain.CategoryAssignmentNormalizer.normalize(analysis)) {
-          storage.store(analysis);
-          changed++;
-        }
-      }
-      if (changed > 0) {
-        logger().info("Normalized category assignments for {} analysis record(s)", changed);
-      }
-      return changed;
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // Schema migration helpers
-  // -------------------------------------------------------------------------
-
-  /**
-   * EclipseStore reconstructs objects via {@code Unsafe.allocateInstance()}, bypassing
-   * constructors. {@code EnumSet} has {@code final} internal fields ({@code elementType},
-   * {@code universe}) that are set in the constructor — after Unsafe reconstruction they
-   * are {@code null}, causing {@link NullPointerException} on iteration.
-   * <p>This method replaces any broken {@code EnumSet}-backed flags field with a safe
-   * {@link HashSet} copy and re-persists the affected assessments.
-   */
-  private void migrateEnumSets() {
-    int migrated = 0;
-    for (var entry : root.getAssessments().entrySet()) {
-      var assessment = entry.getValue();
-      Set<SensitivityFlag> flags = assessment.getFlags();
-      if (flags == null) {
-        assessment.setFlags(new HashSet<>());
-        storage.store(assessment);
-        migrated++;
-        continue;
-      }
-      // Detect broken EnumSet by attempting to iterate; replace on failure
-      try {
-        flags.size(); // cheap probe — iterates nothing but accesses 'universe'
-        // Also check by iterating (size() alone may not trigger the NPE in all JVMs)
-        for (@SuppressWarnings("unused") var ignored : flags) break;
-      } catch (NullPointerException e) {
-        // 'universe' is null — rebuild as HashSet (we can't recover the values)
-        logger().warn("Rebuilding broken EnumSet flags for assessment imageId={}",
-                      assessment.getImageId());
-        assessment.setFlags(new HashSet<>());
-        storage.store(assessment);
-        migrated++;
-      }
-    }
-    if (migrated > 0) {
-      logger().info("Migrated {} assessments from broken EnumSet to HashSet", migrated);
-    }
+    settingOverrides.clearSettingOverrides();
   }
 }

@@ -30,7 +30,7 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.progressbar.ProgressBar;
 import com.vaadin.flow.component.select.Select;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 
 import java.time.Duration;
@@ -56,10 +56,10 @@ import java.util.concurrent.TimeUnit;
  * jobs.  Changes take effect immediately for newly submitted jobs; in-flight jobs
  * on the old executor finish normally.
  */
-@PageTitle("Processing Pipeline")
 @Route(value = PipelineView.PATH, layout = MainLayout.class)
 public class PipelineView
-    extends VerticalLayout {
+    extends VerticalLayout
+    implements HasDynamicTitle {
 
   public static final String PATH = "pipeline";
 
@@ -233,7 +233,7 @@ public class PipelineView
     dlg.setText(getTranslation("pipeline.rebuild.vector.confirm",
                                services.vectorBackendType().name()));
     dlg.setCancelable(true);
-    dlg.setConfirmText("Rebuild");
+    dlg.setConfirmText(getTranslation("pipeline.rebuild.confirm.button"));
     dlg.addConfirmListener(e -> rebuildVectorIndex());
     dlg.open();
   }
@@ -248,7 +248,7 @@ public class PipelineView
                                                   .addThemeVariants(NotificationVariant.LUMO_SUCCESS)));
       } catch (Exception ex) {
         getUI().ifPresent(ui -> ui.access(() ->
-                                              Notification.show("Vector index rebuild failed: " + ex.getMessage(),
+                                              Notification.show(getTranslation("pipeline.rebuild.vector.failed", ex.getMessage()),
                                                                 6000, Notification.Position.MIDDLE)
                                                   .addThemeVariants(NotificationVariant.LUMO_ERROR)));
       }
@@ -260,7 +260,7 @@ public class PipelineView
     dlg.setHeader(getTranslation("pipeline.rebuild.keyword"));
     dlg.setText(getTranslation("pipeline.rebuild.keyword.confirm"));
     dlg.setCancelable(true);
-    dlg.setConfirmText("Rebuild");
+    dlg.setConfirmText(getTranslation("pipeline.rebuild.confirm.button"));
     dlg.addConfirmListener(e -> rebuildKeywordIndex());
     dlg.open();
   }
@@ -279,7 +279,7 @@ public class PipelineView
                                                   .addThemeVariants(NotificationVariant.LUMO_SUCCESS)));
       } catch (Exception ex) {
         getUI().ifPresent(ui -> ui.access(() ->
-                                              Notification.show("Rebuild failed: " + ex.getMessage(),
+                                              Notification.show(getTranslation("pipeline.rebuild.failed", ex.getMessage()),
                                                                 5000, Notification.Position.MIDDLE)
                                                   .addThemeVariants(NotificationVariant.LUMO_ERROR)));
       }
@@ -631,7 +631,7 @@ public class PipelineView
         Button promoteBtn = new Button(getTranslation("pipeline.promote"));
         promoteBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
         promoteBtn.getElement().setAttribute("title",
-                                             "Move this job to the front of the queue so it executes next");
+                                             getTranslation("pipeline.promote.tooltip"));
         promoteBtn.addClickListener(e -> {
           services.ingestionPipeline().promote(job);
           Notification.show(getTranslation("pipeline.promote.done", job.getFilename()),
@@ -788,5 +788,10 @@ public class PipelineView
       default -> throw new RuntimeException("Unknown step: " + step);
     }
     return badge;
+  }
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("pipeline.page.title");
   }
 }

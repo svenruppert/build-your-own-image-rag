@@ -34,7 +34,7 @@ import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.component.textfield.NumberField;
 import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 
 import java.util.ArrayList;
@@ -53,9 +53,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * </ul>
  */
 @Route(value = MultimodalSearchView.PATH, layout = MainLayout.class)
-@PageTitle("Multimodal Search")
 public class MultimodalSearchView
-    extends VerticalLayout {
+    extends VerticalLayout
+    implements HasDynamicTitle {
 
   public static final String PATH = "multimodal";
 
@@ -181,7 +181,7 @@ public class MultimodalSearchView
   private Component buildSignalPanel() {
     // Text signal
     textInput.setLabel(getTranslation("multimodal.signal.text"));
-    textInput.setPlaceholder("e.g. winter landscape");
+    textInput.setPlaceholder(getTranslation("multimodal.signal.text.placeholder"));
     textInput.setWidthFull();
     textInput.setMaxHeight("80px");
 
@@ -203,7 +203,7 @@ public class MultimodalSearchView
 
     // Image example signal
     imageIdInput.setLabel(getTranslation("multimodal.signal.image.id"));
-    imageIdInput.setPlaceholder("UUID or filename fragment");
+    imageIdInput.setPlaceholder(getTranslation("multimodal.signal.image.placeholder"));
     imageIdInput.setWidthFull();
 
     imageWeight.setLabel(getTranslation("multimodal.signal.weight"));
@@ -219,14 +219,14 @@ public class MultimodalSearchView
         addSignal(MultimodalSignal.imageExample(id, imageWeight.getValue()));
         imageIdInput.clear();
       } else {
-        Notification.show("Image not found: " + imageIdInput.getValue(), 2500, Notification.Position.BOTTOM_START);
+        Notification.show(getTranslation("multimodal.signal.image.not.found", imageIdInput.getValue()), 2500, Notification.Position.BOTTOM_START);
       }
     });
     addImage.addThemeVariants(ButtonVariant.LUMO_SMALL);
 
     // OCR terms signal
     ocrInput.setLabel(getTranslation("multimodal.signal.ocr"));
-    ocrInput.setPlaceholder("e.g. \"ABC 123\" parking");
+    ocrInput.setPlaceholder(getTranslation("multimodal.signal.ocr.placeholder"));
     ocrInput.setWidthFull();
     ocrInput.setMaxHeight("60px");
 
@@ -248,7 +248,7 @@ public class MultimodalSearchView
 
     // Category filter signal
     categoryInput.setLabel(getTranslation("multimodal.signal.category"));
-    categoryInput.setPlaceholder("e.g. LANDSCAPE or Nature");
+    categoryInput.setPlaceholder(getTranslation("multimodal.signal.category.placeholder"));
     categoryInput.setWidthFull();
 
     Button addCat = new Button(getTranslation("multimodal.signal.add.category"), e -> {
@@ -614,5 +614,10 @@ public class MultimodalSearchView
             && a.getOriginalFilename().toLowerCase().contains(value.toLowerCase()))
         .map(ImageAsset::getId)
         .findFirst().orElse(null);
+  }
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("multimodal.page.title");
   }
 }

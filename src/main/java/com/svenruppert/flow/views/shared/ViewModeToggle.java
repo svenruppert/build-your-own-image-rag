@@ -26,9 +26,6 @@ import java.util.function.Consumer;
 public class ViewModeToggle
     extends HorizontalLayout {
 
-  private static final String LABEL_TABLE = "Table";
-  private static final String LABEL_TILES = "Tiles";
-
   private final Button tableBtn;
   private final Button tilesBtn;
   private boolean tileMode;
@@ -56,8 +53,8 @@ public class ViewModeToggle
         .set("flex-shrink", "0")
         .set("align-self", "flex-start");
 
-    tableBtn = buildSegmentButton(VaadinIcon.LIST, LABEL_TABLE, true);
-    tilesBtn = buildSegmentButton(VaadinIcon.GRID_BIG, LABEL_TILES, false);
+    tableBtn = buildSegmentButton(VaadinIcon.LIST, getTranslation("common.view.table"), true);
+    tilesBtn = buildSegmentButton(VaadinIcon.GRID_BIG, getTranslation("common.view.tiles"), false);
 
     tableBtn.addClickListener(e -> {
       if (this.tileMode) {

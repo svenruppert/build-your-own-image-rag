@@ -31,7 +31,7 @@ import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 
 import java.nio.file.Files;
@@ -52,10 +52,9 @@ import java.util.UUID;
  * </ol>
  */
 @Route(value = MigrationCenterView.PATH, layout = MainLayout.class)
-@PageTitle("Migration Center")
 public class MigrationCenterView
     extends VerticalLayout
-    implements BeforeEnterObserver, HasLogger {
+    implements BeforeEnterObserver, HasLogger, HasDynamicTitle {
 
   public static final String PATH = "migration";
 
@@ -341,7 +340,7 @@ public class MigrationCenterView
 
     versionLabel.setLabel(getTranslation("migration.editor.version"));
     versionLabel.setWidthFull();
-    versionLabel.setPlaceholder("e.g. v2-experiment");
+    versionLabel.setPlaceholder(getTranslation("migration.prompt.version.placeholder"));
 
     descField.setLabel(getTranslation("migration.editor.description"));
     descField.setWidthFull();
@@ -860,5 +859,10 @@ public class MigrationCenterView
         });
       }
     });
+  }
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("migration.page.title");
   }
 }

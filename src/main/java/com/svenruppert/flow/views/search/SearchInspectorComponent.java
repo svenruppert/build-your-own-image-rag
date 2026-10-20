@@ -64,14 +64,15 @@ public class SearchInspectorComponent
         .set("background", "var(--lumo-base-color)")
         .set("width", "100%");
 
-    stepQuery = new StepRow("1", "User Query", "Waiting for query\u2026");
-    stepLlm = new StepRow("2", "Query Understanding", "Waiting\u2026");
-    stepTransformed = new StepRow("3", "Transformed Query", "Waiting\u2026");
-    stepParams = new StepRow("4", "Derived Parameters", "Waiting\u2026");
-    stepSearchPrep = new StepRow("5", "Search Preparation", "Waiting\u2026");
-    stepRetrieval = new StepRow("6", "Candidate Retrieval", "Waiting\u2026");
-    stepFiltering = new StepRow("7", "Filtering", "Waiting\u2026");
-    stepResults = new StepRow("8", "Result Generation", "Waiting\u2026");
+    stepQuery = new StepRow("1", getTranslation("search.inspector.step.query"),
+                            getTranslation("search.inspector.waiting.query"));
+    stepLlm = new StepRow("2", getTranslation("search.inspector.step.understanding"), getTranslation("search.inspector.waiting"));
+    stepTransformed = new StepRow("3", getTranslation("search.inspector.step.transformed"), getTranslation("search.inspector.waiting"));
+    stepParams = new StepRow("4", getTranslation("search.inspector.step.params"), getTranslation("search.inspector.waiting"));
+    stepSearchPrep = new StepRow("5", getTranslation("search.inspector.step.preparation"), getTranslation("search.inspector.waiting"));
+    stepRetrieval = new StepRow("6", getTranslation("search.inspector.step.retrieval"), getTranslation("search.inspector.waiting"));
+    stepFiltering = new StepRow("7", getTranslation("search.inspector.step.filtering"), getTranslation("search.inspector.waiting"));
+    stepResults = new StepRow("8", getTranslation("search.inspector.step.results"), getTranslation("search.inspector.waiting"));
 
     add(stepQuery, stepLlm, stepTransformed, stepParams,
         stepSearchPrep, stepRetrieval, stepFiltering, stepResults);
@@ -83,14 +84,15 @@ public class SearchInspectorComponent
    * Must be called at the start of each new search run.
    */
   public void reset() {
-    stepQuery.update(StepStatus.PENDING, "Waiting for query\u2026", null);
-    stepLlm.update(StepStatus.PENDING, "Waiting\u2026", null);
-    stepTransformed.update(StepStatus.PENDING, "Waiting\u2026", null);
-    stepParams.update(StepStatus.PENDING, "Waiting\u2026", null);
-    stepSearchPrep.update(StepStatus.PENDING, "Waiting\u2026", null);
-    stepRetrieval.update(StepStatus.PENDING, "Waiting\u2026", null);
-    stepFiltering.update(StepStatus.PENDING, "Waiting\u2026", null);
-    stepResults.update(StepStatus.PENDING, "Waiting\u2026", null);
+    String waiting = getTranslation("search.inspector.waiting");
+    stepQuery.update(StepStatus.PENDING, getTranslation("search.inspector.waiting.query"), null);
+    stepLlm.update(StepStatus.PENDING, waiting, null);
+    stepTransformed.update(StepStatus.PENDING, waiting, null);
+    stepParams.update(StepStatus.PENDING, waiting, null);
+    stepSearchPrep.update(StepStatus.PENDING, waiting, null);
+    stepRetrieval.update(StepStatus.PENDING, waiting, null);
+    stepFiltering.update(StepStatus.PENDING, waiting, null);
+    stepResults.update(StepStatus.PENDING, waiting, null);
   }
 
   // ── Public update API (called from the UI polling handler) ───────────────────
@@ -100,7 +102,7 @@ public class SearchInspectorComponent
    */
   public void setQueryInput(String query) {
     stepQuery.update(StepStatus.COMPLETED,
-                     "Query: " + truncate(query, 80),
+                     getTranslation("search.inspector.query", truncate(query, 80)),
                      query);
   }
 
@@ -108,7 +110,7 @@ public class SearchInspectorComponent
    * Marks step 2 (Query Understanding) as ACTIVE.
    */
   public void setLlmActive() {
-    stepLlm.update(StepStatus.ACTIVE, "Analyzing with language model\u2026", null);
+    stepLlm.update(StepStatus.ACTIVE, getTranslation("search.inspector.llm.active"), null);
   }
 
   /**
@@ -117,7 +119,7 @@ public class SearchInspectorComponent
    */
   public void setLlmCompleted(SearchPlan plan) {
     // Step 2 — LLM explanation
-    String explanation = plan.getExplanation() != null ? plan.getExplanation() : "Query understood";
+    String explanation = plan.getExplanation() != null ? plan.getExplanation() : getTranslation("search.inspector.llm.understood");
     stepLlm.update(StepStatus.COMPLETED, truncate(explanation, 100), plan.getExplanation());
 
     // Step 3 — Transformed embedding text
@@ -134,7 +136,7 @@ public class SearchInspectorComponent
    * Called right before the background thread submits the search request.
    */
   public void setSearchPrepActive() {
-    stepSearchPrep.update(StepStatus.ACTIVE, "Computing embedding vector\u2026", null);
+    stepSearchPrep.update(StepStatus.ACTIVE, getTranslation("search.inspector.embedding.active"), null);
   }
 
   /**
@@ -151,22 +153,17 @@ public class SearchInspectorComponent
    */
   public void setSearchCompleted(int resultCount, double threshold,
                                  int vectorCands, int keywordCands) {
-    stepSearchPrep.update(StepStatus.COMPLETED, "Embedding computed", null);
-    String retrievalSummary = String.format(
-        "Vector: %d candidates · BM25: %d candidates · RRF fusion applied",
-        vectorCands, keywordCands);
-    String retrievalDetail = String.format(
-        "Semantic (vector) channel: %d candidates%n"
-            + "Keyword (BM25/Lucene) channel: %d candidates%n"
-            + "Fusion: Reciprocal Rank Fusion (RRF, k=60)%n"
-            + "Merged candidates scored and sorted by combined RRF score",
-        vectorCands, keywordCands);
+    stepSearchPrep.update(StepStatus.COMPLETED, getTranslation("search.inspector.embedding.done"), null);
+    String retrievalSummary = getTranslation("search.inspector.retrieval.summary",
+                                             vectorCands, keywordCands);
+    String retrievalDetail = getTranslation("search.inspector.retrieval.detail",
+                                            vectorCands, keywordCands);
     stepRetrieval.update(StepStatus.COMPLETED, retrievalSummary, retrievalDetail);
     stepFiltering.update(StepStatus.COMPLETED,
-                         String.format("Score \u2265 %.2f \u2014 %d result(s) kept", threshold, resultCount),
-                         String.format("Score threshold: %.2f%nResults kept: %d", threshold, resultCount));
+                         getTranslation("search.inspector.filtering.summary", threshold, resultCount),
+                         getTranslation("search.inspector.filtering.detail", threshold, resultCount));
     stepResults.update(StepStatus.COMPLETED,
-                       resultCount + " image(s) matched",
+                       getTranslation("search.inspector.results.matched", resultCount),
                        null);
   }
 
@@ -175,11 +172,11 @@ public class SearchInspectorComponent
    * Called in TRANSFORM_ONLY mode after LLM analysis completes.
    */
   public void skipExecutionSteps() {
-    String note = "Skipped \u2014 Transform Only mode";
+    String note = getTranslation("search.inspector.skipped.transform");
     stepSearchPrep.update(StepStatus.SKIPPED, note, null);
     stepRetrieval.update(StepStatus.SKIPPED, note, null);
     stepFiltering.update(StepStatus.SKIPPED, note, null);
-    stepResults.update(StepStatus.SKIPPED, "Not executed \u2014 Transform Only mode", null);
+    stepResults.update(StepStatus.SKIPPED, getTranslation("search.inspector.not.executed.transform"), null);
   }
 
   /**
@@ -190,11 +187,11 @@ public class SearchInspectorComponent
    *                     (values &ge; 3 indicate the LLM completed; failure was in search execution)
    */
   public void setFailed(String error, int stepProgress) {
-    String skippedNote = "Not reached";
+    String skippedNote = getTranslation("search.inspector.not.reached");
     if (stepProgress >= 3) {
       // LLM completed; failure occurred during search preparation or retrieval
       stepSearchPrep.update(StepStatus.FAILED,
-                            "Search failed: " + truncate(error, 80),
+                            getTranslation("search.inspector.search.failed", truncate(error, 80)),
                             error);
       stepRetrieval.update(StepStatus.SKIPPED, skippedNote, null);
       stepFiltering.update(StepStatus.SKIPPED, skippedNote, null);
@@ -202,7 +199,7 @@ public class SearchInspectorComponent
     } else {
       // Failure during or before LLM analysis
       stepLlm.update(StepStatus.FAILED,
-                     "LLM analysis failed: " + truncate(error, 80),
+                     getTranslation("search.inspector.llm.failed", truncate(error, 80)),
                      error);
       stepTransformed.update(StepStatus.SKIPPED, skippedNote, null);
       stepParams.update(StepStatus.SKIPPED, skippedNote, null);
@@ -220,51 +217,57 @@ public class SearchInspectorComponent
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
+  private String yesNo(boolean value) {
+    return getTranslation(value ? "search.inspector.yes" : "search.inspector.no");
+  }
+
   private String buildParamSummary(SearchPlan plan) {
     StringBuilder sb = new StringBuilder();
     if (plan.getSeasonHint() != null) {
-      sb.append("Season: ").append(plan.getSeasonHint().name()).append("  ");
+      sb.append(getTranslation("search.inspector.param.season")).append(": ")
+          .append(plan.getSeasonHint().name()).append("  ");
     }
     if (plan.getCategoryGroup() != null) {
-      sb.append("Category: ").append(plan.getCategoryGroup().getLabel()).append("  ");
+      sb.append(getTranslation("search.inspector.param.category")).append(": ").append(plan.getCategoryGroup().getLabel()).append("  ");
     }
     if (plan.getContainsPerson() != null) {
-      sb.append("Person: ").append(plan.getContainsPerson() ? "yes" : "no").append("  ");
+      sb.append(getTranslation("search.inspector.param.person")).append(": ").append(yesNo(plan.getContainsPerson())).append("  ");
     }
     if (plan.getContainsVehicle() != null) {
-      sb.append("Vehicle: ").append(plan.getContainsVehicle() ? "yes" : "no").append("  ");
+      sb.append(getTranslation("search.inspector.param.vehicle")).append(": ").append(yesNo(plan.getContainsVehicle())).append("  ");
     }
     if (plan.getContainsLicensePlate() != null) {
-      sb.append("Plate: ").append(plan.getContainsLicensePlate() ? "yes" : "no").append("  ");
+      sb.append(getTranslation("search.inspector.param.plate")).append(": ").append(yesNo(plan.getContainsLicensePlate())).append("  ");
     }
     if (plan.getMinScore() != null) {
-      sb.append("Threshold: ").append(String.format("%.2f", plan.getMinScore())).append("  ");
+      sb.append(getTranslation("search.inspector.param.threshold")).append(": ").append(String.format("%.2f", plan.getMinScore())).append("  ");
     }
-    return sb.isEmpty() ? "No specific parameters derived" : sb.toString().trim();
+    return sb.isEmpty() ? getTranslation("search.inspector.param.none") : sb.toString().trim();
   }
 
   private String buildParamDetails(SearchPlan plan) {
     StringBuilder sb = new StringBuilder();
     if (plan.getContainsPerson() != null) {
-      sb.append("Contains Person: ").append(plan.getContainsPerson() ? "yes" : "no").append("\n");
+      sb.append(getTranslation("detail.field.contains.person")).append(": ").append(yesNo(plan.getContainsPerson())).append("\n");
     }
     if (plan.getContainsVehicle() != null) {
-      sb.append("Contains Vehicle: ").append(plan.getContainsVehicle() ? "yes" : "no").append("\n");
+      sb.append(getTranslation("detail.field.contains.vehicle")).append(": ").append(yesNo(plan.getContainsVehicle())).append("\n");
     }
     if (plan.getContainsLicensePlate() != null) {
-      sb.append("License Plate: ").append(plan.getContainsLicensePlate() ? "yes" : "no").append("\n");
+      sb.append(getTranslation("detail.field.license.plate")).append(": ").append(yesNo(plan.getContainsLicensePlate())).append("\n");
     }
     if (plan.getSeasonHint() != null) {
-      sb.append("Season: ").append(plan.getSeasonHint().name()).append("\n");
+      sb.append(getTranslation("search.inspector.param.season")).append(": ")
+          .append(plan.getSeasonHint().name()).append("\n");
     }
     if (plan.getCategoryGroup() != null) {
-      sb.append("Category Group: ").append(plan.getCategoryGroup().getLabel()).append("\n");
+      sb.append(getTranslation("search.inspector.param.category.group")).append(": ").append(plan.getCategoryGroup().getLabel()).append("\n");
     }
     if (plan.getPrivacyLevel() != null) {
-      sb.append("Max Privacy Level: ").append(plan.getPrivacyLevel().name()).append("\n");
+      sb.append(getTranslation("search.inspector.param.privacy")).append(": ").append(plan.getPrivacyLevel().name()).append("\n");
     }
     if (plan.getMinScore() != null) {
-      sb.append("Score Threshold: ").append(String.format("%.2f", plan.getMinScore())).append("\n");
+      sb.append(getTranslation("search.inspector.param.score.threshold")).append(": ").append(String.format("%.2f", plan.getMinScore())).append("\n");
     }
     return sb.isEmpty() ? null : sb.toString().trim();
   }
@@ -359,7 +362,7 @@ public class SearchInspectorComponent
         detailsPanel = null;
       }
       if (detailsText != null && !detailsText.isBlank()) {
-        detailsPanel = new Details("Show details");
+        detailsPanel = new Details(getTranslation("search.inspector.show.details"));
         Paragraph p = new Paragraph(detailsText);
         p.getStyle()
             .set("font-size", "var(--lumo-font-size-xs)")

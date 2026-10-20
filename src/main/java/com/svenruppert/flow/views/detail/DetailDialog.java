@@ -36,7 +36,7 @@ public class DetailDialog
                       SemanticAnalysis analysis,
                       SensitivityAssessment assessment,
                       LocationSummary location) {
-    setHeaderTitle("Image Details: " + asset.getOriginalFilename());
+    setHeaderTitle(getTranslation("detail.title", asset.getOriginalFilename()));
     setWidth("860px");
     setMaxHeight("90vh");
     setCloseOnOutsideClick(true);
@@ -71,16 +71,13 @@ public class DetailDialog
     add(tabs);
 
     // Footer: Reprocess + Close
-    Button reprocessBtn = new Button("Reprocess");
+    Button reprocessBtn = new Button(getTranslation("detail.reprocess"));
     reprocessBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
     reprocessBtn.getElement().setAttribute("title",
-                                           "Re-run the full AI pipeline: vision \u2192 semantic \u2192 sensitivity \u2192 embedding. "
-                                               + "Existing analysis data is overwritten. "
-                                               + "Visibility is re-evaluated: SAFE images are auto-approved; "
-                                               + "any other risk level locks the image and requires manual approval in the Overview.");
+                                           getTranslation("detail.reprocess.tooltip"));
     reprocessBtn.addClickListener(e -> reprocessAndClose(asset));
 
-    Button closeBtn = new Button("Close", e -> close());
+    Button closeBtn = new Button(getTranslation("common.close"), e -> close());
     closeBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
     getFooter().add(reprocessBtn, closeBtn);
   }
@@ -113,13 +110,13 @@ public class DetailDialog
     FormLayout form = new FormLayout();
     form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
     form.addFormItem(new Span(asset.getId().toString()), "ID");
-    form.addFormItem(new Span(asset.getMimeType()), "MIME Type");
-    form.addFormItem(new Span(formatSize(asset.getFileSize())), "File Size");
-    form.addFormItem(new Span(asset.getWidth() + " \u00d7 " + asset.getHeight()), "Dimensions");
+    form.addFormItem(new Span(asset.getMimeType()), getTranslation("detail.field.mime.type"));
+    form.addFormItem(new Span(formatSize(asset.getFileSize())), getTranslation("detail.field.file.size"));
+    form.addFormItem(new Span(asset.getWidth() + " \u00d7 " + asset.getHeight()), getTranslation("detail.field.dimensions"));
     form.addFormItem(new Span(asset.getUploadedAt() != null
-                                  ? DATE_FMT.format(asset.getUploadedAt()) : "\u2014"), "Uploaded");
-    form.addFormItem(new Span(String.valueOf(asset.isExifPresent())), "EXIF Present");
-    form.addFormItem(new Span(String.valueOf(asset.isGpsPresent())), "GPS Present");
+                                  ? DATE_FMT.format(asset.getUploadedAt()) : "\u2014"), getTranslation("detail.field.uploaded"));
+    form.addFormItem(new Span(String.valueOf(asset.isExifPresent())), getTranslation("detail.field.exif.present"));
+    form.addFormItem(new Span(String.valueOf(asset.isGpsPresent())), getTranslation("detail.field.gps.present"));
     form.addFormItem(new Span(asset.getSha256() != null
                                   ? asset.getSha256().substring(0, 16) + "\u2026" : "\u2014"), "SHA-256");
     layout.add(form);
@@ -132,7 +129,7 @@ public class DetailDialog
     layout.setSpacing(true);
 
     if (analysis == null) {
-      layout.add(new Paragraph("\u2014 No analysis available \u2014"));
+      layout.add(new Paragraph(getTranslation("detail.analysis.none")));
       return layout;
     }
 
@@ -145,9 +142,9 @@ public class DetailDialog
             + " (" + CategoryRegistry.getGroupLabel(analysis.getSourceCategory()) + ")");
     primaryCatLabel.getStyle().set("font-weight", "500");
 
-    Button changePrimaryBtn = new Button("Change");
+    Button changePrimaryBtn = new Button(getTranslation("detail.analysis.primary.change"));
     changePrimaryBtn.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
-    changePrimaryBtn.getElement().setAttribute("title", "Change the primary category");
+    changePrimaryBtn.getElement().setAttribute("title", getTranslation("detail.analysis.primary.change.tooltip"));
     changePrimaryBtn.addClickListener(e ->
         new CategoryTreeChooserDialog(chosen -> {
           if (chosen.equals(analysis.getSourceCategory())) return;
@@ -170,14 +167,14 @@ public class DetailDialog
     HorizontalLayout primaryRow = new HorizontalLayout(primaryCatLabel, changePrimaryBtn);
     primaryRow.setAlignItems(FlexComponent.Alignment.CENTER);
     primaryRow.setSpacing(true);
-    form.addFormItem(primaryRow, "Primary Category");
+    form.addFormItem(primaryRow, getTranslation("detail.field.primary.category"));
 
-    form.addFormItem(new Span(str(analysis.getSeasonHint())), "Season");
-    form.addFormItem(new Span(analysis.getSceneType() != null ? analysis.getSceneType() : "\u2014"), "Scene Type");
-    form.addFormItem(new Span(bool(analysis.getContainsPerson())), "Contains Person");
-    form.addFormItem(new Span(bool(analysis.getContainsVehicle())), "Contains Vehicle");
-    form.addFormItem(new Span(bool(analysis.getContainsLicensePlateHint())), "License Plate");
-    form.addFormItem(new Span(bool(analysis.getContainsReadableText())), "Readable Text");
+    form.addFormItem(new Span(str(analysis.getSeasonHint())), getTranslation("detail.field.season"));
+    form.addFormItem(new Span(analysis.getSceneType() != null ? analysis.getSceneType() : "\u2014"), getTranslation("detail.field.scene.type"));
+    form.addFormItem(new Span(bool(analysis.getContainsPerson())), getTranslation("detail.field.contains.person"));
+    form.addFormItem(new Span(bool(analysis.getContainsVehicle())), getTranslation("detail.field.contains.vehicle"));
+    form.addFormItem(new Span(bool(analysis.getContainsLicensePlateHint())), getTranslation("detail.field.license.plate"));
+    form.addFormItem(new Span(bool(analysis.getContainsReadableText())), getTranslation("detail.field.readable.text"));
     layout.add(form);
 
     // ── Secondary categories — displayed as removable badges + "Add" button ──
@@ -230,11 +227,12 @@ public class DetailDialog
                                    + " " + String.format("(%.0f%%)", alt.getScore() * 100));
           chip.getElement().getThemeList().add("badge contrast");
           chip.getElement().setAttribute("title",
-              "Predicted alternative — not an assigned category");
+              getTranslation("detail.analysis.confidence.alternative.tooltip"));
           altRow.add(chip);
         }
         Paragraph altHeading = new Paragraph(
-            getTranslation("detail.analysis.confidence.alternatives") + " (predicted, not assigned):");
+            getTranslation("detail.analysis.confidence.alternatives") + " "
+                + getTranslation("detail.analysis.confidence.alternatives.note"));
         altHeading.getStyle().set("font-size", "var(--lumo-font-size-s)")
             .set("color", "var(--lumo-secondary-text-color)");
         layout.add(altHeading, altRow);
@@ -249,11 +247,11 @@ public class DetailDialog
         badge.getElement().getThemeList().add("badge");
         tags.add(badge);
       }
-      layout.add(new H4("Tags"), tags);
+      layout.add(new H4(getTranslation("detail.col.tags")), tags);
     }
 
     if (analysis.getSummary() != null) {
-      layout.add(new H4("Full Description"));
+      layout.add(new H4(getTranslation("detail.analysis.full.description")));
       layout.add(MarkdownRenderer.render(analysis.getSummary()));
     }
 
@@ -266,7 +264,7 @@ public class DetailDialog
     layout.setSpacing(true);
 
     if (assessment == null) {
-      layout.add(new Paragraph("\u2014 No sensitivity assessment available \u2014"));
+      layout.add(new Paragraph(getTranslation("detail.privacy.none")));
       return layout;
     }
 
@@ -281,9 +279,9 @@ public class DetailDialog
       case SENSITIVE -> riskBadge.getElement().getThemeList().add("error");
       default -> throw new RuntimeException("Should never reach..");
     }
-    form.addFormItem(riskBadge, "Risk Level");
-    form.addFormItem(new Span(String.valueOf(assessment.isReviewRequired())), "Review Required");
-    form.addFormItem(new Span(str(assessment.getRecommendedStorageMode())), "Storage Mode");
+    form.addFormItem(riskBadge, getTranslation("detail.field.risk.level"));
+    form.addFormItem(new Span(String.valueOf(assessment.isReviewRequired())), getTranslation("detail.field.review.required"));
+    form.addFormItem(new Span(str(assessment.getRecommendedStorageMode())), getTranslation("detail.field.storage.mode"));
     layout.add(form);
 
     if (assessment.getFlags() != null && !assessment.getFlags().isEmpty()) {
@@ -295,11 +293,11 @@ public class DetailDialog
         f.getElement().getThemeList().add("contrast");
         flagRow.add(f);
       }
-      layout.add(new H4("Flags"), flagRow);
+      layout.add(new H4(getTranslation("detail.privacy.flags")), flagRow);
     }
 
     if (assessment.getNotes() != null) {
-      layout.add(new Paragraph("Notes: " + assessment.getNotes()));
+      layout.add(new Paragraph(getTranslation("detail.privacy.notes", assessment.getNotes())));
     }
 
     return layout;
@@ -311,19 +309,19 @@ public class DetailDialog
     layout.setSpacing(true);
 
     if (location == null) {
-      layout.add(new Paragraph("\u2014 No location data available \u2014"));
+      layout.add(new Paragraph(getTranslation("detail.location.none")));
       return layout;
     }
 
     FormLayout form = new FormLayout();
     form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
-    form.addFormItem(new Span(location.getCity() != null ? location.getCity() : "\u2014"), "City");
-    form.addFormItem(new Span(location.getRegion() != null ? location.getRegion() : "\u2014"), "Region");
-    form.addFormItem(new Span(location.getCountry() != null ? location.getCountry() : "\u2014"), "Country");
+    form.addFormItem(new Span(location.getCity() != null ? location.getCity() : "\u2014"), getTranslation("detail.field.city"));
+    form.addFormItem(new Span(location.getRegion() != null ? location.getRegion() : "\u2014"), getTranslation("detail.field.region"));
+    form.addFormItem(new Span(location.getCountry() != null ? location.getCountry() : "\u2014"), getTranslation("detail.field.country"));
     if (location.getLatitude() != null && location.getLongitude() != null) {
       form.addFormItem(new Span(String.format("%.5f, %.5f",
                                               location.getLatitude(), location.getLongitude())),
-                       "Coordinates");
+                       getTranslation("detail.field.coordinates"));
     }
     layout.add(form);
     return layout;
@@ -389,7 +387,7 @@ public class DetailDialog
       ocrBox.setText(ocr.getExtractedText());
       layout.add(ocrBox);
     } else {
-      layout.add(new Paragraph("\u2014 No text extracted \u2014"));
+      layout.add(new Paragraph(getTranslation("detail.provenance.ocr.none")));
     }
 
     return layout;
@@ -455,21 +453,20 @@ public class DetailDialog
 
   private String bool(Boolean value) {
     if (value == null) return "\u2014";
-    return value ? "Yes" : "No";
+    return value ? getTranslation("search.yes") : getTranslation("search.no");
   }
 
   private void reprocessAndClose(ImageAsset asset) {
     try {
       services.reprocessing().reprocess(asset.getId());
       Notification n = Notification.show(
-          "Reprocessing started for: " + asset.getOriginalFilename()
-              + ". Results appear in the Overview once complete.",
+          getTranslation("detail.reprocess.started", asset.getOriginalFilename()),
           5000, Notification.Position.BOTTOM_END);
       n.addThemeVariants(NotificationVariant.LUMO_PRIMARY);
       close();
     } catch (Exception ex) {
       Notification n = Notification.show(
-          "Reprocessing failed: " + ex.getMessage(), 5000, Notification.Position.MIDDLE);
+          getTranslation("detail.reprocess.failed", ex.getMessage()), 5000, Notification.Position.MIDDLE);
       n.addThemeVariants(NotificationVariant.LUMO_ERROR);
     }
   }

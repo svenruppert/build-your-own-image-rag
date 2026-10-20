@@ -16,18 +16,17 @@ import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.upload.Upload;
 import com.vaadin.flow.component.upload.receivers.MultiFileBuffer;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
 
 import java.io.IOException;
 import java.nio.file.Path;
 
-@PageTitle("Upload Images")
 @Route(value = UploadView.PATH, layout = MainLayout.class)
 public class UploadView
     extends VerticalLayout
-    implements HasLogger {
+    implements HasLogger, HasDynamicTitle {
 
   public static final String PATH = "upload";
   private final ViewServices services;
@@ -109,5 +108,10 @@ public class UploadView
           5000, Notification.Position.MIDDLE);
       n.addThemeVariants(NotificationVariant.LUMO_ERROR);
     }
+  }
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("upload.page.title");
   }
 }

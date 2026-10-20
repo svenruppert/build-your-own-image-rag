@@ -56,7 +56,7 @@ public class SearchHistoryDialog
     this.onSelect = onSelect;
     this.onChanged = onChanged;
 
-    setHeaderTitle("Search History");
+    setHeaderTitle(getTranslation("search.history.dialog.title"));
     setWidth("860px");
     setHeight("60vh");
     setCloseOnOutsideClick(true);
@@ -69,15 +69,15 @@ public class SearchHistoryDialog
     add(content);
 
     // ── Footer ────────────────────────────────────────────────────────────
-    Button deleteBtn = new Button("Delete Selected");
+    Button deleteBtn = new Button(getTranslation("search.history.dialog.delete.selected"));
     deleteBtn.addThemeVariants(ButtonVariant.LUMO_ERROR, ButtonVariant.LUMO_TERTIARY);
     deleteBtn.addClickListener(e -> deleteSelected());
 
-    Button clearBtn = new Button("Clear All");
+    Button clearBtn = new Button(getTranslation("search.history.dialog.clear.all"));
     clearBtn.addThemeVariants(ButtonVariant.LUMO_ERROR);
     clearBtn.addClickListener(e -> clearAll());
 
-    Button closeBtn = new Button("Close", e -> close());
+    Button closeBtn = new Button(getTranslation("common.close"), e -> close());
     closeBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
 
     getFooter().add(deleteBtn, clearBtn, closeBtn);
@@ -92,12 +92,12 @@ public class SearchHistoryDialog
     grid.addThemeVariants(GridVariant.LUMO_ROW_STRIPES, GridVariant.LUMO_COMPACT);
 
     grid.addColumn(e -> e.getTimestamp() != null ? DATE_FMT.format(e.getTimestamp()) : "\u2014")
-        .setHeader("Time")
+        .setHeader(getTranslation("search.history.dialog.col.time"))
         .setWidth("145px")
         .setFlexGrow(0);
 
     grid.addColumn(RecentSearchEntry::getQuery)
-        .setHeader("Original Query")
+        .setHeader(getTranslation("search.history.dialog.col.query"))
         .setFlexGrow(2);
 
     grid.addComponentColumn(e -> {
@@ -113,10 +113,10 @@ public class SearchHistoryDialog
           .set("color", "var(--lumo-secondary-text-color)")
           .set("white-space", "normal");
       return s;
-    }).setHeader("Transformed Query (LLM)").setFlexGrow(3);
+    }).setHeader(getTranslation("search.history.dialog.col.transformed")).setFlexGrow(3);
 
     grid.addColumn(e -> e.getMode() != null ? e.getMode().name().replace("_", " ") : "\u2014")
-        .setHeader("Mode")
+        .setHeader(getTranslation("search.history.dialog.col.mode"))
         .setWidth("180px")
         .setFlexGrow(0);
 
@@ -134,7 +134,7 @@ public class SearchHistoryDialog
   private void deleteSelected() {
     List<RecentSearchEntry> selected = new ArrayList<>(grid.getSelectedItems());
     if (selected.isEmpty()) {
-      Notification.show("No entries selected.", 2000, Notification.Position.MIDDLE);
+      Notification.show(getTranslation("search.history.dialog.none.selected"), 2000, Notification.Position.MIDDLE);
       return;
     }
     ps.deleteRecentSearches(selected);

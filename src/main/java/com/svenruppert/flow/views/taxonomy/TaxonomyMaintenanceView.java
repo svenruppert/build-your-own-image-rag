@@ -31,7 +31,7 @@ import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.component.tabs.TabSheet;
 import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 
 import java.time.ZoneId;
@@ -59,10 +59,9 @@ import java.util.stream.Collectors;
  * driven by a {@link TaxonomyAnalysisProgress} progress callback.
  */
 @Route(value = TaxonomyMaintenanceView.PATH, layout = MainLayout.class)
-@PageTitle("Taxonomy Maintenance")
 public class TaxonomyMaintenanceView
     extends VerticalLayout
-    implements BeforeEnterObserver {
+    implements BeforeEnterObserver, HasDynamicTitle {
 
   public static final String PATH = "taxonomy";
 
@@ -1249,5 +1248,10 @@ public class TaxonomyMaintenanceView
   private void showNotification(String message, boolean error) {
     Notification n = Notification.show(message, 4000, Notification.Position.BOTTOM_START);
     n.addThemeVariants(error ? NotificationVariant.LUMO_ERROR : NotificationVariant.LUMO_SUCCESS);
+  }
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("taxonomy.page.title");
   }
 }

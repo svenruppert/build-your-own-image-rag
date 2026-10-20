@@ -35,7 +35,7 @@ import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 
 import java.util.List;
@@ -64,10 +64,9 @@ import java.util.UUID;
  * </pre>
  */
 @Route(value = SearchTuningView.PATH, layout = MainLayout.class)
-@PageTitle("Search Tuning Lab")
 public class SearchTuningView
     extends VerticalLayout
-    implements BeforeEnterObserver, HasLogger {
+    implements BeforeEnterObserver, HasLogger, HasDynamicTitle {
 
   public static final String PATH = "tuning";
 
@@ -1045,5 +1044,8 @@ public class SearchTuningView
 
   // ── Tag chip ──────────────────────────────────────────────────────────────
 
-
+  @Override
+  public String getPageTitle() {
+    return getTranslation("tuning.page.title");
+  }
 }

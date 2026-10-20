@@ -30,7 +30,7 @@ import com.vaadin.flow.component.progressbar.ProgressBar;
 import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.component.textfield.NumberField;
 import com.vaadin.flow.component.textfield.TextArea;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.server.StreamResource;
 
@@ -74,11 +74,10 @@ import java.util.stream.Collectors;
  * scheduler ticks every {@link #POLL_INTERVAL_MS} ms and calls {@link #onPoll()} on the
  * UI thread to reflect intermediate inspector state.
  */
-@PageTitle("Search Images")
 @Route(value = SearchView.PATH, layout = MainLayout.class)
 public class SearchView
     extends VerticalLayout
-    implements HasLogger {
+    implements HasLogger, HasDynamicTitle {
 
   public static final String PATH = "search";
 
@@ -909,7 +908,7 @@ public class SearchView
     facetPanel.removeAll();
 
     // ── Label ─────────────────────────────────────────────────────────────
-    Span filterLabel = new Span("Filter: ");
+    Span filterLabel = new Span(getTranslation("search.facet.filter") + " ");
     filterLabel.getStyle()
         .set("font-size", "var(--lumo-font-size-xs)")
         .set("color", "var(--lumo-secondary-text-color)")
@@ -918,7 +917,7 @@ public class SearchView
     facetPanel.add(filterLabel);
 
     // ── "All" chip — always shown, clears active facet ───────────────────
-    Button allChip = new Button("All (" + allResults.size() + ")");
+    Button allChip = new Button(getTranslation("search.facet.all", allResults.size()));
     allChip.addThemeVariants(ButtonVariant.LUMO_SMALL,
                              activeFacetKey == null ? ButtonVariant.LUMO_PRIMARY : ButtonVariant.LUMO_TERTIARY);
     allChip.getStyle().set("font-size", "var(--lumo-font-size-xs)");
@@ -1239,7 +1238,7 @@ public class SearchView
         new com.vaadin.flow.component.textfield.TextField(getTranslation("search.saved.name"));
     nameField.setWidthFull();
 
-    Button saveBtn = new Button("Save", e -> {
+    Button saveBtn = new Button(getTranslation("common.save"), e -> {
       String name = nameField.getValue();
       if (name == null || name.isBlank()) return;
       String query = queryField.getValue();
@@ -1249,13 +1248,13 @@ public class SearchView
         view.setEmbeddingText(currentPlan.getEmbeddingText());
       }
       services.persistence().saveSavedSearchView(view);
-      Notification.show("Search saved: " + name, 3000, Notification.Position.BOTTOM_END)
+      Notification.show(getTranslation("search.saved.done", name), 3000, Notification.Position.BOTTOM_END)
           .addThemeVariants(NotificationVariant.LUMO_SUCCESS);
       dlg.close();
     });
     saveBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
 
-    Button cancelBtn = new Button("Cancel", e -> dlg.close());
+    Button cancelBtn = new Button(getTranslation("common.cancel"), e -> dlg.close());
     cancelBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
 
     dlg.add(nameField);
@@ -1273,7 +1272,7 @@ public class SearchView
     savedGrid.addColumn(com.svenruppert.imagerag.domain.SavedSearchView::getName)
         .setHeader(getTranslation("search.saved.name")).setFlexGrow(2);
     savedGrid.addColumn(com.svenruppert.imagerag.domain.SavedSearchView::getQuery)
-        .setHeader("Query").setFlexGrow(3);
+        .setHeader(getTranslation("search.saved.col.query")).setFlexGrow(3);
 
     savedGrid.addComponentColumn(view -> {
       Button loadBtn = new Button(getTranslation("search.saved.load"), e -> {
@@ -1300,7 +1299,7 @@ public class SearchView
     savedGrid.setHeight("300px");
     dlg.add(savedGrid);
 
-    Button closeBtn = new Button("Close", e -> dlg.close());
+    Button closeBtn = new Button(getTranslation("common.close"), e -> dlg.close());
     closeBtn.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
     dlg.getFooter().add(closeBtn);
     dlg.open();
@@ -1349,5 +1348,10 @@ public class SearchView
      * Number of BM25 candidates returned by the keyword index before RRF fusion.
      */
     volatile int keywordCandidates = 0;
+  }
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("search.page.title");
   }
 }

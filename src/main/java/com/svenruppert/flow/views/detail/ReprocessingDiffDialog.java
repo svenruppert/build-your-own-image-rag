@@ -56,20 +56,20 @@ public class ReprocessingDiffDialog
         List<SourceCategory> added = diff.secondaryAdded();
         List<SourceCategory> removed = diff.secondaryRemoved();
         if (!added.isEmpty()) {
-          addDiffRow(content, "Secondary added",
+          addDiffRow(content, getTranslation("pipeline.diff.secondary.added"),
                      "—",
                      added.stream().map(this::labelOf).collect(Collectors.joining(", ")),
                      true);
         }
         if (!removed.isEmpty()) {
-          addDiffRow(content, "Secondary removed",
+          addDiffRow(content, getTranslation("pipeline.diff.secondary.removed"),
                      removed.stream().map(this::labelOf).collect(Collectors.joining(", ")),
                      "—",
                      true);
         }
       } else {
         String secLabel = categoryListLabel(diff.previousSecondaryCategories());
-        addDiffRow(content, "Secondary categories", secLabel, secLabel, false);
+        addDiffRow(content, getTranslation("pipeline.diff.secondary.categories"), secLabel, secLabel, false);
       }
 
       // Risk

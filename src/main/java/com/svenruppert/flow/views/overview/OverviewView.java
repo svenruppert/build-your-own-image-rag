@@ -29,7 +29,7 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.select.Select;
 import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 
 import java.util.List;
@@ -50,11 +50,10 @@ import static com.vaadin.flow.component.icon.VaadinIcon.*;
  *   <li>Full-height layout — content fills browser viewport.</li>
  * </ul>
  */
-@PageTitle("Image Overview")
 @Route(value = OverviewView.PATH, layout = MainLayout.class)
 public class OverviewView
     extends VerticalLayout
-    implements BeforeEnterObserver, HasLogger {
+    implements BeforeEnterObserver, HasLogger, HasDynamicTitle {
 
   public static final String PATH = "overview";
   private static final int PAGE_SIZE = 30;
@@ -231,7 +230,7 @@ public class OverviewView
     PersistenceService ps = services.persistence();
     Set<ImageAsset> selected = grid.getSelectedItems();
     selected.forEach(a -> ps.approveImage(a.getId()));
-    showNotification(getTranslation("overview.approved", selected.size() + " images"), true);
+    showNotification(getTranslation("overview.batch.approved", selected.size()), true);
     loadData();
   }
 
@@ -239,7 +238,7 @@ public class OverviewView
     PersistenceService ps = services.persistence();
     Set<ImageAsset> selected = grid.getSelectedItems();
     selected.forEach(a -> ps.unapproveImage(a.getId()));
-    showNotification(getTranslation("overview.locked", selected.size() + " images"), false);
+    showNotification(getTranslation("overview.batch.locked", selected.size()), false);
     loadData();
   }
 
@@ -266,7 +265,7 @@ public class OverviewView
         logger().warn("Failed to reprocess {}: {}", asset.getId(), ex.getMessage());
       }
     }
-    showNotification(getTranslation("overview.reprocess.started", count + " images"), true);
+    showNotification(getTranslation("overview.batch.reprocess.started", count), true);
   }
 
   private void resetFilters() {
@@ -765,5 +764,10 @@ public class OverviewView
   @Override
   public void beforeEnter(BeforeEnterEvent event) {
     loadData();
+  }
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("overview.page.title");
   }
 }

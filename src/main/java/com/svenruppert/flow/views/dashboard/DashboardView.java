@@ -29,7 +29,7 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.i18n.LocaleChangeEvent;
 import com.vaadin.flow.i18n.LocaleChangeObserver;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 
 import java.util.Collection;
@@ -53,10 +53,9 @@ import java.util.Objects;
  * awareness, and direct experiment launch.
  */
 @Route(value = DashboardView.PATH, layout = MainLayout.class)
-@PageTitle("Dashboard")
 public class DashboardView
     extends VerticalLayout
-    implements LocaleChangeObserver, HasLogger {
+    implements LocaleChangeObserver, HasLogger, HasDynamicTitle {
 
   public static final String PATH = "";
 
@@ -673,4 +672,9 @@ public class DashboardView
    * Simple value holder for a navigation button label + route path.
    */
   private record NavEntry(String label, String path) { }
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("dashboard.page.title");
+  }
 }

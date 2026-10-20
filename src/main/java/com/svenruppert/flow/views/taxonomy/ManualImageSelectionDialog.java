@@ -44,7 +44,7 @@ public class ManualImageSelectionDialog
   public ManualImageSelectionDialog(PersistenceService ps,
                                     List<UUID> preselected,
                                     Consumer<List<UUID>> onConfirm) {
-    setHeaderTitle("Select Images for Analysis");
+    setHeaderTitle(getTranslation("taxonomy.manual.title"));
     setWidth("740px");
     setMaxHeight("80vh");
     setCloseOnOutsideClick(false);
@@ -53,7 +53,7 @@ public class ManualImageSelectionDialog
 
     // ── Filter field ──────────────────────────────────────────────────────
     TextField filter = new TextField();
-    filter.setPlaceholder("Filter by filename or category\u2026");
+    filter.setPlaceholder(getTranslation("taxonomy.manual.filter.placeholder"));
     filter.setWidthFull();
     filter.setClearButtonVisible(true);
     filter.setValueChangeMode(ValueChangeMode.LAZY);
@@ -66,13 +66,13 @@ public class ManualImageSelectionDialog
     grid.setHeight("380px");
 
     grid.addColumn(ImageAsset::getOriginalFilename)
-        .setHeader("Filename").setFlexGrow(2).setSortable(true).setAutoWidth(true);
+        .setHeader(getTranslation("taxonomy.col.filename")).setFlexGrow(2).setSortable(true).setAutoWidth(true);
 
     grid.addColumn(asset -> {
       SemanticAnalysis analysis = ps.findAnalysis(asset.getId()).orElse(null);
       return analysis != null && analysis.getSourceCategory() != null
           ? CategoryRegistry.getUserLabel(analysis.getSourceCategory()) : "\u2014";
-    }).setHeader("Category").setAutoWidth(true).setSortable(false);
+    }).setHeader(getTranslation("taxonomy.col.category")).setAutoWidth(true).setSortable(false);
 
     grid.setItems(allImages);
 
@@ -92,22 +92,22 @@ public class ManualImageSelectionDialog
         .set("font-size", "var(--lumo-font-size-s)")
         .set("color", "var(--lumo-secondary-text-color)");
 
-    Button selectAll = new Button("Select All", e -> {
+    Button selectAll = new Button(getTranslation("taxonomy.manual.select.all"), e -> {
       allImages.forEach(grid::select);
       updateSelLabel();
     });
     selectAll.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
 
-    Button clearAll = new Button("Clear", e -> {
+    Button clearAll = new Button(getTranslation("taxonomy.manual.clear"), e -> {
       grid.deselectAll();
       updateSelLabel();
     });
     clearAll.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY);
 
-    Button cancelBtn = new Button("Cancel", e -> close());
+    Button cancelBtn = new Button(getTranslation("common.cancel"), e -> close());
     cancelBtn.addThemeVariants(ButtonVariant.LUMO_TERTIARY);
 
-    Button okBtn = new Button("Confirm Selection", e -> {
+    Button okBtn = new Button(getTranslation("taxonomy.manual.confirm"), e -> {
       List<UUID> selected = grid.getSelectedItems().stream()
           .map(ImageAsset::getId)
           .collect(Collectors.toList());
@@ -149,6 +149,6 @@ public class ManualImageSelectionDialog
 
   private void updateSelLabel() {
     int count = grid.getSelectedItems().size();
-    selLabel.setText(count + " image(s) selected");
+    selLabel.setText(getTranslation("taxonomy.manual.selected", count));
   }
 }

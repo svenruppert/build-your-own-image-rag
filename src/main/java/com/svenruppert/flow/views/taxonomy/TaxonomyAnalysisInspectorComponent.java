@@ -62,7 +62,7 @@ public class TaxonomyAnalysisInspectorComponent
         .set("background", "var(--lumo-base-color)")
         .set("width", "100%");
 
-    H4 heading = new H4("Analysis Steps");
+    H4 heading = new H4(getTranslation("taxonomy.inspector.heading"));
     heading.getStyle()
         .set("margin", "0 0 0.4rem 0")
         .set("font-size", "var(--lumo-font-size-s)")
@@ -73,7 +73,7 @@ public class TaxonomyAnalysisInspectorComponent
 
     String[] labels = TaxonomyAnalysisProgress.ALL_STEPS;
     for (int i = 0; i < labels.length; i++) {
-      StepRow row = new StepRow(String.valueOf(i + 1), labels[i], "Waiting\u2026");
+      StepRow row = new StepRow(String.valueOf(i + 1), labels[i], getTranslation("taxonomy.inspector.waiting"));
       rows.put(labels[i], row);
       add(row);
     }
@@ -87,7 +87,8 @@ public class TaxonomyAnalysisInspectorComponent
    * Resets all steps to PENDING.  Call at the start of each new analysis run.
    */
   public void reset() {
-    rows.values().forEach(r -> r.update(StepStatus.PENDING, "Waiting\u2026", null));
+    String waiting = getTranslation("taxonomy.inspector.waiting");
+    rows.values().forEach(r -> r.update(StepStatus.PENDING, waiting, null));
   }
 
   /**
@@ -101,13 +102,13 @@ public class TaxonomyAnalysisInspectorComponent
     for (String stepLabel : TaxonomyAnalysisProgress.ALL_STEPS) {
       StepRow row = rows.get(stepLabel);
       StepStatus status = statuses.getOrDefault(stepLabel, StepStatus.PENDING);
-      String summary = summaries.getOrDefault(stepLabel, "Waiting\u2026");
+      String summary = summaries.getOrDefault(stepLabel, getTranslation("taxonomy.inspector.waiting"));
 
       // For the analysis step, append the numeric counter if active
       if (TaxonomyAnalysisProgress.STEP_ANALYSIS.equals(stepLabel)
           && status == StepStatus.ACTIVE
           && progress.getTotalImages() > 0) {
-        summary = String.format("Analysing %d / %d images \u2014 %s elapsed",
+        summary = getTranslation("taxonomy.inspector.analyzing",
                                 progress.getAnalyzedImages(),
                                 progress.getTotalImages(),
                                 progress.getElapsedFormatted());
@@ -181,7 +182,7 @@ public class TaxonomyAnalysisInspectorComponent
         detailsPanel = null;
       }
       if (detailsText != null && !detailsText.isBlank()) {
-        detailsPanel = new Details("Show details");
+        detailsPanel = new Details(getTranslation("taxonomy.inspector.show.details"));
         Paragraph p = new Paragraph(detailsText);
         p.getStyle()
             .set("font-size", "var(--lumo-font-size-xs)")

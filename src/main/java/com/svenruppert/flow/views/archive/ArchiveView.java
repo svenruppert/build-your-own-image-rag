@@ -25,7 +25,7 @@ import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.router.BeforeEnterEvent;
 import com.vaadin.flow.router.BeforeEnterObserver;
-import com.vaadin.flow.router.PageTitle;
+import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 
 import java.time.ZoneId;
@@ -48,11 +48,10 @@ import static com.vaadin.flow.component.icon.VaadinIcon.*;
  *       layers (file system, EclipseStore, vector index, keyword index, preview cache).</li>
  * </ul>
  */
-@PageTitle("Archive")
 @Route(value = ArchiveView.PATH, layout = MainLayout.class)
 public class ArchiveView
     extends VerticalLayout
-    implements BeforeEnterObserver, HasLogger {
+    implements BeforeEnterObserver, HasLogger, HasDynamicTitle {
 
   public static final String PATH = "archive";
 
@@ -429,5 +428,10 @@ public class ArchiveView
           return (Component) badge;
         })
         .orElseGet(() -> new Span("—"));
+  }
+
+  @Override
+  public String getPageTitle() {
+    return getTranslation("archive.page.title");
   }
 }

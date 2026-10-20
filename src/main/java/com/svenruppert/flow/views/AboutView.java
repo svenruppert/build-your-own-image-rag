@@ -48,13 +48,13 @@ public class AboutView
     hero.setSpacing(false);
     hero.setAlignItems(Alignment.START);
 
-    Span versionBadge = new Span("Version 1.0.0");
+    Span versionBadge = new Span(getTranslation("about.version", "1.0.0"));
     versionBadge.getElement().setAttribute("theme", "badge primary pill");
 
-    H1 title = new H1("About");
-    Paragraph subtitle = new Paragraph("Vaadin Flow Demo Application");
+    H1 title = new H1(getTranslation("about.title"));
+    Paragraph subtitle = new Paragraph(getTranslation("about.subtitle"));
     Paragraph description = new Paragraph(
-        "This demo showcases polished UI patterns with Vaadin Flow — cards, badges, icons, and a responsive layout."
+        getTranslation("about.description")
     );
 
     HorizontalLayout heroHeader = new HorizontalLayout(title, versionBadge);
@@ -69,8 +69,7 @@ public class AboutView
     var header = getHorizontalLayout();
 
     Paragraph bio = new Paragraph(
-        "Sven Ruppert has been involved in software development for more than 20 years. "
-            + "He speaks internationally at conferences and has authored numerous technical articles and books."
+        getTranslation("about.bio")
     );
 
     HorizontalLayout badges = new HorizontalLayout();
@@ -90,7 +89,7 @@ public class AboutView
     links.setWrap(true);
 
     links.add(
-        themedLink("https://www.svenruppert.com", "Website", new Icon(VaadinIcon.GLOBE_WIRE)),
+        themedLink("https://www.svenruppert.com", getTranslation("about.link.website"), new Icon(VaadinIcon.GLOBE_WIRE)),
         themedLink("https://github.com/svenruppert", "GitHub", imgIcon("icons/github-mark.svg", "GitHub")),
         themedLink("https://www.linkedin.com/in/sven-ruppert", "LinkedIn", imgIcon("icons/linkedin-mark.png", "LinkedIn"))
     );
@@ -100,17 +99,16 @@ public class AboutView
     // --- PROJECT CARD ---
     VerticalLayout aboutCard = card();
 
-    H3 projectTitle = new H3("About this Project");
+    H3 projectTitle = new H3(getTranslation("about.project.title"));
     Paragraph projectText = new Paragraph(
-        "This application demonstrates clean UI composition with Flow components, "
-            + "a soft visual hierarchy, and accessible defaults."
+        getTranslation("about.project.text")
     );
 
     UnorderedList featureList = new UnorderedList(
-        new ListItem(withIcon(VaadinIcon.CHECK, "Responsive layout & cards")),
-        new ListItem(withIcon(VaadinIcon.CHECK, "Lumo-themed badges & icons")),
-        new ListItem(withIcon(VaadinIcon.CHECK, "Clean typography & spacing")),
-        new ListItem(withIcon(VaadinIcon.CHECK, "Accessible links and readable contrast"))
+        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.layout"))),
+        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.badges"))),
+        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.typography"))),
+        new ListItem(withIcon(VaadinIcon.CHECK, getTranslation("about.project.feature.accessibility")))
     );
 
     aboutCard.add(projectTitle, projectText, featureList);
@@ -125,7 +123,7 @@ public class AboutView
     Div footer = new Div();
     footer.addClassName("about-footer");
     footer.add(new Icon(VaadinIcon.INFO_CIRCLE_O),
-               new Text("Demo UI built with Vaadin Flow & Lumo"));
+               new Text(getTranslation("about.footer")));
 
     container.add(hero, grid, footer);
     root.add(container);

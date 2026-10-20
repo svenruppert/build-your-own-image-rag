@@ -1,17 +1,17 @@
 package com.svenruppert.imagerag.service;
 
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
  * Live progress state for a running taxonomy-analysis pass.
  * <p>Instances are created by the UI before starting analysis, then mutated by
- * {@link com.svenruppert.imagerag.service.impl.TaxonomyAnalysisServiceImpl} through a
- * {@link java.util.function.Consumer} callback.  The UI reads the state inside
- * {@code ui.access()} blocks that are triggered by that callback.
- * <p>This object is not thread-safe in itself; the caller is responsible for
- * ensuring that writes happen on the analysis thread and reads happen inside
- * {@code ui.access()} (which serialises them correctly).
+ * {@link com.svenruppert.imagerag.service.impl.TaxonomyAnalysisServiceImpl} on the
+ * analysis thread. Because {@code ui.access()} runs asynchronously, the UI may read
+ * the state while the analysis thread still writes it. All methods are therefore
+ * synchronized, the step maps are returned as copies, and readers should render from
+ * a consistent {@link #snapshot()}.
  */
 public class TaxonomyAnalysisProgress {
 
@@ -31,7 +31,7 @@ public class TaxonomyAnalysisProgress {
   // ── Internal state ────────────────────────────────────────────────────────
   private final Map<String, StepStatus> stepStatuses = new LinkedHashMap<>();
   private final Map<String, String> stepSummaries = new LinkedHashMap<>();
-  private final long startTimeMs = System.currentTimeMillis();
+  private final long startTimeMs;
   private final boolean isDryRun;
   private int totalImages = 0;
   private int analyzedImages = 0;
@@ -40,7 +40,21 @@ public class TaxonomyAnalysisProgress {
   private boolean failed = false;
   private String errorMessage = null;
 
+  private TaxonomyAnalysisProgress(TaxonomyAnalysisProgress source) {
+    this.isDryRun = source.isDryRun;
+    this.startTimeMs = source.startTimeMs;
+    this.stepStatuses.putAll(source.stepStatuses);
+    this.stepSummaries.putAll(source.stepSummaries);
+    this.totalImages = source.totalImages;
+    this.analyzedImages = source.analyzedImages;
+    this.suggestionsGenerated = source.suggestionsGenerated;
+    this.completed = source.completed;
+    this.failed = source.failed;
+    this.errorMessage = source.errorMessage;
+  }
+
   public TaxonomyAnalysisProgress(boolean isDryRun) {
+    this.startTimeMs = System.currentTimeMillis();
     this.isDryRun = isDryRun;
     for (String step : ALL_STEPS) {
       stepStatuses.put(step, StepStatus.PENDING);
@@ -48,95 +62,102 @@ public class TaxonomyAnalysisProgress {
     }
   }
 
-  public void markActive(String step, String summary) {
+  public synchronized void markActive(String step, String summary) {
     stepStatuses.put(step, StepStatus.ACTIVE);
     stepSummaries.put(step, summary != null ? summary : "Running\u2026");
   }
 
   // ── Mutation API (called from analysis thread) ────────────────────────────
 
-  public void markCompleted(String step, String summary) {
+  public synchronized void markCompleted(String step, String summary) {
     stepStatuses.put(step, StepStatus.COMPLETED);
     stepSummaries.put(step, summary != null ? summary : "Done");
   }
 
-  public void markFailed(String step, String summary) {
+  public synchronized void markFailed(String step, String summary) {
     stepStatuses.put(step, StepStatus.FAILED);
     stepSummaries.put(step, summary != null ? summary : "Failed");
   }
 
-  public void markSkipped(String step, String summary) {
+  public synchronized void markSkipped(String step, String summary) {
     stepStatuses.put(step, StepStatus.SKIPPED);
     stepSummaries.put(step, summary != null ? summary : "Skipped");
   }
 
-  public void incrementAnalyzed() {
+  public synchronized void incrementAnalyzed() {
     this.analyzedImages++;
   }
 
-  public void setCompleted() {
+  public synchronized void setCompleted() {
     this.completed = true;
   }
 
-  public Map<String, StepStatus> getStepStatuses() {
-    return stepStatuses;
+  public synchronized Map<String, StepStatus> getStepStatuses() {
+    return Collections.unmodifiableMap(new LinkedHashMap<>(stepStatuses));
   }
 
-  public Map<String, String> getStepSummaries() {
-    return stepSummaries;
+  public synchronized Map<String, String> getStepSummaries() {
+    return Collections.unmodifiableMap(new LinkedHashMap<>(stepSummaries));
   }
 
-  public int getTotalImages() {
+  /**
+   * Returns a detached, consistent copy of the current state for rendering.
+   */
+  public synchronized TaxonomyAnalysisProgress snapshot() {
+    return new TaxonomyAnalysisProgress(this);
+  }
+
+  public synchronized int getTotalImages() {
     return totalImages;
   }
 
-  public void setTotalImages(int total) {
+  public synchronized void setTotalImages(int total) {
     this.totalImages = total;
   }
 
   // ── Read API (called from UI thread inside ui.access()) ───────────────────
 
-  public int getAnalyzedImages() {
+  public synchronized int getAnalyzedImages() {
     return analyzedImages;
   }
 
-  public int getSuggestionsGenerated() {
+  public synchronized int getSuggestionsGenerated() {
     return suggestionsGenerated;
   }
 
-  public void setSuggestionsGenerated(int count) {
+  public synchronized void setSuggestionsGenerated(int count) {
     this.suggestionsGenerated = count;
   }
 
-  public boolean isDryRun() {
+  public synchronized boolean isDryRun() {
     return isDryRun;
   }
 
-  public boolean isCompleted() {
+  public synchronized boolean isCompleted() {
     return completed;
   }
 
-  public boolean isFailed() {
+  public synchronized boolean isFailed() {
     return failed;
   }
 
-  public void setFailed(String error) {
+  public synchronized void setFailed(String error) {
     this.failed = true;
     this.errorMessage = error;
   }
 
-  public String getErrorMessage() {
+  public synchronized String getErrorMessage() {
     return errorMessage;
   }
 
-  public long elapsedMs() {
+  public synchronized long elapsedMs() {
     return System.currentTimeMillis() - startTimeMs;
   }
 
   /**
    * Progress fraction in [0, 1] based on images analyzed vs total.
    */
-  public double getProgressFraction() {
+  public synchronized double getProgressFraction() {
     return totalImages > 0
         ? Math.min(1.0, (double) analyzedImages / totalImages)
         : 0.0;
@@ -145,7 +166,7 @@ public class TaxonomyAnalysisProgress {
   /**
    * Human-readable elapsed time.
    */
-  public String getElapsedFormatted() {
+  public synchronized String getElapsedFormatted() {
     long s = elapsedMs() / 1000;
     return s < 60 ? s + "s" : (s / 60) + "m " + (s % 60) + "s";
   }
@@ -154,7 +175,7 @@ public class TaxonomyAnalysisProgress {
    * Best-effort ETA based on images processed so far.
    * Returns "—" when no meaningful estimate is possible.
    */
-  public String getEtaFormatted() {
+  public synchronized String getEtaFormatted() {
     if (analyzedImages <= 0 || totalImages <= 0) return "\u2014";
     long elapsed = elapsedMs();
     if (elapsed <= 0) return "\u2014";

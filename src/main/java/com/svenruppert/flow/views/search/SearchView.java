@@ -3,7 +3,9 @@ package com.svenruppert.flow.views.search;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ImagePreviewFactory;
+import com.svenruppert.flow.views.shared.RiskBadge;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.shared.ViewModeToggle;
 import com.svenruppert.imagerag.domain.*;
@@ -20,8 +22,6 @@ import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.*;
-import com.vaadin.flow.component.icon.Icon;
-import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -36,6 +36,7 @@ import com.vaadin.flow.server.StreamResource;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -294,9 +295,14 @@ public class SearchView
   // Recent search history
   // -------------------------------------------------------------------------
 
+  /**
+   * Escapes a value for a double-quoted CSV cell. Values starting with a spreadsheet
+   * formula trigger are prefixed with an apostrophe so they are not evaluated.
+   */
   private static String escapeCsv(String value) {
     if (value == null) return "";
-    return value.replace("\"", "\"\"");
+    String safe = !value.isEmpty() && "=+-@".indexOf(value.charAt(0)) >= 0 ? "'" + value : value;
+    return safe.replace("\"", "\"\"");
   }
 
   private void buildRecentSearchBar() {
@@ -826,7 +832,7 @@ public class SearchView
         .setHeader(getTranslation("search.col.preview"))
         .setWidth("110px").setFlexGrow(0);
 
-    resultsGrid.addColumn(r -> String.format("%.3f", r.getScore()))
+    resultsGrid.addColumn(r -> Formats.score(r.getScore()))
         .setHeader(getTranslation("search.col.score")).setWidth("80px").setFlexGrow(0)
         .setSortable(true);
 
@@ -845,7 +851,7 @@ public class SearchView
     }).setHeader(getTranslation("search.col.persons")).setFlexGrow(1);
 
     // Risk as icon (goal O: icons instead of text badges in table)
-    resultsGrid.addComponentColumn(r -> riskIcon(r.getRiskLevel()))
+    resultsGrid.addComponentColumn(r -> RiskBadge.icon(r.getRiskLevel(), "16px"))
         .setHeader(getTranslation("search.col.risk")).setWidth("70px").setFlexGrow(0);
 
     resultsGrid.addComponentColumn(r -> {
@@ -1102,7 +1108,7 @@ public class SearchView
         .set("overflow-y", "auto");
 
     // Rank badge
-    Span rankBadge = new Span("#" + rank + "  " + String.format("%.3f", r.getScore()));
+    Span rankBadge = new Span("#" + rank + "  " + Formats.score(r.getScore()));
     rankBadge.getElement().getThemeList().add("badge");
     if (rank == 1) {
       rankBadge.getElement().getThemeList().add("success");
@@ -1123,7 +1129,7 @@ public class SearchView
     }
 
     // Risk icon
-    info.add(riskIcon(r.getRiskLevel()));
+    info.add(RiskBadge.icon(r.getRiskLevel(), "16px"));
 
     // Details button (filename and description available in dialog)
     Button detailBtn = new Button(getTranslation("search.col.details"));
@@ -1138,29 +1144,6 @@ public class SearchView
   // -------------------------------------------------------------------------
   // Thumbnail helpers
   // -------------------------------------------------------------------------
-
-  private com.vaadin.flow.component.Component riskIcon(RiskLevel risk) {
-    if (risk == null) {
-      Span dash = new Span("\u2014");
-      dash.getStyle().set("font-size", "var(--lumo-font-size-xs)");
-      return dash;
-    }
-    Icon icon = switch (risk) {
-      case SAFE -> VaadinIcon.CHECK_CIRCLE.create();
-      case REVIEW -> VaadinIcon.QUESTION_CIRCLE.create();
-      case SENSITIVE -> VaadinIcon.EXCLAMATION_CIRCLE_O.create();
-    };
-    String color = switch (risk) {
-      case SAFE -> "var(--lumo-success-color)";
-      case REVIEW -> "var(--lumo-warning-color, orange)";
-      case SENSITIVE -> "var(--lumo-error-color)";
-    };
-    icon.setSize("16px");
-    icon.setColor(color);
-    icon.getElement().setAttribute("title",
-                                   getTranslation("overview.risk.tooltip." + risk.name().toLowerCase()));
-    return icon;
-  }
 
   private com.vaadin.flow.component.Component buildResultThumb(SearchResultItem r, String height) {
     PersistenceService ps = services.persistence();
@@ -1220,7 +1203,7 @@ public class SearchView
     StringBuilder sb = new StringBuilder();
     sb.append("Score,Filename,Category,Risk,Summary\n");
     for (SearchResultItem r : results) {
-      sb.append(String.format("%.3f,\"%s\",\"%s\",\"%s\",\"%s\"\n",
+      sb.append(String.format(Locale.ROOT, "%.3f,\"%s\",\"%s\",\"%s\",\"%s\"\n",
                               r.getScore(),
                               escapeCsv(r.getTitle()),
                               r.getSourceCategory() != null ? r.getSourceCategory().name() : "",

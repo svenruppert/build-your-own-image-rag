@@ -2,6 +2,7 @@ package com.svenruppert.flow.views.tuning;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ImagePreviewFactory;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.shared.WhyNotFoundDialog;
@@ -115,7 +116,8 @@ public class SearchTuningView
   private volatile UUID qbeImageId = null;
   // ── Run state ─────────────────────────────────────────────────────────────
   private volatile boolean running = false;
-  private TuningRun currentRun = null;  private final FeedbackSessionPanel feedbackPanel = new FeedbackSessionPanel(this::removeFeedback);
+  private TuningRun currentRun = null;
+  private final FeedbackSessionPanel feedbackPanel = new FeedbackSessionPanel(this::removeFeedback);
   private TuningRun previousRun = null;
   public SearchTuningView() {
     ViewServices services = ViewServices.current();
@@ -554,9 +556,10 @@ public class SearchTuningView
             elapsed);
 
         final TuningRun finalRun = run;
-        final TuningRun prevRun = currentRun;
 
         ui.access(() -> {
+          // currentRun is owned by the UI thread, so it is read inside ui.access().
+          TuningRun prevRun = currentRun;
           inspector.showRun(finalRun);
           renderResults(finalRun, prevRun);
           renderSummaryBar(finalRun);
@@ -615,10 +618,10 @@ public class SearchTuningView
     SearchTuningConfig cfg = run.getConfig();
     summaryBar.removeAll();
 
-    String semFmt = String.format("%.2f", cfg.getSemanticWeight());
-    String bFmt = String.format("%.2f", cfg.getBm25Weight());
-    String confFmt = String.format("%.2f", cfg.getConfidenceWeight());
-    String cutFmt = String.format("%.2f", cfg.getScoreCutoff());
+    String semFmt = Formats.decimal(cfg.getSemanticWeight());
+    String bFmt = Formats.decimal(cfg.getBm25Weight());
+    String confFmt = Formats.decimal(cfg.getConfidenceWeight());
+    String cutFmt = Formats.decimal(cfg.getScoreCutoff());
 
     StringBuilder sb = new StringBuilder();
     sb.append(getTranslation("tuning.summary.config",

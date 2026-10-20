@@ -1,6 +1,7 @@
 package com.svenruppert.flow.views.multimodal;
 
 import com.svenruppert.flow.MainLayout;
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ResultExplainabilityPanel;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.shared.WhyNotFoundDialog;
@@ -497,7 +498,7 @@ public class MultimodalSearchView
     Span title = new Span(titleText);
     title.getStyle().set("font-weight", "600").set("font-size", "var(--lumo-font-size-s)");
 
-    Span score = new Span(String.format("%.3f", r.item().getScore()));
+    Span score = new Span(Formats.score(r.item().getScore()));
     score.getStyle().set("font-size", "var(--lumo-font-size-xs)")
         .set("color", "var(--lumo-primary-color)").set("font-weight", "700")
         .set("background", "var(--lumo-primary-color-10pct)")

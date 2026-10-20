@@ -4,6 +4,7 @@ import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.ImageAsset;
+import com.svenruppert.imagerag.ollama.PromptTemplates;
 import com.svenruppert.imagerag.domain.PromptTemplateVersion;
 import com.svenruppert.imagerag.domain.enums.VectorBackendType;
 import com.svenruppert.imagerag.ollama.OllamaClient;
@@ -695,7 +696,7 @@ public class MigrationCenterView
       String description = (analysis != null && analysis.getSummary() != null)
           ? analysis.getSummary()
           : getTranslation("migration.test.no.description");
-      String formatted = draftContent.formatted(sanitizeForPrompt(description));
+      String formatted = PromptTemplates.fill(draftContent, sanitizeForPrompt(description));
       return ollama.generateJson(formatted)
           .getOrElse(getTranslation("migration.test.no.result"));
     }

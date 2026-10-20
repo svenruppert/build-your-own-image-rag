@@ -5,12 +5,16 @@ import com.svenruppert.imagerag.service.PreviewService;
 import com.vaadin.flow.server.StreamResource;
 
 import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Iterator;
 import java.util.UUID;
 
 /**
@@ -24,6 +28,11 @@ import java.util.UUID;
  */
 public class PreviewServiceImpl
     implements PreviewService, HasLogger {
+
+  /**
+   * Upper bound for the decoded size of a source image (100 megapixels).
+   */
+  private static final long MAX_SOURCE_PIXELS = 100_000_000L;
 
   private final Path previewRoot;
 
@@ -100,10 +109,7 @@ public class PreviewServiceImpl
    */
   private void generatePreview(Path source, Path dest, int maxWidth, int maxHeight)
       throws IOException {
-    BufferedImage original = ImageIO.read(source.toFile());
-    if (original == null) {
-      throw new IOException("ImageIO could not read: " + source);
-    }
+    BufferedImage original = readWithPixelLimit(source);
 
     // Compute scale to fit within target box; never up-scale tiny images
     double scale = Math.min(
@@ -128,8 +134,46 @@ public class PreviewServiceImpl
       g.dispose();
     }
 
-    if (!ImageIO.write(scaled, "JPEG", dest.toFile())) {
-      throw new IOException("No JPEG writer available for: " + dest);
+    // Write to a sibling temp file and move it into place atomically, so concurrent
+    // readers never see a half-written preview.
+    Path temp = Files.createTempFile(dest.getParent(), dest.getFileName().toString(), ".part");
+    try {
+      if (!ImageIO.write(scaled, "JPEG", temp.toFile())) {
+        throw new IOException("No JPEG writer available for: " + dest);
+      }
+      Files.move(temp, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+    } finally {
+      Files.deleteIfExists(temp);
+    }
+  }
+
+  /**
+   * Reads the image after checking its declared dimensions, so a small file that
+   * decodes to a huge raster (decompression bomb) is rejected before any pixels
+   * are allocated.
+   */
+  private BufferedImage readWithPixelLimit(Path source)
+      throws IOException {
+    try (ImageInputStream input = ImageIO.createImageInputStream(source.toFile())) {
+      if (input == null) {
+        throw new IOException("ImageIO could not open: " + source);
+      }
+      Iterator<ImageReader> readers = ImageIO.getImageReaders(input);
+      if (!readers.hasNext()) {
+        throw new IOException("No ImageIO reader for: " + source);
+      }
+      ImageReader reader = readers.next();
+      try {
+        reader.setInput(input, true, true);
+        long pixels = (long) reader.getWidth(0) * reader.getHeight(0);
+        if (pixels > MAX_SOURCE_PIXELS) {
+          throw new IOException("Image " + source.getFileName() + " has " + pixels
+                                    + " pixels, exceeding the limit of " + MAX_SOURCE_PIXELS);
+        }
+        return reader.read(0);
+      } finally {
+        reader.dispose();
+      }
     }
   }
 }

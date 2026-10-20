@@ -1,7 +1,9 @@
 package com.svenruppert.flow.views.detail;
 
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ImagePreviewFactory;
 import com.svenruppert.flow.views.shared.MarkdownRenderer;
+import com.svenruppert.flow.views.shared.RiskBadge;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.CategoryAssignmentNormalizer;
 import com.svenruppert.imagerag.domain.*;
@@ -111,7 +113,7 @@ public class DetailDialog
     form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
     form.addFormItem(new Span(asset.getId().toString()), "ID");
     form.addFormItem(new Span(asset.getMimeType()), getTranslation("detail.field.mime.type"));
-    form.addFormItem(new Span(formatSize(asset.getFileSize())), getTranslation("detail.field.file.size"));
+    form.addFormItem(new Span(Formats.fileSize(asset.getFileSize())), getTranslation("detail.field.file.size"));
     form.addFormItem(new Span(asset.getWidth() + " \u00d7 " + asset.getHeight()), getTranslation("detail.field.dimensions"));
     form.addFormItem(new Span(asset.getUploadedAt() != null
                                   ? DATE_FMT.format(asset.getUploadedAt()) : "\u2014"), getTranslation("detail.field.uploaded"));
@@ -169,7 +171,7 @@ public class DetailDialog
     primaryRow.setSpacing(true);
     form.addFormItem(primaryRow, getTranslation("detail.field.primary.category"));
 
-    form.addFormItem(new Span(str(analysis.getSeasonHint())), getTranslation("detail.field.season"));
+    form.addFormItem(new Span(Formats.nvl(analysis.getSeasonHint())), getTranslation("detail.field.season"));
     form.addFormItem(new Span(analysis.getSceneType() != null ? analysis.getSceneType() : "\u2014"), getTranslation("detail.field.scene.type"));
     form.addFormItem(new Span(bool(analysis.getContainsPerson())), getTranslation("detail.field.contains.person"));
     form.addFormItem(new Span(bool(analysis.getContainsVehicle())), getTranslation("detail.field.contains.vehicle"));
@@ -271,17 +273,10 @@ public class DetailDialog
     FormLayout form = new FormLayout();
     form.setResponsiveSteps(new FormLayout.ResponsiveStep("0", 2));
 
-    Span riskBadge = new Span(assessment.getRiskLevel().name());
-    riskBadge.getElement().getThemeList().add("badge");
-    switch (assessment.getRiskLevel()) {
-      case SAFE -> riskBadge.getElement().getThemeList().add("success");
-      case REVIEW -> riskBadge.getElement().getThemeList().add("contrast");
-      case SENSITIVE -> riskBadge.getElement().getThemeList().add("error");
-      default -> throw new RuntimeException("Should never reach..");
-    }
+    Span riskBadge = RiskBadge.badge(assessment.getRiskLevel());
     form.addFormItem(riskBadge, getTranslation("detail.field.risk.level"));
     form.addFormItem(new Span(String.valueOf(assessment.isReviewRequired())), getTranslation("detail.field.review.required"));
-    form.addFormItem(new Span(str(assessment.getRecommendedStorageMode())), getTranslation("detail.field.storage.mode"));
+    form.addFormItem(new Span(Formats.nvl(assessment.getRecommendedStorageMode())), getTranslation("detail.field.storage.mode"));
     layout.add(form);
 
     if (assessment.getFlags() != null && !assessment.getFlags().isEmpty()) {
@@ -440,16 +435,6 @@ public class DetailDialog
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
-
-  private String formatSize(long bytes) {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
-    return String.format("%.1f MB", bytes / (1024.0 * 1024));
-  }
-
-  private String str(Object value) {
-    return value != null ? value.toString() : "\u2014";
-  }
 
   private String bool(Boolean value) {
     if (value == null) return "\u2014";

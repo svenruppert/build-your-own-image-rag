@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.tuning;
 
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.imagerag.domain.SearchTuningConfig;
 import com.svenruppert.imagerag.domain.enums.QueryIntentType;
 import com.svenruppert.imagerag.domain.enums.RetrievalMode;
@@ -77,11 +78,6 @@ public class TuningInspectorComponent
     // Titles and waiting text are applied in onAttach() once translations are available.
   }
 
-  private static String truncate(String s, int max) {
-    if (s == null) return "";
-    return s.length() > max ? s.substring(0, max - 1) + "\u2026" : s;
-  }
-
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   @Override
@@ -109,7 +105,7 @@ public class TuningInspectorComponent
    * Requires the component to be attached.
    */
   public void markRunning(String query) {
-    rows.get(PipelineStep.QUERY).update(Status.ACTIVE, truncate(query, 80));
+    rows.get(PipelineStep.QUERY).update(Status.ACTIVE, Formats.truncate(query, 80));
     for (PipelineStep step : PipelineStep.values()) {
       if (step != PipelineStep.QUERY) {
         rows.get(step).update(Status.ACTIVE, getTranslation(step.runningKey()));
@@ -127,7 +123,7 @@ public class TuningInspectorComponent
 
     // Step 1 — Query Input
     rows.get(PipelineStep.QUERY).update(Status.COMPLETED,
-                                        "\u201c" + truncate(run.getQuery(), 80) + "\u201d");
+                                        "\u201c" + Formats.truncate(run.getQuery(), 80) + "\u201d");
 
     // Step 2 — Query Intent
     QueryIntentType intent = run.getDetectedIntent();
@@ -172,8 +168,8 @@ public class TuningInspectorComponent
 
     // Step 6 — Score Fusion
     int total = run.getVectorCandidates() + run.getKeywordCandidates();
-    String semFmt = String.format("%.2f", cfg.getSemanticWeight());
-    String bFmt = String.format("%.2f", cfg.getBm25Weight());
+    String semFmt = Formats.decimal(cfg.getSemanticWeight());
+    String bFmt = Formats.decimal(cfg.getBm25Weight());
     String fusionText = switch (mode) {
       case HYBRID -> getTranslation("tuning.step.fusion.hybrid", semFmt, bFmt, total);
       case SEMANTIC_ONLY -> getTranslation("tuning.step.fusion.semantic", semFmt);
@@ -186,7 +182,7 @@ public class TuningInspectorComponent
       rows.get(PipelineStep.CONFIDENCE).update(Status.SKIPPED,
                                                getTranslation("tuning.step.confidence.disabled"));
     } else {
-      String confFmt = String.format("%.2f", cfg.getConfidenceWeight());
+      String confFmt = Formats.decimal(cfg.getConfidenceWeight());
       String pctFmt = String.format("%.0f", cfg.getConfidenceWeight() * 100);
       rows.get(PipelineStep.CONFIDENCE).update(Status.COMPLETED,
                                                getTranslation("tuning.step.confidence.done", confFmt, pctFmt));
@@ -202,13 +198,13 @@ public class TuningInspectorComponent
     } else {
       rows.get(PipelineStep.FEEDBACK).update(Status.COMPLETED,
                                              getTranslation("tuning.step.feedback.done",
-                                                            fb, String.format("%.2f", cfg.getFeedbackWeight())));
+                                                            fb, Formats.decimal(cfg.getFeedbackWeight())));
     }
 
     // Step 9 — Score Filtering
     rows.get(PipelineStep.FILTER).update(Status.COMPLETED,
                                          getTranslation("tuning.step.filter.done",
-                                                        String.format("%.2f", cfg.getScoreCutoff()), run.getResults().size()));
+                                                        Formats.decimal(cfg.getScoreCutoff()), run.getResults().size()));
 
     // Step 10 — Result Assembly
     rows.get(PipelineStep.RESULT).update(Status.COMPLETED,

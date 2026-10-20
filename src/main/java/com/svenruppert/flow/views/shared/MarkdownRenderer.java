@@ -3,12 +3,16 @@ package com.svenruppert.flow.views.shared;
 import com.vaadin.flow.component.html.Div;
 import org.commonmark.node.Node;
 import org.commonmark.parser.Parser;
+import org.commonmark.renderer.html.DefaultUrlSanitizer;
 import org.commonmark.renderer.html.HtmlRenderer;
+
+import java.util.List;
 
 /**
  * Converts CommonMark Markdown text to safe HTML for display inside Vaadin components.
- * <p>Raw HTML blocks inside the Markdown source are escaped (not passed through),
- * preventing XSS if the LLM-generated description contains HTML fragments.
+ * <p>Raw HTML blocks inside the Markdown source are escaped (not passed through) and
+ * link/image URLs are limited to http, https and mailto, preventing XSS if the
+ * LLM-generated description contains HTML fragments or {@code javascript:} links.
  * Standard Markdown elements — headings, bold, italic, lists, code blocks,
  * blockquotes, paragraphs — are rendered normally.
  * <p>This class is intentionally non-instantiable; use the static factory methods.
@@ -18,11 +22,20 @@ public final class MarkdownRenderer {
   private static final Parser PARSER = Parser.builder().build();
 
   /**
+   * Link schemes that may appear in rendered output. Anything else, notably
+   * {@code javascript:}, is replaced by an empty URL.
+   */
+  private static final List<String> ALLOWED_URL_SCHEMES = List.of("http", "https", "mailto");
+
+  /**
    * Renders Markdown to safe HTML.  Raw HTML in the source is escaped rather than
-   * passed through, providing XSS protection for LLM-generated content.
+   * passed through, and link/image URLs are restricted to {@link #ALLOWED_URL_SCHEMES},
+   * providing XSS protection for LLM-generated content.
    */
   private static final HtmlRenderer RENDERER = HtmlRenderer.builder()
       .escapeHtml(true)
+      .sanitizeUrls(true)
+      .urlSanitizer(new DefaultUrlSanitizer(ALLOWED_URL_SCHEMES))
       .build();
 
   private MarkdownRenderer() {

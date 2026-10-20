@@ -3,7 +3,9 @@ package com.svenruppert.flow.views.archive;
 import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ImagePreviewFactory;
+import com.svenruppert.flow.views.shared.RiskBadge;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.CategoryRegistry;
 import com.svenruppert.imagerag.domain.ImageAsset;
@@ -416,18 +418,8 @@ public class ArchiveView
     return services.persistence()
         .findAssessment(asset.getId())
         .map(SensitivityAssessment::getRiskLevel)
-        .map(risk -> {
-          Span badge = new Span(risk.name());
-          badge.getElement().getThemeList().add("badge");
-          switch (risk) {
-            case SAFE -> badge.getElement().getThemeList().add("success");
-            case REVIEW -> badge.getElement().getThemeList().add("contrast");
-            case SENSITIVE -> badge.getElement().getThemeList().add("error");
-            default -> throw new IllegalStateException("Unexpected risk: " + risk);
-          }
-          return (Component) badge;
-        })
-        .orElseGet(() -> new Span("—"));
+        .map(risk -> (Component) RiskBadge.badge(risk))
+        .orElseGet(() -> new Span(Formats.EMPTY));
   }
 
   @Override

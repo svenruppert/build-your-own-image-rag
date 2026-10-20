@@ -232,10 +232,10 @@ public class WhyNotFoundDialog
         .set("border-radius", "var(--lumo-border-radius-s)")
         .set("margin-bottom", "0.4rem");
 
-    addGridRow(grid, getTranslation("wnf.score.semantic"), String.format("%.3f", a.semanticScore()));
-    addGridRow(grid, getTranslation("wnf.score.bm25"), String.format("%.3f", a.bm25Score()));
-    addGridRow(grid, getTranslation("wnf.score.estimated"), String.format("%.3f", a.estimatedFinalScore()));
-    addGridRow(grid, getTranslation("wnf.score.cutoff"), String.format("%.2f", a.scoreCutoff()));
+    addGridRow(grid, getTranslation("wnf.score.semantic"), Formats.score(a.semanticScore()));
+    addGridRow(grid, getTranslation("wnf.score.bm25"), Formats.score(a.bm25Score()));
+    addGridRow(grid, getTranslation("wnf.score.estimated"), Formats.score(a.estimatedFinalScore()));
+    addGridRow(grid, getTranslation("wnf.score.cutoff"), Formats.decimal(a.scoreCutoff()));
     addGridRow(grid, getTranslation("wnf.score.above.threshold"),
                a.aboveThreshold() ? "\u2713 " + getTranslation("wnf.yes") : "\u2717 " + getTranslation("wnf.no"));
     addGridRow(grid, getTranslation("wnf.score.approved"),

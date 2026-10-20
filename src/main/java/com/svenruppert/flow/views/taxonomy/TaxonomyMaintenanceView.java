@@ -1,6 +1,7 @@
 package com.svenruppert.flow.views.taxonomy;
 
 import com.svenruppert.flow.MainLayout;
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ImagePreviewFactory;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.*;
@@ -581,7 +582,7 @@ public class TaxonomyMaintenanceView
     clusterGrid.addColumn(s -> String.valueOf(s.clusterSize()))
         .setHeader(getTranslation("cluster.suggestion.size")).setAutoWidth(true);
 
-    clusterGrid.addColumn(s -> String.format("%.2f", s.getIntraClusterSimilarity()))
+    clusterGrid.addColumn(s -> Formats.decimal(s.getIntraClusterSimilarity()))
         .setHeader(getTranslation("cluster.suggestion.similarity")).setAutoWidth(true);
 
     clusterGrid.addComponentColumn(s -> {
@@ -691,7 +692,7 @@ public class TaxonomyMaintenanceView
     // Cluster stats summary
     Paragraph info = new Paragraph(getTranslation(
         "cluster.images.info", s.clusterSize(),
-        String.format("%.2f", s.getIntraClusterSimilarity())));
+        Formats.decimal(s.getIntraClusterSimilarity())));
     info.getStyle()
         .set("font-size", "var(--lumo-font-size-xs)")
         .set("color", "var(--lumo-secondary-text-color)")
@@ -786,7 +787,7 @@ public class TaxonomyMaintenanceView
     addClusterStatRow(stats, getTranslation("cluster.accept.preview.dominant"),
                       s.getDominantCategory() != null ? s.getDominantCategory().name() : "\u2014");
     addClusterStatRow(stats, getTranslation("cluster.accept.preview.similarity"),
-                      String.format("%.2f", s.getIntraClusterSimilarity()));
+                      Formats.decimal(s.getIntraClusterSimilarity()));
 
     if (!s.getCategoryDistribution().isEmpty()) {
       StringBuilder catStr = new StringBuilder();
@@ -1049,18 +1050,18 @@ public class TaxonomyMaintenanceView
         if (dryRun) {
           result.addAll(analysisService.analyzeDryRun(scope, progress -> {
             lastProgress.set(progress);
-            ui.access(() -> applyProgress(progress));
+            ui.access(() -> applyProgress(progress.snapshot()));
           }));
         } else {
           result.addAll(analysisService.analyze(scope, progress -> {
             lastProgress.set(progress);
-            ui.access(() -> applyProgress(progress));
+            ui.access(() -> applyProgress(progress.snapshot()));
           }));
         }
 
         final List<TaxonomySuggestion> finalResult = result;
         final TaxonomyAnalysisProgress finalProgress = lastProgress.get() != null
-            ? lastProgress.get()
+            ? lastProgress.get().snapshot()
             : new TaxonomyAnalysisProgress(dryRun);
 
         ui.access(() -> {

@@ -29,14 +29,19 @@ public class ImageStorageServiceImpl
   public StoredImage store(InputStream inputStream, String originalFilename, String mimeType)
       throws IOException {
     UUID imageId = UUID.randomUUID();
-    String extension = extractExtension(originalFilename);
-    String storedFilename = imageId + extension;
-    Path targetPath = storageRoot.resolve(storedFilename);
 
-    // Write to a temp file first to compute hash, then move
+    // Write to a temp file first to verify the content and compute the hash, then move.
+    // The stored extension is derived from the detected content format, never from the
+    // client-supplied filename, so it cannot carry path separators or unexpected types.
     Path tempPath = storageRoot.resolve(imageId + ".tmp");
     try {
       Files.copy(inputStream, tempPath, StandardCopyOption.REPLACE_EXISTING);
+      String extension = detectImageExtension(tempPath);
+      if (extension == null) {
+        throw new IOException("Unsupported or invalid image content (declared type: " + mimeType + ")");
+      }
+      String storedFilename = imageId + extension;
+      Path targetPath = storageRoot.resolve(storedFilename);
       String sha256 = computeSha256(tempPath);
       Files.move(tempPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
       long fileSize = Files.size(targetPath);
@@ -100,10 +105,38 @@ public class ImageStorageServiceImpl
     }
   }
 
-  private String extractExtension(String filename) {
-    if (filename == null) return ".jpg";
-    int dot = filename.lastIndexOf('.');
-    return (dot >= 0) ? filename.substring(dot).toLowerCase() : ".jpg";
+  /**
+   * Detects the image format from the file's magic bytes.
+   *
+   * @return the file extension for the detected format, or {@code null} when the
+   * content is not one of the supported image formats
+   */
+  static String detectImageExtension(Path path)
+      throws IOException {
+    byte[] head = new byte[12];
+    int read;
+    try (InputStream in = Files.newInputStream(path)) {
+      read = in.readNBytes(head, 0, head.length);
+    }
+    if (read >= 3 && startsWith(head, 0xFF, 0xD8, 0xFF)) return ".jpg";
+    if (read >= 8 && startsWith(head, 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A)) return ".png";
+    if (read >= 4 && startsWith(head, 'G', 'I', 'F', '8')) return ".gif";
+    if (read >= 12 && startsWith(head, 'R', 'I', 'F', 'F')
+        && head[8] == 'W' && head[9] == 'E' && head[10] == 'B' && head[11] == 'P') {
+      return ".webp";
+    }
+    if (read >= 2 && startsWith(head, 'B', 'M')) return ".bmp";
+    if (read >= 4 && (startsWith(head, 'I', 'I', 0x2A, 0x00) || startsWith(head, 'M', 'M', 0x00, 0x2A))) {
+      return ".tiff";
+    }
+    return null;
+  }
+
+  private static boolean startsWith(byte[] data, int... prefix) {
+    for (int i = 0; i < prefix.length; i++) {
+      if ((data[i] & 0xFF) != prefix[i]) return false;
+    }
+    return true;
   }
 
   private String computeSha256(Path path)

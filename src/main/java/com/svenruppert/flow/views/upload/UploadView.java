@@ -15,12 +15,13 @@ import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.upload.Upload;
-import com.vaadin.flow.component.upload.receivers.MultiFileBuffer;
 import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.router.RouterLink;
+import com.vaadin.flow.server.streams.UploadHandler;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 @Route(value = UploadView.PATH, layout = MainLayout.class)
@@ -44,24 +45,17 @@ public class UploadView
     RouterLink pipelineLink = new RouterLink(getTranslation("upload.pipeline.link"), PipelineView.class);
     add(pipelineLink);
 
-    // Disk-backed buffer — avoids loading all 200 files into memory simultaneously.
-    // Each file is written to a temp file on disk; we pass the path to the pipeline
-    // which reads it lazily at processing time.
-    MultiFileBuffer buffer = new MultiFileBuffer();
-    Upload upload = new Upload(buffer);
+    // Each upload is streamed to its own temp file, so two files with the same
+    // name cannot overwrite each other. The pipeline reads the file lazily at
+    // processing time and deletes it afterwards. The callback runs on the UI thread.
+    Upload upload = new Upload(UploadHandler.toTempFile(
+        (metadata, file) -> submitToQueue(metadata.fileName(), metadata.contentType(), file.toPath())));
     // MediaType has no IMAGE_BMP constant yet, so that one stays a literal.
     upload.setAcceptedFileTypes(MediaType.IMAGE_JPEG.mime(), MediaType.IMAGE_PNG.mime(),
         MediaType.IMAGE_WEBP.mime(), MediaType.IMAGE_GIF.mime(), "image/bmp");
     upload.setMaxFiles(200);
     upload.setMaxFileSize(50 * 1024 * 1024); // 50 MB per file
     upload.setWidthFull();
-
-    upload.addSucceededListener(event -> {
-      String filename = event.getFileName();
-      String mimeType = event.getMIMEType();
-      Path tempFile = buffer.getFileData(filename).getFile().toPath();
-      submitToQueue(filename, mimeType, tempFile);
-    });
 
     upload.addAllFinishedListener(event ->
                                       Notification.show(getTranslation("upload.all.finished"),
@@ -103,10 +97,19 @@ public class UploadView
 
     } catch (IOException e) {
       logger().error("Failed to queue {}: {}", filename, e.getMessage(), e);
+      deleteQuietly(tempFile);
       Notification n = Notification.show(
           getTranslation("upload.error", filename, e.getMessage()),
           5000, Notification.Position.MIDDLE);
       n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+    }
+  }
+
+  private void deleteQuietly(Path tempFile) {
+    try {
+      Files.deleteIfExists(tempFile);
+    } catch (IOException e) {
+      logger().warn("Could not delete temp upload file {}: {}", tempFile, e.getMessage());
     }
   }
 

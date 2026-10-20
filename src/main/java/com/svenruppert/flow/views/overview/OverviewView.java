@@ -7,6 +7,7 @@ import com.svenruppert.flow.views.detail.ComparisonDialog;
 import com.svenruppert.flow.views.detail.DetailDialog;
 import com.svenruppert.flow.views.shared.CategoryChooserComponent;
 import com.svenruppert.flow.views.shared.ImagePreviewFactory;
+import com.svenruppert.flow.views.shared.RiskBadge;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.flow.views.shared.ViewModeToggle;
 import com.svenruppert.imagerag.domain.*;
@@ -509,7 +510,7 @@ public class OverviewView
     iconRow.setAlignItems(Alignment.CENTER);
 
     RiskLevel risk = ps.findAssessment(asset.getId()).map(SensitivityAssessment::getRiskLevel).orElse(null);
-    iconRow.add(riskIcon(risk));
+    iconRow.add(RiskBadge.icon(risk, "18px"));
     iconRow.add(visibilityIcon(asset, ps));
     info.add(iconRow);
 
@@ -552,33 +553,6 @@ public class OverviewView
   // -------------------------------------------------------------------------
   // Risk and visibility iconography
   // -------------------------------------------------------------------------
-
-  /**
-   * Returns a coloured icon representing the image's risk level, with a tooltip.
-   * SAFE = green check, REVIEW = orange question, SENSITIVE = red exclamation.
-   */
-  private Component riskIcon(RiskLevel risk) {
-    if (risk == null) {
-      Span dash = new Span("—");
-      dash.getStyle().set("font-size", "var(--lumo-font-size-xs)");
-      return dash;
-    }
-    Icon icon = switch (risk) {
-      case SAFE -> VaadinIcon.CHECK_CIRCLE.create();
-      case REVIEW -> VaadinIcon.QUESTION_CIRCLE.create();
-      case SENSITIVE -> VaadinIcon.EXCLAMATION_CIRCLE_O.create();
-    };
-    String color = switch (risk) {
-      case SAFE -> "var(--lumo-success-color)";
-      case REVIEW -> "var(--lumo-warning-color, orange)";
-      case SENSITIVE -> "var(--lumo-error-color)";
-    };
-    icon.setSize("18px");
-    icon.setColor(color);
-    icon.getElement().setAttribute("title",
-                                   getTranslation("overview.risk.tooltip." + risk.name().toLowerCase()));
-    return icon;
-  }
 
   /**
    * Returns an eye/eye-slash icon indicating whether the image is approved for

@@ -1,6 +1,8 @@
 package com.svenruppert.flow.views.detail;
 
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ImagePreviewFactory;
+import com.svenruppert.flow.views.shared.RiskBadge;
 import com.svenruppert.flow.views.shared.ViewServices;
 import com.svenruppert.imagerag.domain.*;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
@@ -115,14 +117,7 @@ public class ComparisonDialog
 
     // ── Risk level ─────────────────────────────────────────────────────────
     if (assessment != null) {
-      Span riskBadge = new Span(assessment.getRiskLevel().name());
-      riskBadge.getElement().getThemeList().add("badge");
-      switch (assessment.getRiskLevel()) {
-        case SAFE -> riskBadge.getElement().getThemeList().add("success");
-        case REVIEW -> riskBadge.getElement().getThemeList().add("contrast");
-        case SENSITIVE -> riskBadge.getElement().getThemeList().add("error");
-        default -> throw new IllegalStateException("Unexpected value: " + assessment.getRiskLevel());
-      }
+      Span riskBadge = RiskBadge.badge(assessment.getRiskLevel());
       Span riskLabel = new Span(getTranslation("overview.col.risk") + ":");
       riskLabel.getStyle().set("font-size", "var(--lumo-font-size-s)").set("font-weight", "500");
       col.add(new HorizontalLayout(riskLabel, riskBadge));
@@ -168,8 +163,8 @@ public class ComparisonDialog
 
     // ── Model provenance ───────────────────────────────────────────────────
     if (analysis != null) {
-      String modelInfo = nvl(analysis.getVisionModel());
-      String promptVer = nvl(analysis.getVisionPromptVersion());
+      String modelInfo = Formats.nvl(analysis.getVisionModel());
+      String promptVer = Formats.nvl(analysis.getVisionPromptVersion());
       addRow(col, getTranslation("detail.provenance.vision.model"), modelInfo);
       addRow(col, getTranslation("detail.provenance.vision.prompt.version"), promptVer);
     }
@@ -227,7 +222,4 @@ public class ComparisonDialog
     return div;
   }
 
-  private String nvl(String s) {
-    return s != null ? s : "—";
-  }
 }

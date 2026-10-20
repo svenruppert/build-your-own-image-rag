@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.search;
 
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.imagerag.domain.SearchPlan;
 import com.vaadin.flow.component.details.Details;
 import com.vaadin.flow.component.html.Div;
@@ -102,7 +103,7 @@ public class SearchInspectorComponent
    */
   public void setQueryInput(String query) {
     stepQuery.update(StepStatus.COMPLETED,
-                     getTranslation("search.inspector.query", truncate(query, 80)),
+                     getTranslation("search.inspector.query", Formats.truncate(query, 80)),
                      query);
   }
 
@@ -120,11 +121,11 @@ public class SearchInspectorComponent
   public void setLlmCompleted(SearchPlan plan) {
     // Step 2 — LLM explanation
     String explanation = plan.getExplanation() != null ? plan.getExplanation() : getTranslation("search.inspector.llm.understood");
-    stepLlm.update(StepStatus.COMPLETED, truncate(explanation, 100), plan.getExplanation());
+    stepLlm.update(StepStatus.COMPLETED, Formats.truncate(explanation, 100), plan.getExplanation());
 
     // Step 3 — Transformed embedding text
     String embText = plan.getEmbeddingText() != null ? plan.getEmbeddingText() : "\u2014";
-    stepTransformed.update(StepStatus.COMPLETED, truncate(embText, 100), embText);
+    stepTransformed.update(StepStatus.COMPLETED, Formats.truncate(embText, 100), embText);
 
     // Step 4 — Derived parameters (from LLM) + any user refinements
     String paramSummary = buildParamSummary(plan);
@@ -191,7 +192,7 @@ public class SearchInspectorComponent
     if (stepProgress >= 3) {
       // LLM completed; failure occurred during search preparation or retrieval
       stepSearchPrep.update(StepStatus.FAILED,
-                            getTranslation("search.inspector.search.failed", truncate(error, 80)),
+                            getTranslation("search.inspector.search.failed", Formats.truncate(error, 80)),
                             error);
       stepRetrieval.update(StepStatus.SKIPPED, skippedNote, null);
       stepFiltering.update(StepStatus.SKIPPED, skippedNote, null);
@@ -199,7 +200,7 @@ public class SearchInspectorComponent
     } else {
       // Failure during or before LLM analysis
       stepLlm.update(StepStatus.FAILED,
-                     getTranslation("search.inspector.llm.failed", truncate(error, 80)),
+                     getTranslation("search.inspector.llm.failed", Formats.truncate(error, 80)),
                      error);
       stepTransformed.update(StepStatus.SKIPPED, skippedNote, null);
       stepParams.update(StepStatus.SKIPPED, skippedNote, null);
@@ -208,11 +209,6 @@ public class SearchInspectorComponent
       stepFiltering.update(StepStatus.SKIPPED, skippedNote, null);
       stepResults.update(StepStatus.SKIPPED, skippedNote, null);
     }
-  }
-
-  private String truncate(String s, int max) {
-    if (s == null) return "\u2014";
-    return s.length() > max ? s.substring(0, max) + "\u2026" : s;
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -240,7 +236,7 @@ public class SearchInspectorComponent
       sb.append(getTranslation("search.inspector.param.plate")).append(": ").append(yesNo(plan.getContainsLicensePlate())).append("  ");
     }
     if (plan.getMinScore() != null) {
-      sb.append(getTranslation("search.inspector.param.threshold")).append(": ").append(String.format("%.2f", plan.getMinScore())).append("  ");
+      sb.append(getTranslation("search.inspector.param.threshold")).append(": ").append(Formats.decimal(plan.getMinScore())).append("  ");
     }
     return sb.isEmpty() ? getTranslation("search.inspector.param.none") : sb.toString().trim();
   }
@@ -267,7 +263,7 @@ public class SearchInspectorComponent
       sb.append(getTranslation("search.inspector.param.privacy")).append(": ").append(plan.getPrivacyLevel().name()).append("\n");
     }
     if (plan.getMinScore() != null) {
-      sb.append(getTranslation("search.inspector.param.score.threshold")).append(": ").append(String.format("%.2f", plan.getMinScore())).append("\n");
+      sb.append(getTranslation("search.inspector.param.score.threshold")).append(": ").append(Formats.decimal(plan.getMinScore())).append("\n");
     }
     return sb.isEmpty() ? null : sb.toString().trim();
   }

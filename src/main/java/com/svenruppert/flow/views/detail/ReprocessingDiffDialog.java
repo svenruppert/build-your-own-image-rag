@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.detail;
 
+import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.imagerag.domain.CategoryRegistry;
 import com.svenruppert.imagerag.domain.ReprocessingDiff;
 import com.svenruppert.imagerag.domain.enums.SourceCategory;
@@ -86,13 +87,13 @@ public class ReprocessingDiffDialog
 
       // Vision model / provenance
       addDiffRow(content, getTranslation("detail.provenance.vision.model"),
-                 nvl(diff.previousVisionModel()),
-                 nvl(diff.newVisionModel()),
+                 Formats.nvl(diff.previousVisionModel()),
+                 Formats.nvl(diff.newVisionModel()),
                  !Objects.equals(diff.previousVisionModel(), diff.newVisionModel()));
 
       addDiffRow(content, getTranslation("pipeline.diff.prompt.version"),
-                 nvl(diff.previousPromptVersion()),
-                 nvl(diff.newPromptVersion()),
+                 Formats.nvl(diff.previousPromptVersion()),
+                 Formats.nvl(diff.newPromptVersion()),
                  !Objects.equals(diff.previousPromptVersion(), diff.newPromptVersion()));
 
       // OCR text (only show when changed and non-empty)
@@ -201,7 +202,4 @@ public class ReprocessingDiffDialog
     return String.join(", ", tags);
   }
 
-  private String nvl(String s) {
-    return s != null ? s : "—";
-  }
 }

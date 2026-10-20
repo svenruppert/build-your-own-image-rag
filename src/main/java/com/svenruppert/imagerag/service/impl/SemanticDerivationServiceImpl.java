@@ -18,6 +18,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.*;
+import tools.jackson.core.JacksonException;
 
 public class SemanticDerivationServiceImpl
     implements SemanticDerivationService, HasLogger {
@@ -203,7 +204,7 @@ public class SemanticDerivationServiceImpl
 
       logger().debug("Structured fields derived for image via LLM");
 
-    } catch (Exception e) {
+    } catch (JacksonException e) {
       logger().warn("Could not parse structured fields from LLM response: {}. Falling back to heuristics.", e.getMessage());
       applyFallbackHeuristics(analysis, analysis.getSummary());
     }

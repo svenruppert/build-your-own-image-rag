@@ -1,25 +1,36 @@
 package com.svenruppert.imagerag.service;
 
+import com.svenruppert.functional.result.Result;
+import com.svenruppert.functional.result.Unit;
 import com.svenruppert.imagerag.dto.StoredImage;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Path;
 import java.util.UUID;
 
 public interface ImageStorageService {
 
-  StoredImage store(InputStream inputStream, String originalFilename, String mimeType)
-      throws IOException;
+  /**
+   * Stores the image content under a new id. The stored extension is derived from the
+   * detected content format.
+   *
+   * @return the stored image, or a failure carrying the reason (unsupported content,
+   * I/O error)
+   */
+  Result<StoredImage, String> store(InputStream inputStream, String originalFilename, String mimeType);
 
-  InputStream load(UUID imageId)
-      throws IOException;
+  /**
+   * Opens the stored image file.
+   *
+   * @return an open stream the caller must close, or a failure carrying the reason
+   */
+  Result<InputStream, String> load(UUID imageId);
 
   Path resolvePath(UUID imageId);
 
   /**
-   * Deletes the stored image file for the given id. No-op if the file does not exist.
+   * Deletes the stored image file for the given id. Succeeds as a no-op if the file does
+   * not exist.
    */
-  void delete(UUID imageId)
-      throws IOException;
+  Result<Unit, String> delete(UUID imageId);
 }

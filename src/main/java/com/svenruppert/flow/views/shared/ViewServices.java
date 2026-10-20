@@ -128,8 +128,8 @@ public class ViewServices {
     return registry.deleteImage(imageId, reason);
   }
 
-  public void restoreImage(UUID imageId, String reason) {
-    registry.restoreImage(imageId, reason);
+  public Result<Unit, String> restoreImage(UUID imageId, String reason) {
+    return registry.restoreImage(imageId, reason);
   }
 
   public void rebuildVectorIndex() {

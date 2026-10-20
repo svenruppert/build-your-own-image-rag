@@ -1,12 +1,16 @@
 package com.svenruppert.imagerag.service.impl;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.functional.result.Result;
+import com.svenruppert.functional.result.Unit;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.persistence.PersistenceService;
 import com.svenruppert.imagerag.pipeline.IngestionPipeline;
 import com.svenruppert.imagerag.service.ReprocessingService;
 
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * Delegates reprocessing to the shared {@link IngestionPipeline}.
@@ -30,12 +34,20 @@ public class ReprocessingServiceImpl
   }
 
   @Override
-  public void reprocess(UUID imageId) {
-    ImageAsset asset = persistenceService.findImage(imageId)
-        .orElseThrow(() -> new IllegalArgumentException(
-            "Cannot reprocess: image not found for id=" + imageId));
+  public Result<Unit, String> reprocess(UUID imageId) {
+    Optional<ImageAsset> found = persistenceService.findImage(imageId);
+    if (found.isEmpty()) {
+      return Result.failure("Cannot reprocess: image not found for id=" + imageId);
+    }
+    ImageAsset asset = found.get();
+    try {
+      pipeline.submitReprocess(asset);
+    } catch (RejectedExecutionException e) {
+      logger().warn("Pipeline rejected reprocessing of {}: {}", imageId, e.getMessage(), e);
+      return Result.failure("Pipeline is not accepting jobs: " + e.getMessage());
+    }
     logger().info("Reprocessing delegated to pipeline for imageId={} ({})",
                   imageId, asset.getOriginalFilename());
-    pipeline.submitReprocess(asset);
+    return Result.success(Unit.INSTANCE);
   }
 }

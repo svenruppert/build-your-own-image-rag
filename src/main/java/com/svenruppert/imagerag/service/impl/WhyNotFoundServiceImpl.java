@@ -121,7 +121,9 @@ public class WhyNotFoundServiceImpl
                 vectorRank + 1, vectorHits.size(), semanticScore));
           }
         }
-      } catch (Exception e) {
+      } catch (RuntimeException e) {
+        // Diagnostic boundary: report the failed step in the analysis instead of failing it.
+        logger().warn("Semantic diagnosis failed for image {}: {}", imageId, e.getMessage(), e);
         diagnosticNotes.add("Could not compute semantic score: " + e.getMessage());
       }
     }
@@ -145,7 +147,9 @@ public class WhyNotFoundServiceImpl
         } else {
           diagnosticNotes.add(String.format("BM25 raw score: %.3f", bm25Score));
         }
-      } catch (Exception e) {
+      } catch (RuntimeException e) {
+        // Diagnostic boundary: report the failed step in the analysis instead of failing it.
+        logger().warn("BM25 diagnosis failed for image {}: {}", imageId, e.getMessage(), e);
         diagnosticNotes.add("Could not compute BM25 score: " + e.getMessage());
       }
     }

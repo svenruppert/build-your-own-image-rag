@@ -33,7 +33,9 @@ import com.vaadin.flow.component.textfield.NumberField;
 import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.router.HasDynamicTitle;
 import com.vaadin.flow.router.Route;
-import com.vaadin.flow.server.StreamResource;
+import com.vaadin.flow.server.streams.DownloadHandler;
+import com.vaadin.flow.server.streams.DownloadResponse;
+import com.svenruppert.dependencies.core.net.MediaType;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -664,7 +666,8 @@ public class SearchView
       state.stepProgress = 4;  // vector search done
       logger().info("Search returned {} results (vec={}, bm25={})",
                     sr.items().size(), sr.vectorCandidates(), sr.keywordCandidates());
-    } catch (Exception ex) {
+    } catch (RuntimeException ex) {
+      // Worker-thread boundary: the failure is reported to the UI through the poll state.
       logger().error("Search failed: {}", ex.getMessage(), ex);
       state.error = ex.getMessage();
     } finally {
@@ -696,7 +699,8 @@ public class SearchView
       state.stepProgress = 4;
       logger().info("Refine search returned {} results (vec={}, bm25={})",
                     sr.items().size(), sr.vectorCandidates(), sr.keywordCandidates());
-    } catch (Exception ex) {
+    } catch (RuntimeException ex) {
+      // Worker-thread boundary: the failure is reported to the UI through the poll state.
       logger().error("Refine search failed: {}", ex.getMessage(), ex);
       state.error = ex.getMessage();
     } finally {
@@ -1187,11 +1191,12 @@ public class SearchView
   }
 
   private Anchor buildCsvExportAnchor() {
-    StreamResource csvResource = new StreamResource("search-results.csv", () -> {
-      String csv = buildCsvContent(lastResults);
-      return new java.io.ByteArrayInputStream(csv.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    DownloadHandler csvDownload = DownloadHandler.fromInputStream(event -> {
+      byte[] csv = buildCsvContent(lastResults).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+      return new DownloadResponse(new java.io.ByteArrayInputStream(csv), "search-results.csv",
+                                  MediaType.TEXT_CSV.withCharsetUtf8(), csv.length);
     });
-    Anchor anchor = new Anchor(csvResource, getTranslation("search.export.csv"));
+    Anchor anchor = new Anchor(csvDownload, getTranslation("search.export.csv"));
     anchor.getElement().setAttribute("download", true);
     anchor.getStyle().set("font-size", "var(--lumo-font-size-s)");
     return anchor;

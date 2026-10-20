@@ -386,22 +386,23 @@ public class IngestionPipeline
       // Step 1: Store image file
       checkPauseOrCancelled();
       job.transition(JobStep.STORING);
-      StoredImage stored = imageStorageService.store(
+      Result<StoredImage, String> storeResult = imageStorageService.store(
           new ByteArrayInputStream(data), job.getFilename(), job.getMimeType());
+      if (!(storeResult instanceof Result.Success<StoredImage, String>(StoredImage stored))) {
+        storeResult.peekFailure(reason -> {
+          logger().error("[{}] Pipeline FAILED: {}", label, reason);
+          job.fail(reason);
+        });
+        return;
+      }
       UUID imageId = stored.imageId();
       Path imagePath = imageStorageService.resolvePath(imageId);
       logger().info("[{}] Stored → {}", label, imageId);
 
-      // Step 2: Extract EXIF / technical metadata
+      // Step 2: Extract EXIF / technical metadata (best effort, never fails)
       checkPauseOrCancelled();
       job.transition(JobStep.EXTRACTING_METADATA);
-      ExtractedMetadata extracted;
-      try {
-        extracted = metadataExtractionService.extract(imagePath);
-      } catch (Exception e) {
-        logger().warn("[{}] Metadata extraction failed: {}", label, e.getMessage());
-        extracted = ExtractedMetadata.minimal(0, 0);
-      }
+      ExtractedMetadata extracted = metadataExtractionService.extract(imagePath);
 
       ImageAsset asset = new ImageAsset(
           imageId,
@@ -439,8 +440,9 @@ public class IngestionPipeline
               extracted.latitude(), extracted.longitude());
           persistenceService.saveLocation(imageId, locationSummary);
           logger().debug("[{}] Location: {}", label, locationSummary.toHumanReadable());
-        } catch (Exception e) {
-          logger().warn("[{}] Geocoding failed: {}", label, e.getMessage());
+        } catch (RuntimeException e) {
+          // Geocoding is optional enrichment: a failure must not fail the whole job.
+          logger().warn("[{}] Geocoding failed: {}", label, e.getMessage(), e);
         }
       }
 
@@ -460,7 +462,9 @@ public class IngestionPipeline
       // clean for the next job.
       job.transition(JobStep.CANCELLED); // no-op if cancel() was already called
       logger().info("[{}] Job cancelled by interrupt", label);
-    } catch (Exception e) {
+    } catch (RuntimeException e) {
+      // Job boundary: any unexpected failure marks this job FAILED instead of killing
+      // the worker thread.
       logger().error("[{}] Pipeline FAILED: {}", label, e.getMessage(), e);
       job.fail(e.getMessage());
     }
@@ -502,7 +506,9 @@ public class IngestionPipeline
     } catch (InterruptedException e) {
       job.transition(JobStep.CANCELLED);
       logger().info("[{}] Cancelled by interrupt", label);
-    } catch (Exception e) {
+    } catch (RuntimeException e) {
+      // Job boundary: any unexpected failure marks this job FAILED instead of killing
+      // the worker thread.
       logger().error("[{}] FAILED: {}", label, e.getMessage(), e);
       job.fail(e.getMessage());
     }

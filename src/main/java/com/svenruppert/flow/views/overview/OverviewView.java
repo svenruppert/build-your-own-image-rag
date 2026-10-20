@@ -259,11 +259,10 @@ public class OverviewView
     Set<ImageAsset> selected = grid.getSelectedItems();
     int count = 0;
     for (ImageAsset asset : selected) {
-      try {
-        services.reprocessing().reprocess(asset.getId());
+      if (services.reprocessing().reprocess(asset.getId())
+          .peekFailure(error -> logger().warn("Failed to reprocess {}: {}", asset.getId(), error))
+          .isSuccess()) {
         count++;
-      } catch (Exception ex) {
-        logger().warn("Failed to reprocess {}: {}", asset.getId(), ex.getMessage());
       }
     }
     showNotification(getTranslation("overview.batch.reprocess.started", count), true);
@@ -707,16 +706,17 @@ public class OverviewView
   }
 
   private void startReprocess(ImageAsset asset) {
-    try {
-      services.reprocessing().reprocess(asset.getId());
-      showNotification(getTranslation("overview.reprocess.started", asset.getOriginalFilename()),
-                       true);
-    } catch (Exception ex) {
-      logger().error("Failed to queue reprocessing for {}: {}", asset.getId(), ex.getMessage(), ex);
-      Notification n = Notification.show(
-          getTranslation("overview.reprocess.error", ex.getMessage()),
-          5000, Notification.Position.MIDDLE);
-      n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+    switch (services.reprocessing().reprocess(asset.getId())) {
+      case Result.Success<Unit, String> done ->
+          showNotification(getTranslation("overview.reprocess.started", asset.getOriginalFilename()),
+                           true);
+      case Result.Failure<Unit, String>(String error) -> {
+        logger().error("Failed to queue reprocessing for {}: {}", asset.getId(), error);
+        Notification n = Notification.show(
+            getTranslation("overview.reprocess.error", error),
+            5000, Notification.Position.MIDDLE);
+        n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+      }
     }
   }
 

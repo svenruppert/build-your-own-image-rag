@@ -6,6 +6,7 @@ import com.vaadin.flow.server.VaadinServiceInitListener;
 import com.vaadin.flow.server.VaadinSession;
 
 import java.util.Locale;
+import java.io.IOException;
 
 /**
  * Vaadin hook that initializes the ServiceRegistry when the application starts.
@@ -22,7 +23,8 @@ public class AppInitializer
     try {
       ServiceRegistry.initialize();
       logger().info("Application initialized successfully.");
-    } catch (Exception e) {
+    } catch (IOException | RuntimeException e) {
+      // Startup boundary: log once with context, then abort the deployment.
       logger().error("Failed to initialize ServiceRegistry: {}", e.getMessage(), e);
       throw new RuntimeException("Application startup failed", e);
     }

@@ -138,7 +138,8 @@ public class VectorIndexMaintenance
         }
         count++;
       } catch (RuntimeException e) {
-        logger().warn("Could not re-embed image {}: {}", imageId, e.getMessage());
+        // Per-image boundary: one failing image must not abort a full re-embedding run.
+        logger().warn("Could not re-embed image {}: {}", imageId, e.getMessage(), e);
       }
     }
     logger().debug("Re-embedded {}/{} images", count, imageIds.size());

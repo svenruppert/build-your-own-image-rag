@@ -11,6 +11,7 @@ import com.svenruppert.imagerag.ollama.PromptTemplates;
 import com.svenruppert.imagerag.service.QueryUnderstandingService;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
 
 
 public class QueryUnderstandingServiceImpl
@@ -95,7 +96,7 @@ public class QueryUnderstandingServiceImpl
           plan.getEmbeddingText(), plan.getContainsPerson(), plan.getContainsVehicle(),
           plan.getContainsLicensePlate(), plan.getSeasonHint(), plan.getCategoryGroup());
 
-    } catch (Exception e) {
+    } catch (JacksonException e) {
       logger().warn("Failed to parse SearchPlan JSON: {}. Using raw query as fallback.",
                     e.getMessage());
     }

@@ -228,6 +228,7 @@ public final class SettingsService
       try {
         listener.accept(change);
       } catch (RuntimeException e) {
+        // Listener isolation: one failing listener must not stop the others or the change.
         logger().warn("Settings listener failed for '{}'", change.setting().key(), e);
       }
     }

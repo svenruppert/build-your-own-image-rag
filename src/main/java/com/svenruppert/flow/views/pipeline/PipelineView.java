@@ -1,5 +1,7 @@
 package com.svenruppert.flow.views.pipeline;
 
+import com.svenruppert.dependencies.core.logger.HasLogger;
+import java.util.concurrent.RejectedExecutionException;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.detail.DetailDialog;
 import com.svenruppert.flow.views.detail.ReprocessingDiffDialog;
@@ -62,7 +64,7 @@ import java.util.stream.IntStream;
 @Route(value = PipelineView.PATH, layout = MainLayout.class)
 public class PipelineView
     extends VerticalLayout
-    implements HasDynamicTitle {
+    implements HasDynamicTitle, HasLogger {
 
   public static final String PATH = "pipeline";
 
@@ -249,7 +251,10 @@ public class PipelineView
                                               Notification.show(getTranslation("pipeline.rebuild.vector.started"),
                                                                 4000, Notification.Position.BOTTOM_END)
                                                   .addThemeVariants(NotificationVariant.LUMO_SUCCESS)));
-      } catch (Exception ex) {
+      } catch (RuntimeException ex) {
+        // Worker-thread boundary: no Vaadin error handler runs here, so every failure is
+        // logged here and shown to the user.
+        logger().error("Vector index rebuild failed: {}", ex.getMessage(), ex);
         getUI().ifPresent(ui -> ui.access(() ->
                                               Notification.show(getTranslation("pipeline.rebuild.vector.failed", ex.getMessage()),
                                                                 6000, Notification.Position.MIDDLE)
@@ -280,7 +285,10 @@ public class PipelineView
                                               Notification.show(getTranslation("pipeline.rebuild.started"),
                                                                 3000, Notification.Position.BOTTOM_END)
                                                   .addThemeVariants(NotificationVariant.LUMO_SUCCESS)));
-      } catch (Exception ex) {
+      } catch (RuntimeException ex) {
+        // Worker-thread boundary: no Vaadin error handler runs here, so every failure is
+        // logged here and shown to the user.
+        logger().error("Keyword index rebuild failed: {}", ex.getMessage(), ex);
         getUI().ifPresent(ui -> ui.access(() ->
                                               Notification.show(getTranslation("pipeline.rebuild.failed", ex.getMessage()),
                                                                 5000, Notification.Position.MIDDLE)
@@ -688,7 +696,9 @@ public class PipelineView
       Notification.show(getTranslation("pipeline.retry.started", job.getFilename()),
                         3000, Notification.Position.BOTTOM_END)
           .addThemeVariants(NotificationVariant.LUMO_SUCCESS);
-    } catch (Exception e) {
+    } catch (IllegalStateException | RejectedExecutionException e) {
+      // Expected: job not FAILED, original file gone, or pipeline shut down.
+      logger().warn("Retry of job {} rejected: {}", job.getJobId(), e.getMessage());
       Notification.show(getTranslation("pipeline.retry.failed", e.getMessage()),
                         5000, Notification.Position.MIDDLE)
           .addThemeVariants(NotificationVariant.LUMO_ERROR);

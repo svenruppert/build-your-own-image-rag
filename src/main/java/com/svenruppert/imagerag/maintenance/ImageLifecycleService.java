@@ -56,15 +56,17 @@ public class ImageLifecycleService
   public Result<Unit, String> delete(UUID imageId, String reason) {
     String filename = persistenceService.findImage(imageId)
         .map(ImageAsset::getOriginalFilename).orElse(null);
-    CheckedExecutor removal = () -> {
+    CheckedExecutor indexRemoval = () -> {
       vectorIndexService.remove(imageId);
       keywordIndexService.remove(imageId);
       previewService.deletePreviewCache(imageId);
-      imageStorageService.delete(imageId);
-      persistenceService.deleteImage(imageId);
     };
-    return removal.execute()
-        .mapError(t -> t.getClass().getSimpleName() + ": " + t.getMessage())
+    CheckedExecutor recordRemoval = () -> persistenceService.deleteImage(imageId);
+    return indexRemoval.execute()
+        .mapError(ImageLifecycleService::describe)
+        // The stored record is only removed once the image file is gone.
+        .flatMap(done -> imageStorageService.delete(imageId))
+        .flatMap(done -> recordRemoval.execute().mapError(ImageLifecycleService::describe))
         .peek(done -> {
           auditService.log(AuditAction.PERMANENT_DELETE, imageId, filename, reason);
           logger().info("Permanently deleted image imageId={}", imageId);
@@ -82,16 +84,28 @@ public class ImageLifecycleService
    * </ol>
    * <p>The vector index entry survives archive/restore cycles because soft delete does
    * not remove it.
+   *
+   * @param reason language-independent reason stored in the audit log
+   * @return success, or a failure carrying the reason why the image could not be restored
    */
-  public void restore(UUID imageId, String reason) {
-    persistenceService.restoreImage(imageId);
-    String filename = persistenceService.findImage(imageId)
-        .map(ImageAsset::getOriginalFilename).orElse(null);
-    auditService.log(AuditAction.RESTORE, imageId, filename, reason);
-    persistenceService.findImage(imageId).ifPresent(asset -> {
-      if (keywordIndexMaintenance.reindex(asset)) {
-        logger().info("Re-indexed keyword entry for restored image imageId={}", imageId);
-      }
-    });
+  public Result<Unit, String> restore(UUID imageId, String reason) {
+    CheckedExecutor restoration = () -> persistenceService.restoreImage(imageId);
+    return restoration.execute()
+        .mapError(ImageLifecycleService::describe)
+        .peek(done -> {
+          String filename = persistenceService.findImage(imageId)
+              .map(ImageAsset::getOriginalFilename).orElse(null);
+          auditService.log(AuditAction.RESTORE, imageId, filename, reason);
+          persistenceService.findImage(imageId).ifPresent(asset -> {
+            if (keywordIndexMaintenance.reindex(asset)) {
+              logger().info("Re-indexed keyword entry for restored image imageId={}", imageId);
+            }
+          });
+        })
+        .peekFailure(error -> logger().error("Restore failed for {}: {}", imageId, error));
+  }
+
+  private static String describe(Throwable error) {
+    return error.getClass().getSimpleName() + ": " + error.getMessage();
   }
 }

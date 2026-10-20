@@ -1,5 +1,8 @@
 package com.svenruppert.flow.views.detail;
 
+import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.functional.result.Unit;
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ImagePreviewFactory;
 import com.svenruppert.flow.views.shared.MarkdownRenderer;
@@ -27,7 +30,8 @@ import java.util.ArrayList;
 import java.util.Optional;
 
 public class DetailDialog
-    extends Dialog {
+    extends Dialog
+    implements HasLogger {
 
   private static final DateTimeFormatter DATE_FMT =
       DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm").withZone(ZoneId.systemDefault());
@@ -442,17 +446,20 @@ public class DetailDialog
   }
 
   private void reprocessAndClose(ImageAsset asset) {
-    try {
-      services.reprocessing().reprocess(asset.getId());
-      Notification n = Notification.show(
-          getTranslation("detail.reprocess.started", asset.getOriginalFilename()),
-          5000, Notification.Position.BOTTOM_END);
-      n.addThemeVariants(NotificationVariant.LUMO_PRIMARY);
-      close();
-    } catch (Exception ex) {
-      Notification n = Notification.show(
-          getTranslation("detail.reprocess.failed", ex.getMessage()), 5000, Notification.Position.MIDDLE);
-      n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+    switch (services.reprocessing().reprocess(asset.getId())) {
+      case Result.Success<Unit, String> done -> {
+        Notification n = Notification.show(
+            getTranslation("detail.reprocess.started", asset.getOriginalFilename()),
+            5000, Notification.Position.BOTTOM_END);
+        n.addThemeVariants(NotificationVariant.LUMO_PRIMARY);
+        close();
+      }
+      case Result.Failure<Unit, String>(String error) -> {
+        logger().warn("Reprocessing {} not started: {}", asset.getId(), error);
+        Notification n = Notification.show(
+            getTranslation("detail.reprocess.failed", error), 5000, Notification.Position.MIDDLE);
+        n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+      }
     }
   }
 }

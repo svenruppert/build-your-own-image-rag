@@ -1,5 +1,8 @@
 package com.svenruppert.imagerag.service;
 
+import com.svenruppert.functional.result.Result;
+import com.svenruppert.functional.result.Unit;
+
 import java.util.UUID;
 
 /**
@@ -23,7 +26,8 @@ public interface ReprocessingService {
    * The call returns immediately; processing happens asynchronously.
    *
    * @param imageId UUID of an existing, stored {@link com.svenruppert.imagerag.domain.ImageAsset}
-   * @throws IllegalArgumentException if the image does not exist in the store
+   * @return success once the job is queued, or a failure carrying the reason (image not
+   * found, pipeline not accepting jobs)
    */
-  void reprocess(UUID imageId);
+  Result<Unit, String> reprocess(UUID imageId);
 }

@@ -16,6 +16,8 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
+import java.io.IOException;
+import tools.jackson.core.JacksonException;
 
 /**
  * Reverse geocoding via Nominatim (OSM) — no API key required, rate-limited to 1 req/s.
@@ -105,7 +107,7 @@ public class ReverseGeocodingServiceImpl
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       return fallback(latitude, longitude);
-    } catch (Exception e) {
+    } catch (IOException | JacksonException e) {
       logger().error("Reverse geocoding failed for ({}, {}): {}", latitude, longitude, e.getMessage());
       return fallback(latitude, longitude);
     }

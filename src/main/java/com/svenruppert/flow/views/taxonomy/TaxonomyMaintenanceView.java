@@ -1,5 +1,8 @@
 package com.svenruppert.flow.views.taxonomy;
 
+import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.functional.result.Unit;
+import com.svenruppert.functional.result.Result;
 import com.svenruppert.imagerag.settings.SettingsService;
 import com.svenruppert.imagerag.settings.Settings;
 import com.svenruppert.flow.MainLayout;
@@ -64,7 +67,7 @@ import java.util.stream.Collectors;
 @Route(value = TaxonomyMaintenanceView.PATH, layout = MainLayout.class)
 public class TaxonomyMaintenanceView
     extends VerticalLayout
-    implements BeforeEnterObserver, HasDynamicTitle {
+    implements BeforeEnterObserver, HasDynamicTitle, HasLogger {
 
   public static final String PATH = "taxonomy";
 
@@ -652,7 +655,10 @@ public class TaxonomyMaintenanceView
           refreshClusterGrid();
           clusterRunning = false;
         });
-      } catch (Exception ex) {
+      } catch (RuntimeException ex) {
+        // Worker-thread boundary: no Vaadin error handler runs here, so every failure is
+        // logged here and shown to the user.
+        logger().error("Cluster discovery failed: {}", ex.getMessage(), ex);
         ui.access(() -> {
           clusterProgress.setVisible(false);
           clusterStatus.setText(getTranslation("cluster.error", ex.getMessage()));
@@ -1072,7 +1078,10 @@ public class TaxonomyMaintenanceView
           setControlsEnabled(true);
           analysisRunning = false;
         });
-      } catch (Exception e) {
+      } catch (RuntimeException e) {
+        // Worker-thread boundary: no Vaadin error handler runs here, so every failure is
+        // logged here and shown to the user.
+        logger().error("Taxonomy analysis failed: {}", e.getMessage(), e);
         ui.access(() -> {
           progressSection.setVisible(false);
           showNotification(getTranslation("taxonomy.analyze.error", e.getMessage()), true);
@@ -1196,9 +1205,13 @@ public class TaxonomyMaintenanceView
     confirm.setCancelText(getTranslation("common.cancel"));
     confirm.setConfirmText(getTranslation("taxonomy.action.apply"));
     confirm.addConfirmListener(e -> {
-      suggestionService.apply(s.getId());
+      switch (suggestionService.apply(s.getId())) {
+        case Result.Success<Unit, String> done ->
+            showNotification(getTranslation("taxonomy.applied"), false);
+        case Result.Failure<Unit, String>(String error) ->
+            showNotification(getTranslation("taxonomy.apply.failed", error), true);
+      }
       refreshAllGrids();
-      showNotification(getTranslation("taxonomy.applied"), false);
     });
     confirm.open();
   }

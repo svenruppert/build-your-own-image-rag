@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import tools.jackson.core.JacksonException;
 
 /**
  * Heuristic + optional-LLM taxonomy analysis.
@@ -108,7 +109,8 @@ public class TaxonomyAnalysisServiceImpl
       notify(progress, progressCallback);
 
       return Collections.unmodifiableList(suggestions);
-    } catch (Exception e) {
+    } catch (RuntimeException e) {
+      // Record the failure in the progress shown to the user, then propagate it.
       progress.setFailed(e.getMessage());
       notify(progress, progressCallback);
       throw e;
@@ -134,7 +136,8 @@ public class TaxonomyAnalysisServiceImpl
       notify(progress, progressCallback);
 
       return Collections.unmodifiableList(suggestions);
-    } catch (Exception e) {
+    } catch (RuntimeException e) {
+      // Record the failure in the progress shown to the user, then propagate it.
       progress.setFailed(e.getMessage());
       notify(progress, progressCallback);
       throw e;
@@ -274,8 +277,9 @@ public class TaxonomyAnalysisServiceImpl
     if (cb != null) {
       try {
         cb.accept(progress);
-      } catch (Exception e) {
-        logger().warn("Progress callback threw: {}", e.getMessage());
+      } catch (RuntimeException e) {
+        // Listener isolation: a failing UI callback must not abort the analysis.
+        logger().warn("Progress callback threw: {}", e.getMessage(), e);
       }
     }
   }
@@ -407,7 +411,7 @@ public class TaxonomyAnalysisServiceImpl
                                                          1.0 - primaryConf, rationale, MODEL_NAME));
       }
 
-    } catch (Exception e) {
+    } catch (JacksonException e) {
       logger().warn("LLM re-evaluation failed for image {}: {}", imageId, e.getMessage());
     }
     return Optional.empty();

@@ -153,7 +153,12 @@ public class OllamaClient
           .build();
       HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
       return response.statusCode() == HttpStatus.OK.code();
-    } catch (Exception e) {
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      logger().warn("Ollama availability check interrupted");
+      return false;
+    } catch (IOException | IllegalArgumentException e) {
+      // IllegalArgumentException: malformed host/port configuration in the base URL.
       logger().warn("Ollama not reachable at {}: {}", config.baseUrl(), e.getMessage());
       return false;
     }

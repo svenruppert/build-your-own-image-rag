@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.shared;
 
+import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.imagerag.domain.ImageAsset;
 import com.svenruppert.imagerag.domain.SearchTuningConfig;
 import com.svenruppert.imagerag.dto.WhyNotFoundAnalysis;
@@ -30,7 +31,8 @@ import java.util.UUID;
  * All visible strings are internationalised via Vaadin's {@code getTranslation()}.
  */
 public class WhyNotFoundDialog
-    extends Dialog {
+    extends Dialog
+    implements HasLogger {
 
   private final ViewServices services;
   private final WhyNotFoundService whyNotFoundService;
@@ -175,7 +177,9 @@ public class WhyNotFoundDialog
     WhyNotFoundAnalysis analysis;
     try {
       analysis = whyNotFoundService.analyze(imageId, query, config);
-    } catch (Exception e) {
+    } catch (RuntimeException e) {
+      // Shown inline in the dialog instead of the generic session error handler.
+      logger().warn("Why-not-found analysis failed for {}: {}", imageId, e.getMessage(), e);
       Span err = new Span(getTranslation("wnf.error", e.getMessage()));
       err.getStyle().set("color", "var(--lumo-error-color)")
           .set("font-size", "var(--lumo-font-size-s)");

@@ -1,5 +1,7 @@
 package com.svenruppert.imagerag.service;
 
+import com.svenruppert.functional.result.Result;
+import com.svenruppert.functional.result.Unit;
 import com.svenruppert.imagerag.domain.TaxonomySuggestion;
 import com.svenruppert.imagerag.domain.enums.SuggestionStatus;
 
@@ -29,10 +31,12 @@ public interface TaxonomySuggestionService {
   /**
    * Applies a suggestion: mutates the relevant domain objects, marks the suggestion
    * {@link SuggestionStatus#APPLIED}, and persists all changes.
-   * <p>The suggestion must be in OPEN or ACCEPTED state; REJECTED and APPLIED suggestions
-   * are silently skipped.
+   * <p>The suggestion must be in OPEN or ACCEPTED state.
+   *
+   * @return success once applied, or a failure carrying the reason (not found, already
+   * REJECTED or APPLIED, error while changing the domain objects)
    */
-  void apply(UUID suggestionId);
+  Result<Unit, String> apply(UUID suggestionId);
 
   /**
    * Bulk-accept a list of suggestions.

@@ -61,8 +61,10 @@ public class KeywordIndexMaintenance
           persistenceService.findOcrResult(asset.getId()).orElse(null)));
       return true;
     } catch (RuntimeException e) {
+      // Per-image boundary: callers re-index many images; one bad document (for example a
+      // closed or rejected Lucene write) must not abort the whole run.
       logger().warn("Could not index keyword document for image {}: {}",
-                    asset.getId(), e.getMessage());
+                    asset.getId(), e.getMessage(), e);
       return false;
     }
   }

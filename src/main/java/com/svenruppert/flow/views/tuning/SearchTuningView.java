@@ -572,7 +572,10 @@ public class SearchTuningView
           runProgress.setVisible(false);
           running = false;
         });
-      } catch (Exception ex) {
+      } catch (RuntimeException ex) {
+        // Worker-thread boundary: no Vaadin error handler runs here, so every failure is
+        // logged here and shown to the user.
+        logger().error("Tuning run failed: {}", ex.getMessage(), ex);
         ui.access(() -> {
           String msg = getTranslation("tuning.error", ex.getMessage());
           summaryBar.setText(msg);

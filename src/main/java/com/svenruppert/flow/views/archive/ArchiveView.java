@@ -246,19 +246,20 @@ public class ArchiveView
   }
 
   private void restoreImage(ImageAsset asset) {
-    try {
-      services.restoreImage(asset.getId(), "Restored from archive view");
-      Notification n = Notification.show(
-          getTranslation("archive.restore.success", asset.getOriginalFilename()),
-          3000, Notification.Position.BOTTOM_END);
-      n.addThemeVariants(NotificationVariant.LUMO_SUCCESS);
-      loadData();
-    } catch (Exception ex) {
-      logger().error("Restore failed for {}: {}", asset.getId(), ex.getMessage(), ex);
-      Notification n = Notification.show(
-          getTranslation("archive.restore.error", ex.getMessage()),
-          5000, Notification.Position.MIDDLE);
-      n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+    switch (services.restoreImage(asset.getId(), "Restored from archive view")) {
+      case Result.Success<Unit, String> done -> {
+        Notification n = Notification.show(
+            getTranslation("archive.restore.success", asset.getOriginalFilename()),
+            3000, Notification.Position.BOTTOM_END);
+        n.addThemeVariants(NotificationVariant.LUMO_SUCCESS);
+        loadData();
+      }
+      case Result.Failure<Unit, String>(String error) -> {
+        Notification n = Notification.show(
+            getTranslation("archive.restore.error", error),
+            5000, Notification.Position.MIDDLE);
+        n.addThemeVariants(NotificationVariant.LUMO_ERROR);
+      }
     }
   }
 
@@ -313,11 +314,8 @@ public class ArchiveView
     Set<ImageAsset> selected = new java.util.HashSet<>(grid.getSelectedItems());
     int succeeded = 0;
     for (ImageAsset asset : selected) {
-      try {
-        services.restoreImage(asset.getId(), "Batch restored from archive view");
+      if (services.restoreImage(asset.getId(), "Batch restored from archive view").isSuccess()) {
         succeeded++;
-      } catch (Exception ex) {
-        logger().warn("Batch restore failed for {}: {}", asset.getId(), ex.getMessage());
       }
     }
     Notification n = Notification.show(

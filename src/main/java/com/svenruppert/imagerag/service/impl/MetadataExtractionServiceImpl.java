@@ -1,8 +1,10 @@
 package com.svenruppert.imagerag.service.impl;
 
 import com.drew.imaging.ImageMetadataReader;
+import com.drew.imaging.ImageProcessingException;
 import com.drew.lang.GeoLocation;
 import com.drew.metadata.Metadata;
+import com.drew.metadata.MetadataException;
 import com.drew.metadata.exif.ExifIFD0Directory;
 import com.drew.metadata.exif.ExifSubIFDDirectory;
 import com.drew.metadata.exif.GpsDirectory;
@@ -22,8 +24,7 @@ public class MetadataExtractionServiceImpl
     implements MetadataExtractionService, HasLogger {
 
   @Override
-  public ExtractedMetadata extract(Path imagePath)
-      throws IOException {
+  public ExtractedMetadata extract(Path imagePath) {
     int width = 0;
     int height = 0;
     boolean exifPresent = false;
@@ -40,8 +41,10 @@ public class MetadataExtractionServiceImpl
         width = img.getWidth();
         height = img.getHeight();
       }
-    } catch (Exception e) {
-      logger().warn("ImageIO could not read dimensions for {}: {}", imagePath.getFileName(), e.getMessage());
+    } catch (IOException | RuntimeException e) {
+      // Untrusted file content: image decoder plugins report malformed input with
+      // arbitrary runtime exceptions, so both are treated as "dimensions unknown".
+      logger().warn("ImageIO could not read dimensions for {}: {}", imagePath.getFileName(), e.getMessage(), e);
     }
 
     // Read EXIF metadata via metadata-extractor
@@ -83,8 +86,9 @@ public class MetadataExtractionServiceImpl
         }
       }
 
-    } catch (Exception e) {
-      logger().debug("EXIF extraction skipped for {}: {}", imagePath.getFileName(), e.getMessage());
+    } catch (ImageProcessingException | MetadataException | IOException e) {
+      // Formats without EXIF support are expected; the image simply has no metadata.
+      logger().debug("EXIF extraction skipped for {}: {}", imagePath.getFileName(), e.getMessage(), e);
     }
 
     return new ExtractedMetadata(width, height, exifPresent, gpsPresent,

@@ -1,6 +1,9 @@
 package com.svenruppert.imagerag.service.impl;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.functional.result.Result;
+import com.svenruppert.functional.result.Unit;
+import com.svenruppert.functional.result.functions.CheckedExecutor;
 import com.svenruppert.imagerag.domain.CategoryAssignmentNormalizer;
 import com.svenruppert.imagerag.domain.CategoryMetadata;
 import com.svenruppert.imagerag.domain.SemanticAnalysis;
@@ -57,26 +60,27 @@ public class TaxonomySuggestionServiceImpl
   }
 
   @Override
-  public void apply(UUID suggestionId) {
+  public Result<Unit, String> apply(UUID suggestionId) {
     Optional<TaxonomySuggestion> opt = persistenceService.findSuggestion(suggestionId);
     if (opt.isEmpty()) {
       logger().warn("Suggestion {} not found — cannot apply", suggestionId);
-      return;
+      return Result.failure("Suggestion not found: " + suggestionId);
     }
     TaxonomySuggestion s = opt.get();
     if (s.getStatus() == SuggestionStatus.REJECTED || s.getStatus() == SuggestionStatus.APPLIED) {
       logger().debug("Skipping suggestion {} (status={})", suggestionId, s.getStatus());
-      return;
+      return Result.failure("Suggestion is already " + s.getStatus());
     }
-    try {
+    CheckedExecutor application = () -> {
       applyInternal(s);
       s.setStatus(SuggestionStatus.APPLIED);
       s.setAppliedAt(Instant.now());
       persistenceService.saveTaxonomySuggestion(s);
-      logger().info("Applied taxonomy suggestion {} (type={})", suggestionId, s.getType());
-    } catch (Exception e) {
-      logger().error("Failed to apply suggestion {}: {}", suggestionId, e.getMessage(), e);
-    }
+    };
+    return application.execute()
+        .mapError(error -> error.getClass().getSimpleName() + ": " + error.getMessage())
+        .peek(done -> logger().info("Applied taxonomy suggestion {} (type={})", suggestionId, s.getType()))
+        .peekFailure(error -> logger().error("Failed to apply suggestion {}: {}", suggestionId, error));
   }
 
   // ── Bulk operations ───────────────────────────────────────────────────────
@@ -101,8 +105,8 @@ public class TaxonomySuggestionServiceImpl
       Optional<TaxonomySuggestion> opt = persistenceService.findSuggestion(id);
       if (opt.isPresent()) {
         SuggestionStatus status = opt.get().getStatus();
-        if (status == SuggestionStatus.OPEN || status == SuggestionStatus.ACCEPTED) {
-          apply(id);
+        if ((status == SuggestionStatus.OPEN || status == SuggestionStatus.ACCEPTED)
+            && apply(id).isSuccess()) {
           applied++;
         }
       }

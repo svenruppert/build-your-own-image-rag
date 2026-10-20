@@ -1,17 +1,22 @@
 package com.svenruppert.imagerag.service.impl;
 
 import com.svenruppert.dependencies.core.logger.HasLogger;
+import com.svenruppert.functional.result.Result;
+import com.svenruppert.functional.result.Unit;
+import com.svenruppert.functional.result.functions.CheckedExecutor;
+import com.svenruppert.functional.result.functions.CheckedSupplier;
 import com.svenruppert.imagerag.dto.StoredImage;
 import com.svenruppert.imagerag.service.ImageStorageService;
 
-import java.util.Optional;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.Optional;
 import java.util.UUID;
 
 public class ImageStorageServiceImpl
@@ -27,15 +32,15 @@ public class ImageStorageServiceImpl
   }
 
   @Override
-  public StoredImage store(InputStream inputStream, String originalFilename, String mimeType)
-      throws IOException {
+  public Result<StoredImage, String> store(InputStream inputStream, String originalFilename,
+                                           String mimeType) {
     UUID imageId = UUID.randomUUID();
 
     // Write to a temp file first to verify the content and compute the hash, then move.
     // The stored extension is derived from the detected content format, never from the
     // client-supplied filename, so it cannot carry path separators or unexpected types.
     Path tempPath = storageRoot.resolve(imageId + ".tmp");
-    try {
+    CheckedSupplier<StoredImage> write = () -> {
       Files.copy(inputStream, tempPath, StandardCopyOption.REPLACE_EXISTING);
       String extension = detectImageExtension(tempPath).orElseThrow(() -> new IOException(
           "Unsupported or invalid image content (declared type: " + mimeType + ")"));
@@ -44,24 +49,23 @@ public class ImageStorageServiceImpl
       String sha256 = computeSha256(tempPath);
       Files.move(tempPath, targetPath, StandardCopyOption.REPLACE_EXISTING);
       long fileSize = Files.size(targetPath);
-
-      logger().info("Stored image {} -> {} ({} bytes)", originalFilename, storedFilename, fileSize);
       return new StoredImage(imageId, originalFilename, storedFilename, targetPath, fileSize, sha256);
-
-    } catch (Exception e) {
-      Files.deleteIfExists(tempPath);
-      throw new IOException("Failed to store image: " + originalFilename, e);
-    }
+    };
+    return write.get()
+        .peekFailure(error -> deleteTempFile(tempPath))
+        .mapError(error -> "Failed to store image " + originalFilename + ": " + describe(error))
+        .peek(stored -> logger().info("Stored image {} -> {} ({} bytes)",
+                                      originalFilename, stored.storedFilename(), stored.fileSize()));
   }
 
   @Override
-  public InputStream load(UUID imageId)
-      throws IOException {
+  public Result<InputStream, String> load(UUID imageId) {
     Path path = resolvePath(imageId);
     if (!Files.exists(path)) {
-      throw new IOException("Image not found for id: " + imageId);
+      return Result.failure("Image not found for id: " + imageId);
     }
-    return Files.newInputStream(path);
+    CheckedSupplier<InputStream> open = () -> Files.newInputStream(path);
+    return open.get().mapError(error -> "Could not open image " + imageId + ": " + describe(error));
   }
 
   @Override
@@ -87,21 +91,37 @@ public class ImageStorageServiceImpl
       Path normalizedRoot = storageRoot.toAbsolutePath().normalize();
       Path normalizedCandidate = candidate.toAbsolutePath().normalize();
       return normalizedCandidate.startsWith(normalizedRoot);
-    } catch (Exception e) {
+    } catch (SecurityException e) {
+      // Treat an unresolvable path as outside the root: deny rather than guess.
+      logger().warn("Cannot resolve {} against the storage root: {}", candidate, e.getMessage());
       return false;
     }
   }
 
   @Override
-  public void delete(UUID imageId)
-      throws IOException {
+  public Result<Unit, String> delete(UUID imageId) {
     Path path = resolvePath(imageId);
-    boolean deleted = Files.deleteIfExists(path);
-    if (deleted) {
-      logger().info("Deleted image file for imageId={}", imageId);
-    } else {
-      logger().warn("Image file not found for deletion, imageId={}", imageId);
-    }
+    CheckedSupplier<Boolean> removal = () -> Files.deleteIfExists(path);
+    return removal.get()
+        .mapError(error -> "Could not delete image file " + path.getFileName() + ": " + describe(error))
+        .map(deleted -> {
+          if (deleted) {
+            logger().info("Deleted image file for imageId={}", imageId);
+          } else {
+            logger().warn("Image file not found for deletion, imageId={}", imageId);
+          }
+          return Unit.INSTANCE;
+        });
+  }
+
+  private void deleteTempFile(Path tempPath) {
+    CheckedExecutor removal = () -> Files.deleteIfExists(tempPath);
+    removal.execute().peekFailure(error -> logger().warn(
+        "Could not delete temp file {}: {}", tempPath, describe(error)));
+  }
+
+  private static String describe(Throwable error) {
+    return error.getClass().getSimpleName() + ": " + error.getMessage();
   }
 
   /**
@@ -140,13 +160,12 @@ public class ImageStorageServiceImpl
 
   private String computeSha256(Path path)
       throws IOException {
+    byte[] bytes = Files.readAllBytes(path);
     try {
-      MessageDigest digest = MessageDigest.getInstance("SHA-256");
-      byte[] bytes = Files.readAllBytes(path);
-      byte[] hash = digest.digest(bytes);
-      return HexFormat.of().formatHex(hash);
-    } catch (Exception e) {
-      throw new IOException("SHA-256 computation failed", e);
+      return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    } catch (NoSuchAlgorithmException e) {
+      // Every Java platform is required to provide SHA-256.
+      throw new IllegalStateException("SHA-256 not available", e);
     }
   }
 }

@@ -525,7 +525,8 @@ public class MigrationCenterView
           2500, Notification.Position.BOTTOM_START);
       n.addThemeVariants(NotificationVariant.LUMO_SUCCESS);
       refreshPromptSelectors();
-    } catch (Exception ex) {
+    } catch (IllegalArgumentException ex) {
+      // Expected: the draft failed template validation (for example a missing %s).
       logger().warn("Failed to save prompt draft: {}", ex.getMessage());
       Notification.show(getTranslation("migration.editor.error.save", ex.getMessage()),
                         3000, Notification.Position.MIDDLE);
@@ -627,11 +628,22 @@ public class MigrationCenterView
             testProgress.setVisible(false);
             resultArea.setValue(r != null ? r : getTranslation("migration.test.no.result"));
           });
-        } catch (Exception ex) {
-          logger().warn("Prompt test failed: {}", ex.getMessage());
+        } catch (InterruptedException ex) {
+          Thread.currentThread().interrupt();
+          logger().warn("Prompt test interrupted");
           ui.access(() -> {
             testProgress.setVisible(false);
             resultArea.setValue(getTranslation("migration.test.error", ex.getMessage()));
+          });
+        } catch (java.util.concurrent.ExecutionException | RuntimeException ex) {
+          // Worker-thread boundary: no Vaadin error handler runs here, so every failure is
+          // logged here and shown to the user.
+          Throwable cause = ex instanceof java.util.concurrent.ExecutionException && ex.getCause() != null
+              ? ex.getCause() : ex;
+          logger().warn("Prompt test failed: {}", cause.getMessage(), cause);
+          ui.access(() -> {
+            testProgress.setVisible(false);
+            resultArea.setValue(getTranslation("migration.test.error", cause.getMessage()));
           });
         } finally {
           exec.shutdownNow();
@@ -701,7 +713,9 @@ public class MigrationCenterView
           2500, Notification.Position.BOTTOM_START);
       n.addThemeVariants(NotificationVariant.LUMO_SUCCESS);
       refreshPromptSelectors();
-    } catch (Exception ex) {
+    } catch (IllegalArgumentException ex) {
+      // Expected: the selected version no longer exists.
+      logger().warn("Activating prompt version {} failed: {}", v.getId(), ex.getMessage());
       Notification.show(getTranslation("migration.prompt.error.activate", ex.getMessage()),
                         3000, Notification.Position.MIDDLE);
     }
@@ -721,7 +735,9 @@ public class MigrationCenterView
           2500, Notification.Position.BOTTOM_START);
       n.addThemeVariants(NotificationVariant.LUMO_SUCCESS);
       refreshPromptSelectors();
-    } catch (Exception ex) {
+    } catch (IllegalArgumentException ex) {
+      // Expected: the selected version no longer exists.
+      logger().warn("Rolling back to prompt version {} failed: {}", v.getId(), ex.getMessage());
       Notification.show(getTranslation("migration.prompt.error.rollback", ex.getMessage()),
                         3000, Notification.Position.MIDDLE);
     }
@@ -794,8 +810,10 @@ public class MigrationCenterView
           n.addThemeVariants(NotificationVariant.LUMO_SUCCESS);
           rebuilding = false;
         });
-      } catch (Exception ex) {
-        logger().warn("Vector rebuild failed: {}", ex.getMessage());
+      } catch (RuntimeException ex) {
+        // Worker-thread boundary: no Vaadin error handler runs here, so every failure is
+        // logged here and shown to the user.
+        logger().warn("Vector rebuild failed: {}", ex.getMessage(), ex);
         ui.access(() -> {
           rebuildProgress.setVisible(false);
           rebuildStatus.setText(getTranslation("migration.rebuild.error", ex.getMessage()));
@@ -832,8 +850,10 @@ public class MigrationCenterView
           n.addThemeVariants(NotificationVariant.LUMO_SUCCESS);
           rebuilding = false;
         });
-      } catch (Exception ex) {
-        logger().warn("Keyword rebuild failed: {}", ex.getMessage());
+      } catch (RuntimeException ex) {
+        // Worker-thread boundary: no Vaadin error handler runs here, so every failure is
+        // logged here and shown to the user.
+        logger().warn("Keyword rebuild failed: {}", ex.getMessage(), ex);
         ui.access(() -> {
           rebuildProgress.setVisible(false);
           rebuildStatus.setText(getTranslation("migration.rebuild.error", ex.getMessage()));

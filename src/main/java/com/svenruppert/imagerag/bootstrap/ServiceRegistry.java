@@ -245,28 +245,22 @@ public class ServiceRegistry
     ServiceRegistry sr = serviceRegistry;
     serviceRegistry = null;          // clear first so getInstance() fails fast during teardown
 
-    try {
-      sr.ingestionPipeline.shutdown();
-    } catch (Exception e) {
-      sr.logger().warn("Error shutting down ingestion pipeline: {}", e.getMessage());
-    }
-    try {
-      sr.searchExecutor.shutdownNow();
-    } catch (Exception e) {
-      sr.logger().warn("Error shutting down search executor: {}", e.getMessage());
-    }
-    try {
-      sr.keywordIndexService.close();
-    } catch (Exception e) {
-      sr.logger().warn("Error closing Lucene keyword index: {}", e.getMessage());
-    }
+    sr.shutdownStep("ingestion pipeline", sr.ingestionPipeline::shutdown);
+    sr.shutdownStep("search executor", sr.searchExecutor::shutdownNow);
+    sr.shutdownStep("Lucene keyword index", sr.keywordIndexService::close);
     SettingsService.getInstance().detach();
-    try {
-      sr.persistenceService.shutdown();
-    } catch (Exception e) {
-      sr.logger().warn("Error shutting down EclipseStore: {}", e.getMessage());
-    }
+    sr.shutdownStep("EclipseStore", sr.persistenceService::shutdown);
     sr.logger().info("ServiceRegistry shut down cleanly.");
+  }
+
+  private void shutdownStep(String component, Runnable step) {
+    try {
+      step.run();
+    } catch (RuntimeException e) {
+      // Teardown boundary: one failing component must not prevent the others from
+      // being released (file locks, executor threads).
+      logger().warn("Error shutting down {}: {}", component, e.getMessage(), e);
+    }
   }
 
   private static ExecutorService buildSearchExecutor(int parallelism) {
@@ -289,10 +283,10 @@ public class ServiceRegistry
 
   /**
    * Restores a previously archived (soft-deleted) image to the active dataset.
-   * See {@link ImageLifecycleService#restore(UUID)}.
+   * See {@link ImageLifecycleService#restore(UUID, String)}.
    */
-  public void restoreImage(UUID imageId, String reason) {
-    imageLifecycleService.restore(imageId, reason);
+  public Result<Unit, String> restoreImage(UUID imageId, String reason) {
+    return imageLifecycleService.restore(imageId, reason);
   }
 
   /**

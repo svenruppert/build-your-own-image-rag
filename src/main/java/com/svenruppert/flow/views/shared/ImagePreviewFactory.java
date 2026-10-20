@@ -69,8 +69,9 @@ public class ImagePreviewFactory
           .set("border-radius", "4px")
           .set("display", "block");
       return image;
-    } catch (Exception e) {
-      logger().debug("Could not build image preview for {}", asset.getId(), e);
+    } catch (RuntimeException e) {
+      // Renderer boundary: one broken image must not break the whole grid or gallery.
+      logger().warn("Could not build image preview for {}", asset.getId(), e);
       return placeholder();
     }
   }

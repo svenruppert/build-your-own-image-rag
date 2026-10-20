@@ -1,5 +1,6 @@
 package com.svenruppert.flow.views.multimodal;
 
+import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.flow.MainLayout;
 import com.svenruppert.flow.views.shared.Formats;
 import com.svenruppert.flow.views.shared.ResultExplainabilityPanel;
@@ -56,7 +57,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Route(value = MultimodalSearchView.PATH, layout = MainLayout.class)
 public class MultimodalSearchView
     extends VerticalLayout
-    implements HasDynamicTitle {
+    implements HasDynamicTitle, HasLogger {
 
   public static final String PATH = "multimodal";
 
@@ -433,7 +434,10 @@ public class MultimodalSearchView
       List<MultimodalSearchResult> results;
       try {
         results = searchService.multimodalSearch(cfg);
-      } catch (Exception e) {
+      } catch (RuntimeException e) {
+        // Worker-thread boundary: no Vaadin error handler runs here, so every failure is
+        // logged here and shown to the user.
+        logger().error("Multimodal search failed: {}", e.getMessage(), e);
         ui.access(() -> {
           progressBar.setVisible(false);
           statusSpan.setText(getTranslation("tuning.error", e.getMessage()));

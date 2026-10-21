@@ -137,8 +137,22 @@ Modelle gleichzeitig zu nutzen, kostet Arbeitsspeicher und Ladezeit beim Wechsel
 
 ## Implementierungen, die die Demo verbessern würden
 
-Sortiert nach Nutzen für den 28.10. Nichts davon ist umgesetzt; jeder Punkt wird erst
-nach Freigabe als Issue erfasst und implementiert.
+Sortiert nach Nutzen für den 28.10.
+
+**Stand 21.10.2026 – umgesetzt sind die Punkte 1, 2, 3 und 7:**
+
+- **1:** Einstellung `ollama.vision.max.edge.px` (Standard 1536, 0 = Original). Ein
+  Handyfoto mit 3024 × 4032 Pixeln läuft damit stabil durch die Pipeline.
+- **2:** Die App lädt Bild-, Text- und Embedding-Modell beim Start im Hintergrund;
+  `ollama.keep.alive.minutes` (Standard 60) hält sie geladen.
+- **3:** Der Prompt für das Anfrageverständnis setzt Filter nur noch bei ausdrücklicher
+  Nennung. „Hund im Wald“ lässt Person und Fahrzeug offen, „Spaziergänger mit Hund“
+  verlangt eine Person.
+- **7:** `scripts/demo-data.sh save <name>`, `restore <name>`, `list`; das Skript bricht
+  ab, solange die Anwendung die Daten geöffnet hat. Sicherungen liegen in
+  `_demo_snapshots/` (nicht versioniert).
+
+Die übrigen Punkte werden erst nach Freigabe als Issue erfasst und umgesetzt.
 
 | # | Implementierung | Nutzen für die Demo | Aufwand |
 |---|---|---|---|

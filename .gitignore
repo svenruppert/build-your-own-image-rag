@@ -63,3 +63,6 @@ build/
 
 ### Auto-generated pnpm configuration ###
 /.npmrc
+
+### Demo data snapshots (scripts/demo-data.sh)
+/_demo_snapshots/

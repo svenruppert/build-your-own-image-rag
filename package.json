@@ -1,6 +1,6 @@
 {
   "name": "no-name",
-  "license": "UNLICENSED",
+  "license": "EUPL-1.2",
   "type": "module",
   "dependencies": {
     "@vaadin/aura": "25.1.0",

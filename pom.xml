@@ -16,7 +16,7 @@
     <packaging>war</packaging>
 
 
-    <inceptionYear>2023</inceptionYear>
+    <inceptionYear>2026</inceptionYear>
     <organization>
         <name>Sven Ruppert</name>
         <url>https://svenruppert.com</url>
@@ -462,10 +462,10 @@
         
             <!--
                 The parent POM (06.02.0x) binds license-maven-plugin to
-                process-sources and would stamp EUPL-1.2 headers into every
-                source file. Disable that execution here, as
-                core-vaadin-project-template does: adding file headers is a
-                separate decision, not a side effect of a parent bump.
+                process-sources and would stamp an additional EUPL-1.2 header
+                block (with SVN keywords) into every source file. The sources
+                already carry a plain EUPL-1.2 header ("Copyright © 2026 Sven
+                Ruppert ..."), so that execution stays disabled here.
             -->
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>

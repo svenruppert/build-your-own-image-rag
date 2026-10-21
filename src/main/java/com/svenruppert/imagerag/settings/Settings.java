@@ -124,6 +124,18 @@ public final class Settings {
    */
   public static final Setting<Boolean> OLLAMA_VISION_THINK =
       Setting.ofBoolean("ollama.vision.think", false, OLLAMA, IMMEDIATE);
+  /**
+   * Longest image edge sent to the vision model; larger images are scaled down first.
+   * 0 sends the original file. Full-size phone photos crashed an MLX model in testing.
+   */
+  public static final Setting<Integer> OLLAMA_VISION_MAX_EDGE_PX =
+      Setting.ofInt("ollama.vision.max.edge.px", 1536, 0, 8192, OLLAMA, IMMEDIATE);
+  /**
+   * How long Ollama keeps a model loaded after a request. Ollama's own default is
+   * 5 minutes; reloading gemma4:31b takes about 13-16 s.
+   */
+  public static final Setting<Integer> OLLAMA_KEEP_ALIVE_MINUTES =
+      Setting.ofInt("ollama.keep.alive.minutes", 60, 1, 1440, OLLAMA, IMMEDIATE);
 
   // ── Reverse geocoding ─────────────────────────────────────────────────────
 
@@ -164,6 +176,7 @@ public final class Settings {
       AUDIT_MAX_ENTRIES, SEARCH_RECENT_MAX,
       OLLAMA_TIMEOUT_SECONDS, OLLAMA_CONNECT_TIMEOUT_SECONDS, OLLAMA_PING_TIMEOUT_SECONDS,
       OLLAMA_VISION_MAX_IMAGE_MB, OLLAMA_TEXT_THINK, OLLAMA_VISION_THINK,
+      OLLAMA_VISION_MAX_EDGE_PX, OLLAMA_KEEP_ALIVE_MINUTES,
       GEOCODING_MIN_INTERVAL_MILLIS, GEOCODING_TIMEOUT_SECONDS,
       OLLAMA_HOST, OLLAMA_PORT, OLLAMA_VISION_MODEL, OLLAMA_TEXT_MODEL, EMBEDDING_MODEL, VECTOR_BACKEND);
 

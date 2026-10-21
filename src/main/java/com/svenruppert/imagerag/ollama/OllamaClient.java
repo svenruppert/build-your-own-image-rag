@@ -21,12 +21,14 @@ import com.svenruppert.dependencies.core.logger.HasLogger;
 import com.svenruppert.dependencies.core.net.HttpStatus;
 import com.svenruppert.dependencies.core.net.MediaType;
 import com.svenruppert.functional.result.Result;
+import com.svenruppert.imagerag.image.ImageScaling;
 import com.svenruppert.functional.result.functions.CheckedSupplier;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
+import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -36,6 +38,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.LinkedHashSet;
+import java.util.List;
 
 public class OllamaClient
     implements HasLogger {
@@ -68,6 +72,62 @@ public class OllamaClient
   /**
    * Safety cap on image bytes sent to the vision model ({@link Settings#OLLAMA_VISION_MAX_IMAGE_MB}).
    */
+  /**
+   * Loads the vision, text and embedding models into Ollama's memory so the first real
+   * request does not pay the cold-start cost. Failures are logged and otherwise ignored.
+   */
+  public void warmUp() {
+    for (String model : new LinkedHashSet<>(List.of(config.getVisionModel(), config.getTextModel()))) {
+      CheckedSupplier<String> load = () -> {
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("model", model);
+        body.put("keep_alive", keepAlive());
+        return postJson(config.baseUrl() + "/api/generate", body.toString());
+      };
+      report("warm-up", model, load.get().mapError(OllamaClient::describe));
+    }
+    report("warm-up", config.getEmbeddingModel(), embed("warm-up").map(vector -> "ok"));
+  }
+
+  private void report(String action, String model, Result<String, String> result) {
+    switch (result) {
+      case Result.Success<String, String> ok -> logger().info("Ollama {} done: {}", action, model);
+      case Result.Failure<String, String>(String reason) ->
+          logger().warn("Ollama {} failed for {}: {}", action, model, reason);
+    }
+  }
+
+  private static String keepAlive() {
+    return SettingsService.getInstance().get(Settings.OLLAMA_KEEP_ALIVE_MINUTES) + "m";
+  }
+
+  /**
+   * Returns the image bytes to send to the vision model: the original file when it is
+   * small enough or cannot be decoded here (e.g. HEIC), otherwise a JPEG whose longest
+   * edge matches {@link Settings#OLLAMA_VISION_MAX_EDGE_PX}.
+   */
+  private byte[] visionBytes(Path imagePath)
+      throws IOException {
+    int maxEdge = SettingsService.getInstance().get(Settings.OLLAMA_VISION_MAX_EDGE_PX);
+    if (maxEdge <= 0) {
+      return Files.readAllBytes(imagePath);
+    }
+    BufferedImage image;
+    try {
+      image = ImageScaling.readWithPixelLimit(imagePath);
+    } catch (IOException e) {
+      logger().debug("Sending original bytes for {}: {}", imagePath.getFileName(), e.getMessage());
+      return Files.readAllBytes(imagePath);
+    }
+    if (Math.max(image.getWidth(), image.getHeight()) <= maxEdge) {
+      return Files.readAllBytes(imagePath);
+    }
+    byte[] jpeg = ImageScaling.toJpeg(ImageScaling.scaleToFit(image, maxEdge, maxEdge));
+    logger().debug("Scaled {} from {}x{} to longest edge {} px for vision analysis",
+                   imagePath.getFileName(), image.getWidth(), image.getHeight(), maxEdge);
+    return jpeg;
+  }
+
   private static long maxVisionImageBytes() {
     return SettingsService.getInstance().get(Settings.OLLAMA_VISION_MAX_IMAGE_MB) * 1024L * 1024L;
   }
@@ -90,8 +150,9 @@ public class OllamaClient
           body.put("prompt", prompt);
           body.put("stream", false);
           body.put("think", SettingsService.getInstance().get(Settings.OLLAMA_VISION_THINK));
+          body.put("keep_alive", keepAlive());
           ArrayNode images = body.putArray("images");
-          images.add(Base64.getEncoder().encodeToString(Files.readAllBytes(imagePath)));
+          images.add(Base64.getEncoder().encodeToString(visionBytes(imagePath)));
           return body;
         }))
         .peekFailure(reason -> logger().error("Vision analysis failed for {}: {}",
@@ -109,6 +170,7 @@ public class OllamaClient
       body.put("prompt", prompt);
       body.put("stream", false);
       body.put("think", SettingsService.getInstance().get(Settings.OLLAMA_TEXT_THINK));
+      body.put("keep_alive", keepAlive());
       ObjectNode format = objectMapper.createObjectNode();
       format.put("type", "object");
       body.set("format", format);
@@ -125,6 +187,7 @@ public class OllamaClient
       ObjectNode body = objectMapper.createObjectNode();
       body.put("model", config.getEmbeddingModel());
       body.put("input", text);
+      body.put("keep_alive", keepAlive());
       return objectMapper.readTree(postJson(config.baseUrl() + "/api/embed", body.toString()));
     };
     return call.get()

@@ -38,6 +38,9 @@ public class AppInitializer
     try {
       ServiceRegistry.initialize();
       logger().info("Application initialized successfully.");
+      // Load the models in the background so the first search or upload is not a cold start.
+      Thread.ofVirtual().name("ollama-warm-up")
+          .start(() -> ServiceRegistry.getInstance().getOllamaClient().warmUp());
     } catch (IOException | RuntimeException e) {
       // Startup boundary: log once with context, then abort the deployment.
       logger().error("Failed to initialize ServiceRegistry: {}", e.getMessage(), e);

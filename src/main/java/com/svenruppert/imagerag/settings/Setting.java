@@ -16,7 +16,7 @@ import java.util.function.Function;
  * when set by the user and ignored (with a warning) when they come from a
  * configuration layer.
  *
- * @param <T> value type ({@link Integer}, {@link Double} or {@link String})
+ * @param <T> value type ({@link Integer}, {@link Double}, {@link Boolean} or {@link String})
  */
 public final class Setting<T extends Comparable<T>> {
 
@@ -62,6 +62,27 @@ public final class Setting<T extends Comparable<T>> {
                                          double step, SettingCategory category, SettingEffect effect) {
     return new Setting<>(key, Double.class, defaultValue, min, max, step, category, effect, true,
                          text -> Double.valueOf(text.trim()));
+  }
+
+  /**
+   * Creates an editable on/off setting. Only {@code true} and {@code false} are accepted,
+   * so a typo in a configuration layer is reported instead of silently meaning "off".
+   */
+  public static Setting<Boolean> ofBoolean(String key, boolean defaultValue,
+                                           SettingCategory category, SettingEffect effect) {
+    return new Setting<>(key, Boolean.class, defaultValue, null, null, 0, category, effect, true,
+                         Setting::parseStrictBoolean);
+  }
+
+  private static Boolean parseStrictBoolean(String text) {
+    String value = text.trim();
+    if (value.equalsIgnoreCase("true")) {
+      return Boolean.TRUE;
+    }
+    if (value.equalsIgnoreCase("false")) {
+      return Boolean.FALSE;
+    }
+    throw new IllegalArgumentException("not a boolean: " + text);
   }
 
   /**

@@ -16,6 +16,7 @@ import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.HasValidation;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
+import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H2;
@@ -94,6 +95,9 @@ public class SettingsView
     }
     if (setting.type() == Double.class) {
       return (SettingRow<T>) new SettingRow<>((Setting<Double>) setting, numberField((Setting<Double>) setting));
+    }
+    if (setting.type() == Boolean.class) {
+      return (SettingRow<T>) new SettingRow<>((Setting<Boolean>) setting, new Checkbox());
     }
     return new SettingRow<>(setting, null);
   }
@@ -253,7 +257,7 @@ public class SettingsView
         field.setValue(value);
         resetButton.setEnabled(settings.hasOverride(setting));
       } else {
-        valueText.setText(setting.format(value));
+        valueText.setText(display(value));
       }
       SettingSource source = settings.source(setting);
       sourceBadge.setText(getTranslation("settings.source." + source.name().toLowerCase()));
@@ -262,10 +266,21 @@ public class SettingsView
       sourceBadge.getElement().getThemeList().add(source == SettingSource.OVERRIDE ? "primary" : "contrast");
       if (setting.editable()) {
         defaultText.setText(getTranslation("settings.default",
-                                           setting.format(settings.valueWithoutOverride(setting))));
+                                           display(settings.valueWithoutOverride(setting))));
       } else {
         defaultText.setText(getTranslation("settings.readonly"));
       }
+    }
+
+
+    /**
+     * Formats a value for display; on/off settings are shown in the UI language.
+     */
+    private String display(T value) {
+      if (value instanceof Boolean on) {
+        return getTranslation(on ? "settings.value.on" : "settings.value.off");
+      }
+      return setting.format(value);
     }
 
     private void save() {
@@ -280,7 +295,7 @@ public class SettingsView
       switch (result) {
         case Result.Success<Unit, String> ok ->
             notifySuccess(getTranslation("settings.saved", getTranslation(setting.labelKey()),
-                                         setting.format(value)));
+                                         display(value)));
         case Result.Failure<Unit, String>(String reason) -> {
           logger().warn("Rejected setting change: {}", reason);
           notifyError(getTranslation("settings.validation.range",

@@ -74,6 +74,7 @@ public class OllamaClient
           body.put("model", config.getVisionModel());
           body.put("prompt", prompt);
           body.put("stream", false);
+          body.put("think", SettingsService.getInstance().get(Settings.OLLAMA_VISION_THINK));
           ArrayNode images = body.putArray("images");
           images.add(Base64.getEncoder().encodeToString(Files.readAllBytes(imagePath)));
           return body;
@@ -92,6 +93,7 @@ public class OllamaClient
       body.put("model", config.getTextModel());
       body.put("prompt", prompt);
       body.put("stream", false);
+      body.put("think", SettingsService.getInstance().get(Settings.OLLAMA_TEXT_THINK));
       ObjectNode format = objectMapper.createObjectNode();
       format.put("type", "object");
       body.set("format", format);

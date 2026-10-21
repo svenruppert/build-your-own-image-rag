@@ -97,6 +97,18 @@ public final class Settings {
       Setting.ofInt("ollama.ping.timeout.seconds", 5, 1, 120, OLLAMA, IMMEDIATE);
   public static final Setting<Integer> OLLAMA_VISION_MAX_IMAGE_MB =
       Setting.ofInt("ollama.vision.max.image.mb", 50, 1, 1024, OLLAMA, IMMEDIATE);
+  /**
+   * Lets reasoning models (e.g. gemma4) think before answering text/JSON requests.
+   * Off by default: thinking made query understanding take 70–130 s instead of ~15 s.
+   */
+  public static final Setting<Boolean> OLLAMA_TEXT_THINK =
+      Setting.ofBoolean("ollama.text.think", false, OLLAMA, IMMEDIATE);
+  /**
+   * Lets reasoning models think before describing an image. Off by default: thinking
+   * made one vision analysis take ~235 s instead of ~30 s, at the cost of shorter texts.
+   */
+  public static final Setting<Boolean> OLLAMA_VISION_THINK =
+      Setting.ofBoolean("ollama.vision.think", false, OLLAMA, IMMEDIATE);
 
   // ── Reverse geocoding ─────────────────────────────────────────────────────
 
@@ -136,7 +148,7 @@ public final class Settings {
       PIPELINE_INGESTION_PARALLELISM, PIPELINE_MAX_FINISHED_JOBS, UPLOAD_MAX_FILES, UPLOAD_MAX_FILE_SIZE_MB,
       AUDIT_MAX_ENTRIES, SEARCH_RECENT_MAX,
       OLLAMA_TIMEOUT_SECONDS, OLLAMA_CONNECT_TIMEOUT_SECONDS, OLLAMA_PING_TIMEOUT_SECONDS,
-      OLLAMA_VISION_MAX_IMAGE_MB,
+      OLLAMA_VISION_MAX_IMAGE_MB, OLLAMA_TEXT_THINK, OLLAMA_VISION_THINK,
       GEOCODING_MIN_INTERVAL_MILLIS, GEOCODING_TIMEOUT_SECONDS,
       OLLAMA_HOST, OLLAMA_PORT, OLLAMA_VISION_MODEL, OLLAMA_TEXT_MODEL, EMBEDDING_MODEL, VECTOR_BACKEND);
 

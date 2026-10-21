@@ -50,15 +50,23 @@ public class QueryUnderstandingServiceImpl
       Rules:
       - embeddingText must always be filled with a rich semantic description relevant to the query
       - Use null (not quoted) when a filter does not apply to the query
-      - containsPerson: true only when the query explicitly asks for images with people
-      - containsVehicle: true when the query mentions cars, vehicles, trucks, motorcycles, etc.
-      - containsLicensePlate: true when the query mentions license plates, number plates, Nummernschild, etc.
+      - A filter that the query does not mention is null — never derive false from silence.
+        "dog in the forest" says nothing about people or vehicles, so both stay null.
+      - containsPerson: true when the query asks for people; false ONLY when it explicitly
+        excludes them ("without people", "ohne Personen", "menschenleer", "nobody"); else null
+      - containsVehicle: true when the query mentions cars, vehicles, trucks, motorcycles, etc.;
+        false only when it explicitly excludes vehicles; else null
+      - containsLicensePlate: true when the query mentions license plates, number plates,
+        Nummernschild, Kennzeichen, etc.; false only when explicitly excluded; else null
       - If containsLicensePlate is true, containsVehicle should also be true
       - categoryGroup: NATURE for landscape/plant/weather, ANIMALS for wildlife/pets,
         PEOPLE for portraits/crowds, URBAN for buildings/cities, VEHICLES for cars/aircraft,
         TECHNOLOGY for electronics/machinery, OBJECTS_MEDIA for documents/food/art,
         ACTIVITIES for sports/events; null if the query does not imply a specific category
-      - seasonHint, categoryGroup, privacyLevel must be null if not explicitly implied by the query
+      - seasonHint, categoryGroup, privacyLevel must be null if not explicitly implied by the query;
+        privacyLevel is only set when the query itself is about privacy or sensitive content
+      - Example: "Hunde im Schnee ohne Personen" -> containsPerson false, containsVehicle null,
+        seasonHint WINTER, categoryGroup ANIMALS
       """;
 
   private final OllamaClient ollamaClient;
